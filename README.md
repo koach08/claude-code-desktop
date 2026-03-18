@@ -20,18 +20,31 @@ Non-engineers and engineers alike can use Claude Code through an intuitive GUI �
 - **Session auto-save** — Sessions are saved automatically and can be restored on restart
 - **CLI auto-detection** — Checks for Claude Code CLI and guides installation if missing
 
+## Supported Platforms
+
+| Platform | Format | Architecture |
+|----------|--------|-------------|
+| **macOS** | `.dmg` | Apple Silicon (M1-M4) / Intel |
+| **Windows** | `.exe` (installer + portable) | x64 |
+| **Linux** | `.AppImage` / `.deb` | x64 |
+
 ## Prerequisites
 
-- **macOS** (Apple Silicon or Intel)
 - **Node.js** v18+ ([nodejs.org](https://nodejs.org))
 - **Claude Code CLI** (`npm install -g @anthropic-ai/claude-code`)
 - **Anthropic account** (Pro plan or API key)
 
+> The app checks for Claude Code CLI on startup and guides you through installation if needed.
+
 ## Install
 
-### Option 1: Download .app (Recommended)
+### Option 1: Download (Recommended)
 
-Download the latest `.dmg` from [Releases](https://github.com/koach08/claude-code-desktop/releases), open it, and drag the app to Applications.
+Download the latest release for your platform from [Releases](https://github.com/koach08/claude-code-desktop/releases).
+
+- **macOS**: Open `.dmg`, drag to Applications
+- **Windows**: Run `.exe` installer, or use the portable version
+- **Linux**: Run `.AppImage` directly, or install `.deb`
 
 ### Option 2: Build from source
 
@@ -42,13 +55,13 @@ npm install
 npm start
 ```
 
-To build the .app:
+Build for your platform:
 
 ```bash
-npm run build
+npm run build:mac    # macOS (.dmg)
+npm run build:win    # Windows (.exe)
+npm run build:linux  # Linux (.AppImage, .deb)
 ```
-
-The built app will be in the `dist/` folder.
 
 ## Keyboard Shortcuts
 

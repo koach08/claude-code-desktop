@@ -1,6 +1,6 @@
 {
   "name": "claude-code-desktop",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Claude Code Desktop - A user-friendly desktop interface for Claude Code CLI",
   "main": "main.js",
   "author": {
@@ -15,9 +15,10 @@
   },
   "scripts": {
     "start": "electron .",
-    "build": "electron-builder --mac",
-    "build:dmg": "electron-builder --mac dmg",
-    "build:dir": "electron-builder --mac dir",
+    "build": "electron-builder --mac --win --linux",
+    "build:mac": "electron-builder --mac dmg",
+    "build:win": "electron-builder --win",
+    "build:linux": "electron-builder --linux",
     "postinstall": "electron-rebuild"
   },
   "dependencies": {
@@ -38,32 +39,39 @@
       "category": "public.app-category.developer-tools",
       "icon": "build/icon.icns",
       "target": [
-        {
-          "target": "dmg",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
-        }
+        { "target": "dmg", "arch": ["x64", "arm64"] }
       ],
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist"
     },
+    "win": {
+      "icon": "build/icon.png",
+      "target": [
+        { "target": "nsis", "arch": ["x64"] },
+        { "target": "portable", "arch": ["x64"] }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "build/icon.png",
+      "uninstallerIcon": "build/icon.png"
+    },
+    "linux": {
+      "icon": "build/icon.png",
+      "target": [
+        { "target": "AppImage", "arch": ["x64"] },
+        { "target": "deb", "arch": ["x64"] }
+      ],
+      "category": "Development"
+    },
     "dmg": {
       "title": "Claude Code Desktop",
       "contents": [
-        {
-          "x": 130,
-          "y": 220
-        },
-        {
-          "x": 410,
-          "y": 220,
-          "type": "link",
-          "path": "/Applications"
-        }
+        { "x": 130, "y": 220 },
+        { "x": 410, "y": 220, "type": "link", "path": "/Applications" }
       ]
     },
     "files": [
@@ -72,7 +80,6 @@
       "src/**/*",
       "!src/**/*.map"
     ],
-    "extraResources": [],
     "asar": true,
     "asarUnpack": [
       "node_modules/node-pty/**/*"

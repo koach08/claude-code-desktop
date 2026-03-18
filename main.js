@@ -8,17 +8,23 @@ const sessions = new Map();
 let mainWindow = null;
 let pty = null;
 
-// ── Resolve shell env (Electron doesn't inherit profile) ──
+// ── Resolve shell env (Electron apps don't inherit shell profile) ──
+const IS_WIN = process.platform === 'win32';
+const IS_MAC = process.platform === 'darwin';
+
 let shellEnv = { ...process.env };
-try {
-  const out = require('child_process').execSync(
-    '/bin/zsh -ilc "env"', { encoding: 'utf-8', timeout: 10000 }
-  );
-  out.split('\n').forEach(line => {
-    const i = line.indexOf('=');
-    if (i > 0) shellEnv[line.substring(0, i)] = line.substring(i + 1);
-  });
-} catch (_) {}
+if (!IS_WIN) {
+  try {
+    const shell = IS_MAC ? '/bin/zsh' : '/bin/bash';
+    const out = require('child_process').execSync(
+      `${shell} -ilc "env"`, { encoding: 'utf-8', timeout: 10000 }
+    );
+    out.split('\n').forEach(line => {
+      const i = line.indexOf('=');
+      if (i > 0) shellEnv[line.substring(0, i)] = line.substring(i + 1);
+    });
+  } catch (_) {}
+}
 
 function getPty() {
   if (!pty) pty = require('node-pty');
@@ -69,15 +75,20 @@ ipcMain.handle('create-session', async (_event, { cwd, name, mode }) => {
 
   let cmd, args;
   if (sessionMode === 'claude') {
-    cmd = 'claude';
+    cmd = IS_WIN ? 'claude.cmd' : 'claude';
     args = [];
   } else {
-    cmd = '/bin/zsh';
-    args = ['--login', '-i'];
+    if (IS_WIN) {
+      cmd = 'powershell.exe';
+      args = [];
+    } else {
+      cmd = IS_MAC ? '/bin/zsh' : (process.env.SHELL || '/bin/bash');
+      args = ['--login', '-i'];
+    }
   }
 
   const ptyProcess = nodePty.spawn(cmd, args, {
-    name: 'xterm-256color',
+    name: IS_WIN ? undefined : 'xterm-256color',
     cols: 120,
     rows: 30,
     cwd: sessionCwd,
@@ -118,16 +129,16 @@ ipcMain.handle('switch-mode', async (_event, { sessionId, newMode }) => {
   const nodePty = getPty();
   let cmd, args;
   if (newMode === 'claude') {
-    cmd = 'claude';
+    cmd = IS_WIN ? 'claude.cmd' : 'claude';
     args = [];
   } else {
-    cmd = '/bin/zsh';
-    args = ['--login', '-i'];
+    if (IS_WIN) { cmd = 'powershell.exe'; args = []; }
+    else { cmd = IS_MAC ? '/bin/zsh' : (process.env.SHELL || '/bin/bash'); args = ['--login', '-i']; }
   }
 
   const newId = `s_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
   const ptyProcess = nodePty.spawn(cmd, args, {
-    name: 'xterm-256color',
+    name: IS_WIN ? undefined : 'xterm-256color',
     cols: 120,
     rows: 30,
     cwd,
@@ -174,15 +185,20 @@ ipcMain.handle('close-session', async (_e, { sessionId }) => {
 // ── Check if Claude Code CLI is installed ──
 ipcMain.handle('check-claude-cli', async () => {
   try {
+    const whichCmd = IS_WIN
+      ? 'where claude'
+      : `${IS_MAC ? '/bin/zsh' : '/bin/bash'} -ilc "which claude"`;
     const result = require('child_process').execSync(
-      '/bin/zsh -ilc "which claude"', { encoding: 'utf-8', timeout: 10000 }
+      whichCmd, { encoding: 'utf-8', timeout: 10000 }
     ).trim();
     if (result && result.includes('claude')) {
-      // Get version too
       let version = '';
       try {
+        const verCmd = IS_WIN
+          ? 'claude --version'
+          : `${IS_MAC ? '/bin/zsh' : '/bin/bash'} -ilc "claude --version"`;
         version = require('child_process').execSync(
-          '/bin/zsh -ilc "claude --version"', { encoding: 'utf-8', timeout: 10000 }
+          verCmd, { encoding: 'utf-8', timeout: 10000 }
         ).trim();
       } catch (_) {}
       return { installed: true, path: result, version };
@@ -196,10 +212,10 @@ ipcMain.handle('check-claude-cli', async () => {
 // ── Install Claude Code CLI ──
 ipcMain.handle('install-claude-cli', async () => {
   try {
-    require('child_process').execSync(
-      '/bin/zsh -ilc "npm install -g @anthropic-ai/claude-code"',
-      { encoding: 'utf-8', timeout: 120000 }
-    );
+    const installCmd = IS_WIN
+      ? 'npm install -g @anthropic-ai/claude-code'
+      : `${IS_MAC ? '/bin/zsh' : '/bin/bash'} -ilc "npm install -g @anthropic-ai/claude-code"`;
+    require('child_process').execSync(installCmd, { encoding: 'utf-8', timeout: 120000 });
     return { success: true };
   } catch (e) {
     return { success: false, error: e.message };
