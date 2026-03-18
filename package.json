@@ -1,0 +1,81 @@
+{
+  "name": "claude-code-desktop",
+  "version": "1.0.0",
+  "description": "Claude Code Desktop - A user-friendly desktop interface for Claude Code CLI",
+  "main": "main.js",
+  "author": {
+    "name": "Language x AI Lab",
+    "url": "https://www.language-smartlearning.com/"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/koach08/claude-code-desktop",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/koach08/claude-code-desktop.git"
+  },
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --mac",
+    "build:dmg": "electron-builder --mac dmg",
+    "build:dir": "electron-builder --mac dir",
+    "postinstall": "electron-rebuild"
+  },
+  "dependencies": {
+    "node-pty": "^1.0.0",
+    "xterm": "^5.3.0",
+    "xterm-addon-fit": "^0.8.0",
+    "xterm-addon-web-links": "^0.9.0"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8",
+    "electron-rebuild": "^3.2.9"
+  },
+  "build": {
+    "appId": "com.languagexai.claude-code-desktop",
+    "productName": "Claude Code Desktop",
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "icon": "build/icon.icns",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist"
+    },
+    "dmg": {
+      "title": "Claude Code Desktop",
+      "contents": [
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "src/**/*",
+      "!src/**/*.map"
+    ],
+    "extraResources": [],
+    "asar": true,
+    "asarUnpack": [
+      "node_modules/node-pty/**/*"
+    ]
+  }
+}
