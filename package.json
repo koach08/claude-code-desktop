@@ -5,6 +5,7 @@
   "main": "main.js",
   "author": {
     "name": "Language x AI Lab",
+    "email": "info@language-smartlearning.com",
     "url": "https://www.language-smartlearning.com/"
   },
   "license": "MIT",
@@ -47,7 +48,7 @@
       "entitlementsInherit": "build/entitlements.mac.plist"
     },
     "win": {
-      "icon": "build/icon.png",
+      "icon": "build/icon.ico",
       "target": [
         { "target": "nsis", "arch": ["x64"] },
         { "target": "portable", "arch": ["x64"] }
@@ -55,9 +56,7 @@
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "installerIcon": "build/icon.png",
-      "uninstallerIcon": "build/icon.png"
+      "allowToChangeInstallationDirectory": true
     },
     "linux": {
       "icon": "build/icon.png",
