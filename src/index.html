@@ -10,17 +10,21 @@
   <div id="app">
     <!-- Top Bar -->
     <div id="topbar">
+      <div id="drag-region"></div>
       <div id="tabs"></div>
       <button id="new-tab-btn" title="新しいタブ (Cmd+T)">+</button>
       <div id="topbar-spacer"></div>
       <div id="mode-toggle">
-        <button id="btn-claude" class="mode-btn active" data-mode="claude">Claude Code</button>
-        <button id="btn-shell" class="mode-btn" data-mode="shell">Terminal</button>
+        <button class="mode-btn active" data-mode="claude">Claude</button>
+        <button class="mode-btn" data-mode="codex">Codex</button>
+        <button class="mode-btn" data-mode="shell">Terminal</button>
       </div>
       <div id="ui-toggle">
-        <button id="btn-simple" class="ui-btn active" data-ui="simple">Simple</button>
-        <button id="btn-advanced" class="ui-btn" data-ui="advanced">Advanced</button>
+        <button class="ui-btn active" data-ui="simple">Simple</button>
+        <button class="ui-btn" data-ui="advanced">Advanced</button>
+        <button class="ui-btn" data-ui="builder">Builder</button>
       </div>
+      <button id="settings-btn" title="設定 (Cmd+,)">&#9881;</button>
     </div>
 
     <!-- Main Area -->
@@ -28,45 +32,111 @@
       <!-- Terminal -->
       <div id="terminal-container"></div>
 
+      <!-- Builder Panel -->
+      <div id="builder-panel">
+        <div id="builder-header">
+          <h3>App Builder</h3>
+          <button id="builder-scan-btn" class="builder-action-btn">プロジェクトをスキャン</button>
+        </div>
+
+        <div id="builder-project-info">
+          <div id="builder-no-project">
+            <p>プロジェクトをスキャンしてください</p>
+            <small>現在のタブの作業ディレクトリを解析します</small>
+          </div>
+          <div id="builder-detected" class="hidden">
+            <div class="bp-row"><span class="bp-label">プロジェクト</span><span id="bp-name">-</span></div>
+            <div class="bp-row"><span class="bp-label">フレームワーク</span><span id="bp-framework">-</span></div>
+            <div class="bp-row"><span class="bp-label">言語</span><span id="bp-language">-</span></div>
+            <div class="bp-row"><span class="bp-label">設定</span><span id="bp-configs">-</span></div>
+          </div>
+        </div>
+
+        <div id="builder-sections">
+          <!-- Web Deploy -->
+          <div class="builder-section">
+            <h4>Web / SaaS デプロイ</h4>
+            <div class="builder-cards">
+              <div class="bcard" data-target="vercel"><div class="bcard-icon">&#9650;</div><div class="bcard-name">Vercel</div><div class="bcard-desc">Next.js / React</div></div>
+              <div class="bcard" data-target="railway"><div class="bcard-icon">&#9654;</div><div class="bcard-name">Railway</div><div class="bcard-desc">API / Backend</div></div>
+              <div class="bcard" data-target="netlify"><div class="bcard-icon">&#9670;</div><div class="bcard-name">Netlify</div><div class="bcard-desc">Static / JAMstack</div></div>
+              <div class="bcard" data-target="streamlit-cloud"><div class="bcard-icon">&#9733;</div><div class="bcard-name">Streamlit</div><div class="bcard-desc">Python App</div></div>
+              <div class="bcard" data-target="docker"><div class="bcard-icon">&#9638;</div><div class="bcard-name">Docker</div><div class="bcard-desc">コンテナ化</div></div>
+            </div>
+          </div>
+
+          <!-- Desktop -->
+          <div class="builder-section">
+            <h4>デスクトップアプリ</h4>
+            <div class="builder-cards">
+              <div class="bcard" data-target="electron-mac"><div class="bcard-icon">&#63743;</div><div class="bcard-name">macOS</div><div class="bcard-desc">Electron .dmg</div></div>
+              <div class="bcard" data-target="electron-win"><div class="bcard-icon">&#8862;</div><div class="bcard-name">Windows</div><div class="bcard-desc">Electron .exe</div></div>
+              <div class="bcard" data-target="electron-linux"><div class="bcard-icon">&#9655;</div><div class="bcard-name">Linux</div><div class="bcard-desc">Electron .AppImage</div></div>
+              <div class="bcard" data-target="tauri"><div class="bcard-icon">&#9881;</div><div class="bcard-name">Tauri</div><div class="bcard-desc">軽量ネイティブ</div></div>
+            </div>
+          </div>
+
+          <!-- Mobile -->
+          <div class="builder-section">
+            <h4>モバイルアプリ</h4>
+            <div class="builder-cards">
+              <div class="bcard" data-target="capacitor-ios"><div class="bcard-icon">&#63743;</div><div class="bcard-name">iOS</div><div class="bcard-desc">Capacitor / Xcode</div></div>
+              <div class="bcard" data-target="capacitor-android"><div class="bcard-icon">&#9679;</div><div class="bcard-name">Android</div><div class="bcard-desc">Capacitor / Studio</div></div>
+              <div class="bcard" data-target="xcode-native"><div class="bcard-icon">&#9874;</div><div class="bcard-name">Swift Native</div><div class="bcard-desc">Xcode プロジェクト</div></div>
+              <div class="bcard" data-target="flutter"><div class="bcard-icon">&#10070;</div><div class="bcard-name">Flutter</div><div class="bcard-desc">iOS + Android</div></div>
+            </div>
+          </div>
+
+          <!-- Infrastructure -->
+          <div class="builder-section">
+            <h4>インフラ / サービス連携</h4>
+            <div class="builder-cards">
+              <div class="bcard" data-target="supabase"><div class="bcard-icon">&#9881;</div><div class="bcard-name">Supabase</div><div class="bcard-desc">DB + Auth + Storage</div></div>
+              <div class="bcard" data-target="firebase"><div class="bcard-icon">&#9888;</div><div class="bcard-name">Firebase</div><div class="bcard-desc">BaaS</div></div>
+              <div class="bcard" data-target="stripe"><div class="bcard-icon">&#36;</div><div class="bcard-name">Stripe</div><div class="bcard-desc">決済</div></div>
+              <div class="bcard" data-target="auth"><div class="bcard-icon">&#128274;</div><div class="bcard-name">認証</div><div class="bcard-desc">OAuth / SSO</div></div>
+              <div class="bcard" data-target="ci-cd"><div class="bcard-icon">&#8634;</div><div class="bcard-name">CI/CD</div><div class="bcard-desc">GitHub Actions</div></div>
+              <div class="bcard" data-target="domain-ssl"><div class="bcard-icon">&#127760;</div><div class="bcard-name">ドメイン</div><div class="bcard-desc">DNS + SSL</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Sidebar (Simple mode) -->
       <div id="sidebar">
         <div class="sb-section">
-          <h3>Claude Code コマンド</h3>
+          <h3>コマンド</h3>
           <div class="cmd-list">
-            <div class="cmd" data-cmd="/help"><span class="cmd-name">/help</span><span class="cmd-desc">ヘルプ・使い方を表示</span></div>
-            <div class="cmd" data-cmd="/clear"><span class="cmd-name">/clear</span><span class="cmd-desc">会話履歴をクリア</span></div>
-            <div class="cmd" data-cmd="/compact"><span class="cmd-name">/compact</span><span class="cmd-desc">会話を要約して圧縮</span></div>
-            <div class="cmd" data-cmd="/cost"><span class="cmd-name">/cost</span><span class="cmd-desc">トークン使用量・コスト表示</span></div>
-            <div class="cmd" data-cmd="/model"><span class="cmd-name">/model</span><span class="cmd-desc">AIモデルを変更</span></div>
-            <div class="cmd" data-cmd="/permissions"><span class="cmd-name">/permissions</span><span class="cmd-desc">権限設定を変更</span></div>
-            <div class="cmd" data-cmd="/init"><span class="cmd-name">/init</span><span class="cmd-desc">CLAUDE.md を初期化</span></div>
-            <div class="cmd" data-cmd="/review"><span class="cmd-name">/review</span><span class="cmd-desc">コードレビューを依頼</span></div>
-            <div class="cmd" data-cmd="/status"><span class="cmd-name">/status</span><span class="cmd-desc">セッション状態を表示</span></div>
-            <div class="cmd" data-cmd="/config"><span class="cmd-name">/config</span><span class="cmd-desc">設定を変更</span></div>
+            <div class="cmd" data-cmd="/help"><span class="cmd-name">/help</span><span class="cmd-desc">ヘルプ表示</span></div>
+            <div class="cmd" data-cmd="/clear"><span class="cmd-name">/clear</span><span class="cmd-desc">会話クリア</span></div>
+            <div class="cmd" data-cmd="/compact"><span class="cmd-name">/compact</span><span class="cmd-desc">会話圧縮</span></div>
+            <div class="cmd" data-cmd="/cost"><span class="cmd-name">/cost</span><span class="cmd-desc">コスト表示</span></div>
+            <div class="cmd" data-cmd="/model"><span class="cmd-name">/model</span><span class="cmd-desc">モデル変更</span></div>
+            <div class="cmd" data-cmd="/permissions"><span class="cmd-name">/permissions</span><span class="cmd-desc">権限設定</span></div>
+            <div class="cmd" data-cmd="/review"><span class="cmd-name">/review</span><span class="cmd-desc">レビュー依頼</span></div>
           </div>
         </div>
 
         <div class="sb-section">
-          <h3>キーボードショートカット</h3>
+          <h3>ショートカット</h3>
           <div class="shortcut-list">
-            <div class="sc"><kbd>Cmd+Enter</kbd><span>入力を送信</span></div>
-            <div class="sc"><kbd>Cmd+T</kbd><span>新しいタブ</span></div>
+            <div class="sc"><kbd>Enter&#215;2</kbd><span>送信</span></div>
+            <div class="sc"><kbd>Cmd+Enter</kbd><span>送信</span></div>
+            <div class="sc"><kbd>Cmd+T</kbd><span>新規タブ</span></div>
             <div class="sc"><kbd>Cmd+W</kbd><span>タブを閉じる</span></div>
             <div class="sc"><kbd>Cmd+1-9</kbd><span>タブ切替</span></div>
+            <div class="sc"><kbd>Cmd+S</kbd><span>保存</span></div>
             <div class="sc"><kbd>Alt+&#8593;&#8595;</kbd><span>入力履歴</span></div>
-            <div class="sc"><kbd>Escape</kbd><span>操作をキャンセル</span></div>
-            <div class="sc"><kbd>Ctrl+C</kbd><span>処理を中断</span></div>
           </div>
         </div>
 
         <div class="sb-section">
-          <h3>よく使うプロンプト例</h3>
+          <h3>プロンプト例</h3>
           <div class="prompt-list">
-            <div class="prompt-ex" data-prompt="このプロジェクトの構成を教えて">プロジェクト構成を聞く</div>
-            <div class="prompt-ex" data-prompt="このファイルのバグを見つけて修正して">バグ修正を依頼</div>
+            <div class="prompt-ex" data-prompt="このプロジェクトの構成を教えて">構成を聞く</div>
+            <div class="prompt-ex" data-prompt="このファイルのバグを見つけて修正して">バグ修正</div>
             <div class="prompt-ex" data-prompt="テストを実行して結果を教えて">テスト実行</div>
             <div class="prompt-ex" data-prompt="git status を確認して、変更をコミットして">Git コミット</div>
-            <div class="prompt-ex" data-prompt="このコードをリファクタリングして">リファクタリング</div>
           </div>
         </div>
       </div>
@@ -81,18 +151,31 @@
       <span id="status-cwd"></span>
     </div>
 
+    <!-- Work Log Panel -->
+    <div id="worklog-panel" class="hidden">
+      <div id="worklog-header">
+        <h3>作業ログ</h3>
+        <button id="worklog-close">&times;</button>
+      </div>
+      <div id="worklog-list"></div>
+    </div>
+
     <!-- Input Area -->
     <div id="input-area">
       <div id="quick-actions">
-        <button class="qbtn accept" data-input="y\r" title="ツール実行を承認">&#10003; 承認 (Y)</button>
-        <button class="qbtn reject" data-input="n\r" title="ツール実行を拒否">&#10007; 拒否 (N)</button>
-        <button class="qbtn interrupt" data-input="\x03" title="処理を中断">&#9632; 中断</button>
+        <button class="qbtn accept" data-input="y\r" title="承認 (Y)">&#10003; Yes</button>
+        <button class="qbtn reject" data-input="n\r" title="拒否 (N)">&#10007; No</button>
+        <button class="qbtn interrupt" data-input="\x03" title="中断 (Ctrl+C)">&#9632; 中断</button>
+        <button class="qbtn escape" data-input="\x1b" title="Escape">Esc</button>
+        <div id="quick-spacer"></div>
+        <button class="qbtn worklog-btn" id="worklog-toggle" title="作業ログ">&#128203; ログ</button>
       </div>
       <div id="input-row">
-        <textarea id="prompt-input" placeholder="プロンプトやコマンドを入力... (Cmd+Enter で送信)" rows="2"></textarea>
+        <textarea id="prompt-input" placeholder="プロンプトを入力... (Enter&#215;2 で送信)" rows="2"></textarea>
         <button id="send-btn">送信</button>
       </div>
-      <div id="hint">Cmd+Enter 送信 &middot; Cmd+T 新規タブ &middot; Cmd+W 閉じる &middot; Alt+&#8593;&#8595; 履歴</div>
+      <div id="enter-hint" class="hidden">もう一度 Enter で送信</div>
+      <div id="hint">Enter&#215;2 送信 &#183; Cmd+Enter 送信 &#183; Cmd+T 新規タブ</div>
     </div>
   </div>
 
@@ -130,8 +213,105 @@
 
       <div style="display: flex; gap: 8px;">
         <button id="setup-auto-install" class="setup-btn primary">自動インストール</button>
-        <button id="setup-skip" class="setup-btn">ターミナルで開く（スキップ）</button>
+        <button id="setup-skip" class="setup-btn">ターミナルで開く</button>
       </div>
+    </div>
+  </div>
+
+  <!-- Settings Dialog -->
+  <div id="settings-dialog" class="dialog hidden">
+    <div class="dialog-content settings-content">
+      <div class="dialog-header">
+        <h2>設定</h2>
+        <button id="settings-close" class="dialog-close-btn">&times;</button>
+      </div>
+
+      <div class="settings-section">
+        <h3>表示</h3>
+        <div class="setting-row">
+          <label>フォントサイズ</label>
+          <div class="setting-control">
+            <button class="setting-btn" id="font-dec">-</button>
+            <span id="font-size-val">14</span>px
+            <button class="setting-btn" id="font-inc">+</button>
+          </div>
+        </div>
+        <div class="setting-row">
+          <label>ダブルEnter判定 (ms)</label>
+          <div class="setting-control">
+            <input type="range" id="double-enter-delay" min="200" max="1000" step="50" value="500">
+            <span id="double-enter-val">500</span>ms
+          </div>
+        </div>
+        <div class="setting-row">
+          <label>自動保存間隔 (秒)</label>
+          <div class="setting-control">
+            <input type="range" id="autosave-interval" min="5" max="60" step="5" value="10">
+            <span id="autosave-val">10</span>s
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <h3>このアプリを編集</h3>
+        <div class="setting-row">
+          <label>Claude Code で開く</label>
+          <div class="setting-control">
+            <button class="setup-btn primary" id="btn-edit-claude">Claude Code</button>
+          </div>
+        </div>
+        <div class="setting-row">
+          <label>Codex で開く</label>
+          <div class="setting-control">
+            <button class="setup-btn" id="btn-edit-codex">Codex</button>
+          </div>
+        </div>
+        <div class="setting-row">
+          <label>アプリフォルダ</label>
+          <div class="setting-control">
+            <button class="setup-btn" id="btn-open-folder">Finder で開く</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <h3>アップデート</h3>
+        <div class="setting-row">
+          <label id="update-status-label">最新版を確認</label>
+          <div class="setting-control">
+            <button class="setup-btn primary" id="btn-check-update">確認</button>
+          </div>
+        </div>
+        <div id="update-info" class="hidden" style="margin-top: 8px;">
+          <pre id="update-changes" style="font-size: 11px; color: var(--fg2); max-height: 100px; overflow-y: auto;"></pre>
+          <div style="display: flex; gap: 8px; margin-top: 8px;">
+            <button class="setup-btn primary" id="btn-apply-update">更新してリスタート</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <h3>データ</h3>
+        <div class="setting-row">
+          <label>作業ログ</label>
+          <div class="setting-control">
+            <button class="setup-btn" id="btn-clear-worklog">クリア</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <h3>ビルド</h3>
+        <div class="setting-row">
+          <label>ネイティブアプリとしてビルド</label>
+          <div class="setting-control">
+            <button class="setup-btn primary" id="btn-build-app">ビルド開始</button>
+          </div>
+        </div>
+        <div id="build-status" style="margin-top: 4px; font-size: 11px; color: var(--fg2);"></div>
+      </div>
+
+      <div id="app-info" style="margin-top: 12px; font-size: 11px; color: var(--fg2); text-align: center;"></div>
     </div>
   </div>
 
