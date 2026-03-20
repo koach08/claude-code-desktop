@@ -163,7 +163,7 @@ function createMenu() {
 }
 
 // ── IPC: Create session ──
-ipcMain.handle('create-session', async (_event, { cwd, name, mode, restoreFromId }) => {
+ipcMain.handle('create-session', async (_event, { cwd, name, mode, restoreFromId, conversationId }) => {
   const id = `s_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
   const nodePty = getPty();
   const sessionCwd = cwd || os.homedir();
@@ -172,7 +172,13 @@ ipcMain.handle('create-session', async (_event, { cwd, name, mode, restoreFromId
   let cmd, args;
   if (sessionMode === 'claude') {
     cmd = IS_WIN ? 'claude.cmd' : 'claude';
-    args = restoreFromId ? ['--continue'] : [];
+    if (conversationId) {
+      args = ['--resume', conversationId];
+    } else if (restoreFromId) {
+      args = ['--continue'];
+    } else {
+      args = [];
+    }
   } else if (sessionMode === 'codex') {
     cmd = IS_WIN ? 'codex.cmd' : 'codex';
     args = [];
@@ -199,6 +205,7 @@ ipcMain.handle('create-session', async (_event, { cwd, name, mode, restoreFromId
     cwd: sessionCwd,
     name: name || (sessionMode === 'claude' ? 'Claude Code' : sessionMode === 'codex' ? 'Codex' : 'Terminal'),
     mode: sessionMode,
+    conversationId: conversationId || null,
     createdAt: new Date().toISOString(),
   };
   sessions.set(id, sessionData);
@@ -523,7 +530,7 @@ function saveSessionsSync() {
     fs.mkdirSync(BUFFERS_DIR, { recursive: true });
     const data = [];
     for (const [id, s] of sessions) {
-      data.push({ id, name: s.name, cwd: s.cwd, mode: s.mode, createdAt: s.createdAt, savedAt: new Date().toISOString() });
+      data.push({ id, name: s.name, cwd: s.cwd, mode: s.mode, conversationId: s.conversationId || null, createdAt: s.createdAt, savedAt: new Date().toISOString() });
     }
     fs.writeFileSync(path.join(SESSIONS_DIR, 'sessions.json'), JSON.stringify(data, null, 2));
     // Save output buffers

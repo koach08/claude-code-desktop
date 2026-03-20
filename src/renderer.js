@@ -97,6 +97,7 @@ async function restoreTab(savedSession) {
       cwd: savedSession.cwd,
       name: savedSession.name,
       restoreFromId: savedSession.id,
+      conversationId: savedSession.conversationId || null,
     });
     addTab(session, oldBuffer);
   } catch (err) {
@@ -187,42 +188,20 @@ function setupListeners() {
   ta.addEventListener('compositionend', () => { isComposing = false; });
 
   ta.addEventListener('keydown', (e) => {
-    // Cmd+Enter: immediate send
-    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-      e.preventDefault();
-      hideEnterHint();
-      send();
-      return;
-    }
     if (e.altKey && e.key === 'ArrowUp') { e.preventDefault(); navHist(-1); return; }
     if (e.altKey && e.key === 'ArrowDown') { e.preventDefault(); navHist(1); return; }
 
-    // Double-Enter to send
-    if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
+    // Enter = send, Shift+Enter = newline
+    if (e.key === 'Enter' && !e.shiftKey) {
       if (isComposing || e.isComposing) return;
+      e.preventDefault();
 
-      const now = Date.now();
-      const delay = appSettings.doubleEnterDelay || 500;
-
-      if (lastEnterTime > 0 && (now - lastEnterTime) < delay) {
-        // Second Enter: send
-        e.preventDefault();
-        hideEnterHint();
-        // Remove trailing newline from first Enter
-        ta.value = ta.value.replace(/\n$/, '');
+      if (!ta.value.trim()) {
+        // Empty: send Enter to PTY (for yes/no confirmations)
+        if (activeId) window.api.sendInput(activeId, '\r');
+      } else {
         send();
-        lastEnterTime = 0;
-        return;
       }
-
-      // First Enter: show hint, set timer
-      lastEnterTime = now;
-      showEnterHint();
-      clearTimeout(enterHintTimer);
-      enterHintTimer = setTimeout(() => {
-        lastEnterTime = 0;
-        hideEnterHint();
-      }, delay);
     }
   });
 
@@ -239,6 +218,9 @@ function setupListeners() {
         .replace(/\\r/g, '\r')
         .replace(/\\x([0-9a-fA-F]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
       window.api.sendInput(activeId, raw);
+      // Visual feedback
+      b.style.opacity = '0.5';
+      setTimeout(() => { b.style.opacity = ''; }, 300);
     });
   });
 
@@ -343,11 +325,13 @@ function setUiMode(mode) {
   });
   tabs.forEach(t => {
     if (t.pane.classList.contains('active')) {
-      requestAnimationFrame(() => {
-        t.fit.fit();
-        const sid = getTabSessionId(t.tabEl);
-        if (sid) window.api.resizeTerminal(sid, t.term.cols, t.term.rows);
-      });
+      setTimeout(() => {
+        try {
+          t.fit.fit();
+          const sid = getTabSessionId(t.tabEl);
+          if (sid) window.api.resizeTerminal(sid, t.term.cols, t.term.rows);
+        } catch (_) {}
+      }, 80);
     }
   });
   if (mode === 'simple' || mode === 'builder') {
@@ -388,7 +372,7 @@ async function switchSessionMode(newMode) {
   // Re-bind output
   window.api.onSessionOutput(result.newId, (d) => {
     tab.term.write(d);
-    detectActivity(d);
+    detectActivity(d, result.newId);
   });
   window.api.onSessionExit(result.newId, () => {
     tab.term.write('\r\n\x1b[33m[終了]\x1b[0m\r\n');
@@ -458,7 +442,7 @@ function addTab(session, replayBuffer) {
   const tabEl = document.createElement('div');
   tabEl.className = 'tab';
   tabEl.dataset.sid = session.id; // Store session ID on element (updated on mode switch)
-  tabEl.innerHTML = `<span class="tab-icon">${icon}</span><span class="tname">${esc(session.name)}</span><span class="tclose">&times;</span>`;
+  tabEl.innerHTML = `<span class="tab-icon">${icon}</span><span class="tname">${esc(session.name)}</span><span class="tab-badge"></span><span class="tclose">&times;</span>`;
   document.getElementById('tabs').appendChild(tabEl);
 
   // Pane
@@ -492,7 +476,7 @@ function addTab(session, replayBuffer) {
   // Live output
   window.api.onSessionOutput(session.id, (d) => {
     term.write(d);
-    detectActivity(d);
+    detectActivity(d, session.id);
   });
   window.api.onSessionExit(session.id, () => {
     term.write('\r\n\x1b[33m[終了]\x1b[0m\r\n');
@@ -501,22 +485,29 @@ function addTab(session, replayBuffer) {
     setStatus('ended', '終了しました — 新しいタブを開くか、モードを切替えてください');
   });
 
-  // Resize observer: use data attribute for session ID
+  // Resize observer with debounce to prevent layout thrashing
+  let resizeTimer = null;
   const ro = new ResizeObserver(() => {
-    if (pane.classList.contains('active')) {
-      fit.fit();
-      const sid = getTabSessionId(tabEl);
-      if (sid) window.api.resizeTerminal(sid, term.cols, term.rows);
-    }
+    if (!pane.classList.contains('active')) return;
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      try {
+        fit.fit();
+        const sid = getTabSessionId(tabEl);
+        if (sid) window.api.resizeTerminal(sid, term.cols, term.rows);
+      } catch (_) {}
+    }, 80);
   });
   ro.observe(pane);
   data.ro = ro;
 
   switchTab(session.id);
-  requestAnimationFrame(() => {
-    fit.fit();
-    window.api.resizeTerminal(session.id, term.cols, term.rows);
-  });
+  setTimeout(() => {
+    try {
+      fit.fit();
+      window.api.resizeTerminal(session.id, term.cols, term.rows);
+    } catch (_) {}
+  }, 100);
 
   document.getElementById('status-cwd').textContent = session.cwd || '';
   document.querySelectorAll('.mode-btn').forEach(b => {
@@ -533,10 +524,9 @@ function switchTab(id) {
     t.tabEl.classList.toggle('active', on);
     t.pane.classList.toggle('active', on);
     if (on) {
-      requestAnimationFrame(() => {
-        t.fit.fit();
-        window.api.resizeTerminal(tid, t.term.cols, t.term.rows);
-      });
+      // Clear badge when switching to this tab
+      const badge = t.tabEl.querySelector('.tab-badge');
+      if (badge) badge.classList.remove('visible', 'approval');
       const mode = t.session.mode || 'claude';
       document.querySelectorAll('.mode-btn').forEach(b => {
         b.classList.toggle('active', b.dataset.mode === mode);
@@ -544,9 +534,16 @@ function switchTab(id) {
       currentMode = mode;
       updateStatusMode(mode);
       document.getElementById('status-cwd').textContent = t.session.cwd || '';
+      // Delayed fit to let layout settle
+      setTimeout(() => {
+        try {
+          t.fit.fit();
+          window.api.resizeTerminal(tid, t.term.cols, t.term.rows);
+        } catch (_) {}
+      }, 50);
     }
   });
-  if (uiMode === 'simple') {
+  if (uiMode === 'simple' || uiMode === 'builder') {
     document.getElementById('prompt-input').focus();
   } else {
     const tab = tabs.get(id);
@@ -592,6 +589,9 @@ function send() {
   histIdx = history.length;
   window.api.sendInput(activeId, text + '\r');
 
+  // Scroll terminal to bottom after sending
+  if (tab) tab.term.scrollToBottom();
+
   // Log for crash recovery
   if (tab) {
     window.api.logPrompt({
@@ -618,7 +618,9 @@ function navHist(dir) {
 // ── Activity Detection ──
 let activityTimer = null;
 
-function detectActivity(output) {
+function detectActivity(output, sessionId) {
+  const isApproval = /\? ?\(y\/n\)|Allow|approve|permission/i.test(output);
+
   const patterns = [
     { re: /Reading|Read\s/i, msg: 'ファイル読込中...' },
     { re: /Writing|Write\s|Edit\s/i, msg: 'ファイル編集中...' },
@@ -632,7 +634,7 @@ function detectActivity(output) {
 
   for (const { re, msg } of patterns) {
     if (re.test(output)) {
-      if (/\? ?\(y\/n\)|Allow|approve|permission/i.test(output)) {
+      if (isApproval) {
         setStatus('waiting', msg);
       } else if (/\$\s*$|❯|>\s*$/m.test(output)) {
         setStatus('ready', msg);
@@ -641,6 +643,34 @@ function detectActivity(output) {
       }
       break;
     }
+  }
+
+  // Show badge on non-active tabs when approval needed or activity detected
+  if (sessionId && sessionId !== activeId) {
+    const tab = tabs.get(sessionId);
+    if (tab) {
+      const badge = tab.tabEl.querySelector('.tab-badge');
+      if (badge) {
+        if (isApproval) {
+          badge.classList.add('visible', 'approval');
+        } else {
+          badge.classList.add('visible');
+          badge.classList.remove('approval');
+        }
+      }
+    }
+  }
+
+  // macOS notification for approval requests (works even when app is not focused)
+  if (isApproval) {
+    const tab = sessionId ? tabs.get(sessionId) : null;
+    const tabName = tab ? (tab.session.name || 'Claude Code') : 'Claude Code';
+    try {
+      new Notification('Claude Code — 承認待ち', {
+        body: `「${tabName}」で承認が必要です (Yes/No)`,
+        silent: false,
+      });
+    } catch (_) {}
   }
 
   clearTimeout(activityTimer);
