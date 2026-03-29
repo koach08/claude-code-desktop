@@ -1,5 +1,7 @@
 # Claude Code Desktop
 
+> **Looking for the next generation?** Check out [**Code Harness**](https://github.com/koach08/code-harness) — multi-AI support (Claude Code + Codex + Aider), Harness Engineering UI, 13 languages, and more.
+
 A user-friendly desktop interface for [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code).
 
 Non-engineers and engineers alike can use Claude Code through an intuitive GUI — no terminal experience required.
