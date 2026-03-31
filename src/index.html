@@ -23,6 +23,7 @@
         <button class="ui-btn active" data-ui="simple">Simple</button>
         <button class="ui-btn" data-ui="advanced">Advanced</button>
         <button class="ui-btn" data-ui="builder">Builder</button>
+        <button class="ui-btn" data-ui="harness">Harness</button>
       </div>
       <button id="settings-btn" title="設定 (Cmd+,)">&#9881;</button>
     </div>
@@ -53,6 +54,44 @@
         </div>
 
         <div id="builder-sections">
+          <!-- App Creation (NEW) -->
+          <div class="builder-section">
+            <h4>Web アプリ作成</h4>
+            <div class="builder-cards">
+              <div class="bcard" data-target="build-saas"><div class="bcard-icon">&#9881;</div><div class="bcard-name">SaaS / 管理画面</div><div class="bcard-desc">ダッシュボード・業務ツール</div></div>
+              <div class="bcard" data-target="build-lp"><div class="bcard-icon">&#9733;</div><div class="bcard-name">LP</div><div class="bcard-desc">ランディングページ</div></div>
+              <div class="bcard" data-target="build-ec"><div class="bcard-icon">&#128722;</div><div class="bcard-name">EC ショップ</div><div class="bcard-desc">オンライン販売</div></div>
+              <div class="bcard" data-target="build-booking"><div class="bcard-icon">&#128197;</div><div class="bcard-name">予約システム</div><div class="bcard-desc">予約・スケジュール管理</div></div>
+              <div class="bcard" data-target="build-community"><div class="bcard-icon">&#128101;</div><div class="bcard-name">SNS / コミュニティ</div><div class="bcard-desc">掲示板・チャット・フォーラム</div></div>
+              <div class="bcard" data-target="build-biztools"><div class="bcard-icon">&#128188;</div><div class="bcard-name">業務アプリ</div><div class="bcard-desc">社内ツール・ワークフロー</div></div>
+              <div class="bcard" data-target="build-portfolio"><div class="bcard-icon">&#127912;</div><div class="bcard-name">ポートフォリオ</div><div class="bcard-desc">個人・企業サイト</div></div>
+              <div class="bcard" data-target="build-blog"><div class="bcard-icon">&#128221;</div><div class="bcard-name">ブログ / メディア</div><div class="bcard-desc">CMS付きサイト</div></div>
+            </div>
+          </div>
+
+          <!-- Native / PWA Apps -->
+          <div class="builder-section">
+            <h4>ネイティブ / モバイルアプリ</h4>
+            <div class="builder-cards">
+              <div class="bcard" data-target="build-ios"><div class="bcard-icon">&#63743;</div><div class="bcard-name">iOS App</div><div class="bcard-desc">App Store 掲載</div></div>
+              <div class="bcard" data-target="build-android"><div class="bcard-icon">&#9679;</div><div class="bcard-name">Android App</div><div class="bcard-desc">Play Store 掲載</div></div>
+              <div class="bcard" data-target="build-cross"><div class="bcard-icon">&#128241;</div><div class="bcard-name">クロスプラットフォーム</div><div class="bcard-desc">iOS + Android 同時</div></div>
+              <div class="bcard" data-target="build-pwa"><div class="bcard-icon">&#127760;</div><div class="bcard-name">PWA</div><div class="bcard-desc">インストール可能Web</div></div>
+            </div>
+          </div>
+
+          <!-- WordPress -->
+          <div class="builder-section">
+            <h4>WordPress</h4>
+            <div class="builder-cards">
+              <div class="bcard" data-target="build-wp-theme"><div class="bcard-icon">&#127912;</div><div class="bcard-name">テーマ制作</div><div class="bcard-desc">オリジナルデザイン</div></div>
+              <div class="bcard" data-target="build-wp-plugin"><div class="bcard-icon">&#128268;</div><div class="bcard-name">プラグイン開発</div><div class="bcard-desc">カスタム機能</div></div>
+              <div class="bcard" data-target="build-wp-ec"><div class="bcard-icon">&#128722;</div><div class="bcard-name">WooCommerce</div><div class="bcard-desc">WordPress EC</div></div>
+            </div>
+          </div>
+
+          <div class="builder-divider"></div>
+
           <!-- Web Deploy -->
           <div class="builder-section">
             <h4>Web / SaaS デプロイ</h4>
@@ -98,6 +137,90 @@
               <div class="bcard" data-target="ci-cd"><div class="bcard-icon">&#8634;</div><div class="bcard-name">CI/CD</div><div class="bcard-desc">GitHub Actions</div></div>
               <div class="bcard" data-target="domain-ssl"><div class="bcard-icon">&#127760;</div><div class="bcard-name">ドメイン</div><div class="bcard-desc">DNS + SSL</div></div>
             </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Harness Panel -->
+      <div id="harness-panel">
+        <div id="harness-header">
+          <h3>Harness Engineering</h3>
+        </div>
+
+        <!-- CLAUDE.md Editor -->
+        <div class="harness-section" id="harness-claudemd">
+          <div class="harness-section-header" data-collapse="claudemd">
+            <h4>CLAUDE.md</h4>
+            <span class="harness-badge" id="claudemd-badge"></span>
+            <span class="harness-chevron">&#9660;</span>
+          </div>
+          <p class="harness-desc">AI用プロジェクト指示書</p>
+          <div class="harness-section-body" id="claudemd-body">
+            <div id="claudemd-scope-toggle">
+              <button class="claudemd-scope-btn active" data-scope="project">プロジェクト</button>
+              <button class="claudemd-scope-btn" data-scope="user">ユーザー (~/.claude)</button>
+            </div>
+            <div id="claudemd-empty" class="harness-empty">
+              <p>このプロジェクトに CLAUDE.md がありません。</p>
+              <button class="harness-btn primary" id="claudemd-create-btn">CLAUDE.md を作成</button>
+            </div>
+            <div id="claudemd-editor" class="hidden">
+              <textarea id="claudemd-textarea" spellcheck="false" placeholder="# プロジェクト指示書&#10;&#10;- ビルド: npm run build&#10;- テスト: npm test"></textarea>
+              <div class="harness-editor-actions">
+                <button class="harness-btn primary" id="claudemd-save-btn">保存</button>
+                <span id="claudemd-status"></span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Hooks Config -->
+        <div class="harness-section" id="harness-hooks">
+          <div class="harness-section-header" data-collapse="hooks">
+            <h4>Hooks</h4>
+            <span class="harness-badge" id="hooks-badge"></span>
+            <span class="harness-chevron">&#9660;</span>
+          </div>
+          <p class="harness-desc">イベント時にコマンドを自動実行</p>
+          <div class="harness-section-body" id="hooks-body">
+            <div id="hooks-empty" class="harness-empty">
+              <p>Hooks が未設定です。</p>
+            </div>
+            <div id="hooks-list"></div>
+            <button class="harness-btn" id="hooks-add-btn">Hook を追加</button>
+          </div>
+        </div>
+
+        <!-- Memory Browser -->
+        <div class="harness-section" id="harness-memory">
+          <div class="harness-section-header" data-collapse="memory">
+            <h4>Memory</h4>
+            <span class="harness-badge" id="memory-badge"></span>
+            <span class="harness-chevron">&#9660;</span>
+          </div>
+          <p class="harness-desc">セッション間で持続する記憶</p>
+          <div class="harness-section-body" id="memory-body">
+            <div id="memory-empty" class="harness-empty">
+              <p>メモリファイルがありません。</p>
+            </div>
+            <div id="memory-list"></div>
+          </div>
+        </div>
+
+        <!-- Projects -->
+        <div class="harness-section" id="harness-projects">
+          <div class="harness-section-header" data-collapse="projects">
+            <h4>Projects</h4>
+            <span class="harness-badge" id="projects-badge"></span>
+            <span class="harness-chevron">&#9660;</span>
+          </div>
+          <p class="harness-desc">プロジェクト間の切替</p>
+          <div class="harness-section-body" id="projects-body">
+            <div id="projects-empty" class="harness-empty">
+              <p>登録済みプロジェクトがありません。</p>
+            </div>
+            <div id="projects-list"></div>
+            <button class="harness-btn" id="projects-add-btn">プロジェクトを追加</button>
           </div>
         </div>
       </div>
@@ -170,12 +293,22 @@
         <div id="quick-spacer"></div>
         <button class="qbtn worklog-btn" id="worklog-toggle" title="作業ログ">&#128203; ログ</button>
       </div>
+      <!-- Builder Prompt (shown only in Builder mode) -->
+      <div id="builder-input-row">
+        <div id="builder-dev-toggle">
+          <button class="bdev-btn active" data-devmode="nocode">おまかせ</button>
+          <button class="bdev-btn" data-devmode="lowcode">一緒に作る</button>
+        </div>
+        <textarea id="builder-prompt" placeholder="何を作りたいですか？ 例: レストランの予約管理アプリを作って" rows="2"></textarea>
+        <button id="builder-send-btn">送信</button>
+      </div>
+      <!-- Normal Prompt -->
       <div id="input-row">
-        <textarea id="prompt-input" placeholder="プロンプトを入力... (Enter&#215;2 で送信)" rows="2"></textarea>
+        <textarea id="prompt-input" placeholder="プロンプトを入力... (Enter で送信, Shift+Enter で改行)" rows="2"></textarea>
         <button id="send-btn">送信</button>
       </div>
-      <div id="enter-hint" class="hidden">もう一度 Enter で送信</div>
-      <div id="hint">Enter&#215;2 送信 &#183; Cmd+Enter 送信 &#183; Cmd+T 新規タブ</div>
+      <div id="enter-hint" class="hidden"></div>
+      <div id="hint">Enter 送信 &#183; Shift+Enter 改行 &#183; Cmd+T 新規タブ</div>
     </div>
   </div>
 
@@ -312,6 +445,26 @@
       </div>
 
       <div id="app-info" style="margin-top: 12px; font-size: 11px; color: var(--fg2); text-align: center;"></div>
+    </div>
+  </div>
+
+  <!-- Memory Edit Dialog -->
+  <div id="memory-dialog" class="dialog hidden">
+    <div class="dialog-content memory-dialog-content">
+      <div class="dialog-header">
+        <h2 id="memory-dialog-title">メモリ</h2>
+        <button id="memory-dialog-close" class="dialog-close-btn">&times;</button>
+      </div>
+      <div class="memory-meta">
+        <span id="memory-dialog-type" class="memory-meta-tag"></span>
+        <span id="memory-dialog-desc" class="memory-meta-desc"></span>
+      </div>
+      <textarea id="memory-dialog-textarea" spellcheck="false"></textarea>
+      <div class="memory-dialog-actions">
+        <button class="harness-btn primary" id="memory-dialog-save">保存</button>
+        <button class="harness-btn memory-dialog-delete" id="memory-dialog-delete">削除</button>
+        <span id="memory-dialog-status"></span>
+      </div>
     </div>
   </div>
 

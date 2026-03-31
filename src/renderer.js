@@ -6,6 +6,7 @@ let uiMode = 'simple';      // 'simple' | 'advanced'
 const history = [];
 let histIdx = 0;
 let appSettings = { fontSize: 14, autoSaveInterval: 10, doubleEnterDelay: 500 };
+let claudeMdScope = 'project'; // 'project' | 'user'
 
 // ── Boot ──
 document.addEventListener('DOMContentLoaded', async () => {
@@ -151,6 +152,26 @@ function setupListeners() {
     card.addEventListener('click', () => builderCardClicked(card.dataset.target));
   });
 
+  // Builder dev mode toggle (nocode / lowcode)
+  document.querySelectorAll('.bdev-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.bdev-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      builderDevMode = btn.dataset.devmode;
+    });
+  });
+
+  // Builder prompt composer - send button
+  document.getElementById('builder-send-btn').addEventListener('click', sendBuilderPrompt);
+
+  // Builder prompt composer - keyboard shortcuts
+  document.getElementById('builder-prompt').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      sendBuilderPrompt();
+    }
+  });
+
   // Edit this app buttons
   document.getElementById('btn-edit-claude').addEventListener('click', editAppWithClaude);
   document.getElementById('btn-edit-codex').addEventListener('click', editAppWithCodex);
@@ -218,9 +239,12 @@ function setupListeners() {
         .replace(/\\r/g, '\r')
         .replace(/\\x([0-9a-fA-F]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
       window.api.sendInput(activeId, raw);
+      // Scroll terminal to show response
+      const tab = tabs.get(activeId);
+      if (tab) tab.term.scrollToBottom();
       // Visual feedback
-      b.style.opacity = '0.5';
-      setTimeout(() => { b.style.opacity = ''; }, 300);
+      b.classList.add('qbtn-pressed');
+      setTimeout(() => { b.classList.remove('qbtn-pressed'); }, 400);
     });
   });
 
@@ -327,19 +351,32 @@ function setUiMode(mode) {
     if (t.pane.classList.contains('active')) {
       setTimeout(() => {
         try {
+          // Save scroll state before refit
+          const wasAtBottom = t.term.buffer.active.viewportY >= t.term.buffer.active.baseY;
+          const savedViewportY = t.term.buffer.active.viewportY;
           t.fit.fit();
           const sid = getTabSessionId(t.tabEl);
           if (sid) window.api.resizeTerminal(sid, t.term.cols, t.term.rows);
+          // Restore scroll position after refit
+          if (wasAtBottom) {
+            t.term.scrollToBottom();
+          } else {
+            t.term.scrollToLine(savedViewportY);
+          }
         } catch (_) {}
       }, 80);
     }
   });
-  if (mode === 'simple' || mode === 'builder') {
+  if (mode === 'simple' || mode === 'builder' || mode === 'harness') {
     document.getElementById('prompt-input').focus();
     if (mode === 'builder') scanCurrentProject();
+    if (mode === 'harness') refreshHarnessPanel();
   } else {
     const tab = tabs.get(activeId);
-    if (tab) tab.term.focus();
+    if (tab) {
+      tab.term.focus();
+      tab.term.scrollToBottom();
+    }
   }
 }
 
@@ -492,9 +529,16 @@ function addTab(session, replayBuffer) {
     clearTimeout(resizeTimer);
     resizeTimer = setTimeout(() => {
       try {
+        const wasAtBottom = term.buffer.active.viewportY >= term.buffer.active.baseY;
+        const savedViewportY = term.buffer.active.viewportY;
         fit.fit();
         const sid = getTabSessionId(tabEl);
         if (sid) window.api.resizeTerminal(sid, term.cols, term.rows);
+        if (wasAtBottom) {
+          term.scrollToBottom();
+        } else {
+          term.scrollToLine(savedViewportY);
+        }
       } catch (_) {}
     }, 80);
   });
@@ -534,17 +578,25 @@ function switchTab(id) {
       currentMode = mode;
       updateStatusMode(mode);
       document.getElementById('status-cwd').textContent = t.session.cwd || '';
-      // Delayed fit to let layout settle
+      // Delayed fit to let layout settle, preserve scroll position
       setTimeout(() => {
         try {
+          const wasAtBottom = t.term.buffer.active.viewportY >= t.term.buffer.active.baseY;
+          const savedViewportY = t.term.buffer.active.viewportY;
           t.fit.fit();
           window.api.resizeTerminal(tid, t.term.cols, t.term.rows);
+          if (wasAtBottom) {
+            t.term.scrollToBottom();
+          } else {
+            t.term.scrollToLine(savedViewportY);
+          }
         } catch (_) {}
       }, 50);
     }
   });
-  if (uiMode === 'simple' || uiMode === 'builder') {
+  if (uiMode === 'simple' || uiMode === 'builder' || uiMode === 'harness') {
     document.getElementById('prompt-input').focus();
+    if (uiMode === 'harness') refreshHarnessPanel();
   } else {
     const tab = tabs.get(id);
     if (tab) tab.term.focus();
@@ -882,6 +934,44 @@ async function applyUpdate() {
 // ══════════════════════════════════════════════════
 
 let lastScanResult = null;
+let builderDevMode = 'nocode'; // 'nocode' | 'lowcode'
+
+function sendBuilderPrompt() {
+  const textarea = document.getElementById('builder-prompt');
+  const text = textarea.value.trim();
+  if (!text || !activeId) return;
+
+  const tab = tabs.get(activeId);
+  if (!tab) return;
+
+  const isNocode = builderDevMode === 'nocode';
+  const modeLabel = isNocode ? 'ノーコード' : 'ローコード';
+  const modeInstruction = isNocode
+    ? `【${modeLabel}モード】ユーザーはコードを書きません。すべてのファイル作成・設定・コマンド実行をあなたが行ってください。進捗を日本語で報告しながら、確認が必要な箇所だけ質問してください。`
+    : `【${modeLabel}モード】ステップバイステップで進めてください。各ステップで何をするか説明し、技術的な選択肢がある場合は選ばせてください。コードの重要な部分は解説してください。`;
+
+  const prompt = `${modeInstruction}\n\n${text}`;
+
+  if (tab.session.mode !== 'claude') {
+    switchSessionMode('claude');
+    setTimeout(() => {
+      window.api.sendInput(activeId, prompt + '\r');
+    }, 1500);
+  } else {
+    window.api.sendInput(activeId, prompt + '\r');
+  }
+
+  window.api.logPrompt({
+    sessionId: activeId,
+    prompt: `[Builder:custom] ${text.slice(0, 100)}...`,
+    sessionName: tab.session.name || '',
+    cwd: tab.session.cwd || '',
+  });
+  window.api.saveSessions();
+
+  textarea.value = '';
+  setStatus('busy', 'Builder: カスタムプロンプトを送信中...');
+}
 
 async function scanCurrentProject() {
   const tab = tabs.get(activeId);
@@ -968,8 +1058,261 @@ function builderCardClicked(target) {
   const name = info.packageName || info.name || 'このプロジェクト';
 
   // Build a detailed prompt for Claude Code
+  const isNocode = builderDevMode === 'nocode';
+  const modeLabel = isNocode ? 'ノーコード' : 'ローコード';
+  const modeInstruction = isNocode
+    ? `【${modeLabel}モード】ユーザーはコードを書きません。すべてのファイル作成・設定・コマンド実行をあなたが行ってください。進捗を日本語で報告しながら、確認が必要な箇所だけ質問してください。`
+    : `【${modeLabel}モード】ステップバイステップで進めてください。各ステップで何をするか説明し、技術的な選択肢がある場合は選ばせてください。コードの重要な部分は解説してください。`;
+
   const prompts = {
-    // ── Web Deploy ──
+    // ══════════════════════════════════════
+    // ── Web アプリ作成 ──
+    // ══════════════════════════════════════
+    'build-saas': `${modeInstruction}
+
+SaaS / 管理画面ダッシュボードを新規作成したい。以下の手順で進めて：
+1. まずどんなSaaSか聞いて（対象ユーザー、主な機能、データの種類）
+2. 技術スタック選定（Next.js + Supabase + Tailwind CSS を推奨、理由も説明）
+3. プロジェクトのスキャフォールド作成
+4. 認証（ログイン/サインアップ）の実装
+5. ダッシュボード画面のレイアウト作成（サイドバー、統計カード、テーブル）
+6. CRUD 機能の実装
+7. レスポンシブ対応
+8. デプロイ（Vercel推奨）まで完了させる
+
+本番で使える品質で作って。テスト用のサンプルデータも用意して。`,
+
+    'build-lp': `${modeInstruction}
+
+ランディングページ（LP）を新規作成したい。以下の手順で進めて：
+1. まずLPの目的を聞いて（商品/サービス紹介、メール登録、予約誘導など）
+2. 構成提案（ヒーロー、特徴、料金、FAQ、CTA セクション）
+3. Next.js or Astro + Tailwind CSS でプロジェクト作成
+4. レスポンシブ対応のモダンなデザインで全セクション実装
+5. アニメーション（スクロール連動、フェードイン）
+6. コンタクトフォーム or メール登録フォームの実装
+7. SEO対策（meta, OGP, structured data）
+8. Core Web Vitals 最適化（画像最適化、フォント読み込み）
+9. Vercel or Netlify にデプロイ
+
+Bubble等のノーコードツールより高品質で高速なものを作って。`,
+
+    'build-ec': `${modeInstruction}
+
+ECサイト（オンラインショップ）を新規作成したい。以下の手順で進めて：
+1. まず何を売るか聞いて（物販、デジタル商品、サブスク等）
+2. 技術スタック選定（Next.js + Stripe + Supabase を推奨）
+3. プロジェクトのスキャフォールド作成
+4. 商品一覧ページ（カテゴリ、フィルタ、検索）
+5. 商品詳細ページ（画像ギャラリー、説明、レビュー）
+6. カート機能の実装
+7. Stripe決済（Checkout Session）の実装
+8. 注文管理・注文確認メール
+9. 管理画面（商品追加/編集/削除、注文一覧）
+10. レスポンシブ対応
+11. デプロイまで完了
+
+BASEやShopifyに頼らない、自分でコントロールできるECサイトを作って。`,
+
+    'build-booking': `${modeInstruction}
+
+予約システムを新規作成したい。以下の手順で進めて：
+1. まず何の予約か聞いて（サロン、レッスン、会議室、レストラン等）
+2. 技術スタック選定（Next.js + Supabase + Tailwind CSS を推奨）
+3. プロジェクト作成
+4. カレンダーUI（日/週/月表示、空き枠表示）
+5. 予約フォーム（日時選択、顧客情報入力）
+6. 予約確認メール送信
+7. 管理画面（予約一覧、承認/拒否、枠の設定）
+8. Google Calendar 連携（任意）
+9. リマインダー通知
+10. Stripe決済連携（前払い対応）
+11. レスポンシブ対応・デプロイ
+
+Coubic等の予約サービスに匹敵する品質で作って。`,
+
+    'build-community': `${modeInstruction}
+
+SNS / コミュニティサイトを新規作成したい。以下の手順で進めて：
+1. まずどんなコミュニティか聞いて（趣味、学習、地域、専門分野等）
+2. 技術スタック選定（Next.js + Supabase + Realtime を推奨）
+3. プロジェクト作成
+4. ユーザー認証（登録、ログイン、プロフィール）
+5. 投稿機能（テキスト、画像、リンク共有）
+6. コメント・いいね・フォロー機能
+7. リアルタイムチャット or メッセージ機能
+8. 通知システム
+9. モデレーション機能（通報、ブロック）
+10. レスポンシブ対応・デプロイ
+
+Discordのサーバーやmixiのコミュニティに近い体験を独自で作って。`,
+
+    'build-biztools': `${modeInstruction}
+
+業務アプリ / 社内ツールを新規作成したい。以下の手順で進めて：
+1. まずどんな業務か聞いて（タスク管理、在庫管理、顧客管理、ワークフロー等）
+2. 技術スタック選定（Next.js + Supabase + Tailwind CSS を推奨）
+3. プロジェクト作成
+4. ユーザー認証・権限管理（管理者、一般ユーザー、閲覧のみ）
+5. メインの業務画面（CRUD、フィルタ、検索、ソート）
+6. ダッシュボード（集計、グラフ）
+7. CSVインポート/エクスポート
+8. メール通知・Slack連携（任意）
+9. レスポンシブ対応・デプロイ
+
+kintoneやNotionに頼らない、自社専用のツールを作って。`,
+
+    'build-portfolio': `${modeInstruction}
+
+ポートフォリオサイトを新規作成したい。以下の手順で進めて：
+1. まず個人か企業か聞いて、見せたいコンテンツを確認
+2. 技術スタック選定（Next.js or Astro + Tailwind CSS を推奨）
+3. プロジェクト作成
+4. ヒーローセクション（名前/ロゴ、キャッチコピー）
+5. Works / プロジェクト一覧（フィルタ付き）
+6. About セクション
+7. スキル / サービス一覧
+8. コンタクトフォーム
+9. アニメーション（ページ遷移、スクロール連動）
+10. SEO・OGP・ダークモード対応
+11. デプロイまで完了
+
+デザイナー品質のモダンなポートフォリオを作って。`,
+
+    'build-blog': `${modeInstruction}
+
+ブログ / メディアサイトを新規作成したい。以下の手順で進めて：
+1. まずブログのテーマ・対象読者を聞く
+2. 技術スタック選定（Next.js + MDX or Astro + Tailwind CSS を推奨）
+3. プロジェクト作成
+4. 記事一覧ページ（カテゴリ、タグ、ページネーション）
+5. 記事詳細ページ（目次自動生成、コードブロック、画像最適化）
+6. カテゴリ・タグページ
+7. 検索機能
+8. RSS フィード
+9. SEO完全対応（meta, OGP, JSON-LD, sitemap.xml）
+10. ダークモード対応
+11. デプロイ + CMS連携（任意: Notion API or microCMS）
+
+WordPressより速く、noteより自由なブログを作って。`,
+
+    // ══════════════════════════════════════
+    // ── ネイティブ / モバイルアプリ ──
+    // ══════════════════════════════════════
+    'build-ios': `${modeInstruction}
+
+iOS アプリを新規作成して App Store に掲載できる状態まで持っていきたい。以下の手順で進めて：
+1. まずどんなアプリか聞いて（機能、ターゲットユーザー）
+2. 技術選定を提案（React Native / Capacitor + Next.js / SwiftUI のどれが最適か）
+3. プロジェクトのスキャフォールド作成
+4. メイン画面の実装（タブバー、ナビゲーション）
+5. コア機能の実装
+6. ローカルデータ保存 or API連携
+7. プッシュ通知の設定（任意）
+8. App Store 用のアセット準備（アイコン、スクリーンショット、説明文）
+9. Xcode でのビルド・シミュレータテスト手順
+10. App Store Connect への提出手順
+
+Adaloで作れる範囲を超えた、ネイティブ品質のアプリを作って。Apple の審査に通るクオリティで。`,
+
+    'build-android': `${modeInstruction}
+
+Android アプリを新規作成して Google Play に掲載できる状態まで持っていきたい。以下の手順で進めて：
+1. まずどんなアプリか聞いて（機能、ターゲットユーザー）
+2. 技術選定を提案（React Native / Capacitor + Next.js / Kotlin のどれが最適か）
+3. プロジェクトのスキャフォールド作成
+4. メイン画面の実装
+5. コア機能の実装
+6. データ保存 or API連携
+7. Play Store 用のアセット準備（アイコン、スクリーンショット、説明文）
+8. Android Studio でのビルド・エミュレータテスト
+9. Google Play Console への提出手順
+
+Play Store の審査に通る品質で、パフォーマンスも最適化して。`,
+
+    'build-cross': `${modeInstruction}
+
+iOS + Android 両対応のクロスプラットフォームアプリを新規作成したい。以下の手順で進めて：
+1. まずどんなアプリか聞いて（機能、ターゲットユーザー）
+2. 技術選定（React Native / Expo を推奨、理由も説明。Capacitor + Next.js も選択肢として提示）
+3. プロジェクトのスキャフォールド作成
+4. 共通UIの実装（ナビゲーション、スクリーン）
+5. プラットフォーム固有の対応（カメラ、通知等）
+6. コア機能の実装
+7. iOS / Android 両方でテスト
+8. App Store / Play Store 両方への提出準備
+
+1つのコードベースから両OSの高品質なアプリを作って。`,
+
+    'build-pwa': `${modeInstruction}
+
+PWA（Progressive Web App）を新規作成したい。インストール可能でオフライン対応のWebアプリ。以下の手順で進めて：
+1. まずどんなアプリか聞いて
+2. Next.js + next-pwa + Tailwind CSS でプロジェクト作成
+3. manifest.json の設定（アイコン、テーマカラー、起動画面）
+4. Service Worker の設定（キャッシュ戦略、オフライン対応）
+5. メイン画面の実装
+6. レスポンシブ対応（モバイルファースト）
+7. インストールプロンプトの実装
+8. Lighthouse で PWA スコア 100 を目指す
+9. デプロイ
+
+アプリストア不要でインストールできる、ネイティブアプリに近い体験を作って。`,
+
+    // ══════════════════════════════════════
+    // ── WordPress ──
+    // ══════════════════════════════════════
+    'build-wp-theme': `${modeInstruction}
+
+WordPress のオリジナルテーマを新規作成したい。以下の手順で進めて：
+1. まずサイトの目的を聞いて（コーポレート、ブログ、ポートフォリオ等）
+2. テーマのディレクトリ構成を作成
+3. style.css（テーマ情報ヘッダー）
+4. functions.php（テーマサポート、カスタマイザー）
+5. テンプレートファイル（header, footer, index, single, page, archive）
+6. カスタム投稿タイプ・カスタムフィールド（必要に応じて）
+7. レスポンシブ対応のモダンなデザイン
+8. Gutenberg ブロック対応
+9. カスタマイザーでの色・ロゴ変更対応
+10. テーマの有効化・動作確認手順
+
+既製テーマに頼らない、完全オリジナルのテーマを作って。`,
+
+    'build-wp-plugin': `${modeInstruction}
+
+WordPress のカスタムプラグインを新規作成したい。以下の手順で進めて：
+1. まずプラグインの機能を聞いて
+2. プラグインのディレクトリ構成を作成
+3. メインプラグインファイル（ヘッダー、有効化/無効化フック）
+4. 管理画面のメニュー・設定ページ
+5. ショートコード or ブロック作成
+6. データベーステーブル作成（必要に応じて）
+7. REST API エンドポイント（必要に応じて）
+8. セキュリティ対策（nonce, サニタイズ, capability check）
+9. 国際化対応（翻訳可能に）
+10. テスト・動作確認
+
+WordPress.org に公開できる品質基準で作って。`,
+
+    'build-wp-ec': `${modeInstruction}
+
+WooCommerce を使った WordPress ECサイトを構築したい。以下の手順で進めて：
+1. まず何を売るか聞いて
+2. WooCommerce + 必要なプラグインの設定
+3. 商品ページのカスタマイズ
+4. 決済設定（Stripe推奨）
+5. 配送設定
+6. メールテンプレートのカスタマイズ
+7. 管理画面の使い方ガイド
+8. SEO設定
+9. パフォーマンス最適化
+10. セキュリティ設定
+
+BASEやSTORESと同等以上の機能を、自前で管理できるECサイトとして構築して。`,
+
+    // ══════════════════════════════════════
+    // ── Web Deploy (既存) ──
+    // ══════════════════════════════════════
     'vercel': `このプロジェクト「${name}」(${fw}/${lang}) を Vercel にデプロイしたい。以下を順番にやって：
 1. vercel.json の作成・確認（環境変数、ビルド設定）
 2. 必要なら package.json の build スクリプトを確認・修正
@@ -1129,6 +1472,365 @@ function logBuilderAction(target, prompt) {
     });
   }
   window.api.saveSessions();
+}
+
+// ══════════════════════════════════════════════════
+// ── Harness Engineering ──
+// ══════════════════════════════════════════════════
+
+// Setup listeners on DOMContentLoaded
+document.addEventListener('DOMContentLoaded', () => {
+  // Collapsible sections
+  document.querySelectorAll('.harness-section-header').forEach(header => {
+    header.addEventListener('click', () => {
+      header.closest('.harness-section').classList.toggle('collapsed');
+    });
+  });
+
+  // CLAUDE.md scope toggle
+  document.querySelectorAll('.claudemd-scope-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.claudemd-scope-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      claudeMdScope = btn.dataset.scope;
+      loadClaudeMd();
+    });
+  });
+
+  // CLAUDE.md create
+  const createBtn = document.getElementById('claudemd-create-btn');
+  if (createBtn) createBtn.addEventListener('click', async () => {
+    const tab = tabs.get(activeId);
+    const template = claudeMdScope === 'user'
+      ? `# ユーザーグローバル指示書\n\n## 共通ルール\n\n- \n`
+      : `# プロジェクト指示書\n\n- ビルド: npm run build\n- テスト: npm test\n- Lint: npm run lint\n\n## アーキテクチャ\n\n- フレームワーク: \n- データベース: \n\n## 規約\n\n- \n`;
+    let result;
+    if (claudeMdScope === 'user') {
+      result = await window.api.harnessWriteUserClaudeMd(template);
+    } else {
+      if (!tab) return;
+      result = await window.api.harnessWriteClaudeMd(tab.session.cwd, template);
+    }
+    if (result.success) loadClaudeMd();
+  });
+
+  // CLAUDE.md save
+  const saveBtn = document.getElementById('claudemd-save-btn');
+  if (saveBtn) saveBtn.addEventListener('click', async () => {
+    const tab = tabs.get(activeId);
+    const content = document.getElementById('claudemd-textarea').value;
+    let result;
+    if (claudeMdScope === 'user') {
+      result = await window.api.harnessWriteUserClaudeMd(content);
+    } else {
+      if (!tab) return;
+      result = await window.api.harnessWriteClaudeMd(tab.session.cwd, content);
+    }
+    const status = document.getElementById('claudemd-status');
+    if (result.success) {
+      status.textContent = '保存しました！';
+      status.style.color = 'var(--green)';
+    } else {
+      status.textContent = result.error;
+      status.style.color = 'var(--red)';
+    }
+    setTimeout(() => { status.textContent = ''; }, 3000);
+  });
+
+  // Hooks add
+  const hooksBtn = document.getElementById('hooks-add-btn');
+  if (hooksBtn) hooksBtn.addEventListener('click', addNewHook);
+
+  // Projects add
+  const projBtn = document.getElementById('projects-add-btn');
+  if (projBtn) projBtn.addEventListener('click', async () => {
+    const folder = await window.api.harnessPickFolder();
+    if (!folder) return;
+    const projects = await window.api.harnessLoadProjects();
+    if (projects.find(p => p.path === folder)) return;
+    const name = folder.split('/').pop() || folder;
+    projects.push({ name, path: folder });
+    await window.api.harnessSaveProjects(projects);
+    loadProjects();
+  });
+
+  // Memory dialog
+  setupMemoryDialog();
+});
+
+function refreshHarnessPanel() {
+  if (uiMode !== 'harness') return;
+  loadClaudeMd();
+  loadHooks();
+  loadMemory();
+  loadProjects();
+}
+
+async function loadClaudeMd() {
+  const tab = tabs.get(activeId);
+  let result;
+  if (claudeMdScope === 'user') {
+    result = await window.api.harnessReadUserClaudeMd();
+  } else {
+    if (!tab) return;
+    result = await window.api.harnessReadClaudeMd(tab.session.cwd);
+  }
+  const emptyEl = document.getElementById('claudemd-empty');
+  const editorEl = document.getElementById('claudemd-editor');
+  const badge = document.getElementById('claudemd-badge');
+  const emptyText = emptyEl.querySelector('p');
+  if (emptyText) {
+    emptyText.textContent = claudeMdScope === 'user'
+      ? 'ユーザーグローバル CLAUDE.md がありません。'
+      : 'このプロジェクトに CLAUDE.md がありません。';
+  }
+
+  if (result.exists) {
+    emptyEl.classList.add('hidden');
+    editorEl.classList.remove('hidden');
+    document.getElementById('claudemd-textarea').value = result.content;
+    badge.textContent = '✓';
+  } else {
+    emptyEl.classList.remove('hidden');
+    editorEl.classList.add('hidden');
+    badge.textContent = '';
+  }
+}
+
+async function loadHooks() {
+  const tab = tabs.get(activeId);
+  if (!tab) return;
+  const result = await window.api.harnessReadHooks(tab.session.cwd);
+  const emptyEl = document.getElementById('hooks-empty');
+  const listEl = document.getElementById('hooks-list');
+  const badge = document.getElementById('hooks-badge');
+
+  listEl.innerHTML = '';
+  const allHooks = { ...(result.user || {}), ...(result.project || {}) };
+  const events = Object.keys(allHooks);
+
+  if (events.length === 0) {
+    emptyEl.classList.remove('hidden');
+    badge.textContent = '';
+    return;
+  }
+
+  emptyEl.classList.add('hidden');
+  let count = 0;
+  for (const event of events) {
+    const hooks = allHooks[event];
+    if (!Array.isArray(hooks)) continue;
+    for (let hi = 0; hi < hooks.length; hi++) {
+      const hook = hooks[hi];
+      count++;
+      const item = document.createElement('div');
+      item.className = 'hook-item';
+      item.innerHTML = `
+        <div class="hook-item-header">
+          <span class="hook-event">${esc(event)}</span>
+          <button class="hook-delete">&times;</button>
+        </div>
+        <div class="hook-detail">${hook.matcher ? `<span>${esc(hook.matcher)}</span> → ` : ''}${esc(hook.command || '')}</div>
+      `;
+      item.querySelector('.hook-delete').addEventListener('click', async () => {
+        const current = await window.api.harnessReadHooks(tab.session.cwd);
+        const projectHooks = current.project || {};
+        if (projectHooks[event] && Array.isArray(projectHooks[event])) {
+          projectHooks[event].splice(hi, 1);
+          if (projectHooks[event].length === 0) delete projectHooks[event];
+        }
+        await window.api.harnessWriteHooks(tab.session.cwd, projectHooks);
+        loadHooks();
+      });
+      listEl.appendChild(item);
+    }
+  }
+  badge.textContent = count.toString();
+}
+
+async function addNewHook() {
+  const tab = tabs.get(activeId);
+  if (!tab) return;
+  const listEl = document.getElementById('hooks-list');
+  const form = document.createElement('div');
+  form.className = 'hook-item';
+  form.style.borderColor = 'var(--accent)';
+  form.innerHTML = `
+    <select class="hook-event-select" style="width:100%;background:var(--bg1);color:var(--fg);border:1px solid var(--border);border-radius:4px;padding:4px;margin-bottom:4px;font-size:11px;">
+      <option value="PreToolUse">PreToolUse</option>
+      <option value="PostToolUse">PostToolUse</option>
+      <option value="Notification">Notification</option>
+      <option value="Stop">Stop</option>
+    </select>
+    <input class="hook-matcher-input" placeholder="Matcher (例: Edit|Write)" style="width:100%;background:var(--bg1);color:var(--fg);border:1px solid var(--border);border-radius:4px;padding:4px;margin-bottom:4px;font-size:11px;font-family:Menlo,monospace;">
+    <input class="hook-command-input" placeholder="コマンド (例: npx eslint --fix)" style="width:100%;background:var(--bg1);color:var(--fg);border:1px solid var(--border);border-radius:4px;padding:4px;margin-bottom:4px;font-size:11px;font-family:Menlo,monospace;">
+    <div style="display:flex;gap:4px;">
+      <button class="harness-btn primary hook-save-new" style="margin:0;flex:1;">保存</button>
+      <button class="harness-btn hook-cancel-new" style="margin:0;flex:1;">キャンセル</button>
+    </div>
+  `;
+  listEl.appendChild(form);
+
+  form.querySelector('.hook-cancel-new').addEventListener('click', () => form.remove());
+  form.querySelector('.hook-save-new').addEventListener('click', async () => {
+    const event = form.querySelector('.hook-event-select').value;
+    const matcher = form.querySelector('.hook-matcher-input').value.trim();
+    const command = form.querySelector('.hook-command-input').value.trim();
+    const cmdInput = form.querySelector('.hook-command-input');
+    if (!command) {
+      cmdInput.style.borderColor = 'var(--red)';
+      cmdInput.placeholder = 'コマンドは必須です';
+      cmdInput.focus();
+      return;
+    }
+
+    const result = await window.api.harnessReadHooks(tab.session.cwd);
+    const hooks = result.project || {};
+    if (!hooks[event]) hooks[event] = [];
+    const entry = { command };
+    if (matcher) entry.matcher = matcher;
+    hooks[event].push(entry);
+    await window.api.harnessWriteHooks(tab.session.cwd, hooks);
+    form.remove();
+    loadHooks();
+  });
+}
+
+async function loadMemory() {
+  const memories = await window.api.harnessReadMemory();
+  const emptyEl = document.getElementById('memory-empty');
+  const listEl = document.getElementById('memory-list');
+  const badge = document.getElementById('memory-badge');
+
+  listEl.innerHTML = '';
+  if (memories.length === 0) {
+    emptyEl.classList.remove('hidden');
+    badge.textContent = '';
+    return;
+  }
+
+  emptyEl.classList.add('hidden');
+  badge.textContent = memories.length.toString();
+
+  const typeIcons = { user: '👤', feedback: '💬', project: '📁', reference: '🔗' };
+  for (const mem of memories) {
+    const item = document.createElement('div');
+    item.className = 'memory-item';
+    item.innerHTML = `
+      <span class="memory-icon">${typeIcons[mem.type] || '📝'}</span>
+      <div class="memory-info">
+        <div class="memory-name">${esc(mem.name)}</div>
+        <div class="memory-type">${esc(mem.type)} — ${esc(mem.description)}</div>
+      </div>
+    `;
+    item.addEventListener('click', () => openMemoryDialog(mem));
+    listEl.appendChild(item);
+  }
+}
+
+async function openMemoryDialog(mem) {
+  const dialog = document.getElementById('memory-dialog');
+  const title = document.getElementById('memory-dialog-title');
+  const typeTag = document.getElementById('memory-dialog-type');
+  const desc = document.getElementById('memory-dialog-desc');
+  const textarea = document.getElementById('memory-dialog-textarea');
+  const status = document.getElementById('memory-dialog-status');
+
+  title.textContent = mem.name;
+  typeTag.textContent = mem.type;
+  desc.textContent = mem.description;
+  status.textContent = '';
+
+  const result = await window.api.harnessReadMemoryContent(mem.file);
+  textarea.value = result.content || '';
+  dialog.dataset.file = mem.file;
+  dialog.classList.remove('hidden');
+}
+
+function setupMemoryDialog() {
+  const dialog = document.getElementById('memory-dialog');
+  const closeBtn = document.getElementById('memory-dialog-close');
+  const saveBtn = document.getElementById('memory-dialog-save');
+  const deleteBtn = document.getElementById('memory-dialog-delete');
+  const status = document.getElementById('memory-dialog-status');
+
+  closeBtn.addEventListener('click', () => dialog.classList.add('hidden'));
+  dialog.addEventListener('click', (e) => {
+    if (e.target === dialog) dialog.classList.add('hidden');
+  });
+
+  saveBtn.addEventListener('click', async () => {
+    const file = dialog.dataset.file;
+    const content = document.getElementById('memory-dialog-textarea').value;
+    const result = await window.api.harnessWriteMemory(file, content);
+    if (result.success) {
+      status.textContent = '保存しました';
+      status.style.color = 'var(--green)';
+      setTimeout(() => { status.textContent = ''; }, 2000);
+      loadMemory();
+    } else {
+      status.textContent = result.error;
+      status.style.color = 'var(--red)';
+    }
+  });
+
+  deleteBtn.addEventListener('click', async () => {
+    const file = dialog.dataset.file;
+    if (!confirm(`「${file}」を削除しますか？`)) return;
+    const result = await window.api.harnessDeleteMemory(file);
+    if (result.success) {
+      dialog.classList.add('hidden');
+      loadMemory();
+    } else {
+      status.textContent = result.error;
+      status.style.color = 'var(--red)';
+    }
+  });
+}
+
+async function loadProjects() {
+  const projects = await window.api.harnessLoadProjects();
+  const emptyEl = document.getElementById('projects-empty');
+  const listEl = document.getElementById('projects-list');
+  const badge = document.getElementById('projects-badge');
+
+  listEl.innerHTML = '';
+  if (projects.length === 0) {
+    emptyEl.classList.remove('hidden');
+    badge.textContent = '';
+    return;
+  }
+
+  emptyEl.classList.add('hidden');
+  badge.textContent = projects.length.toString();
+
+  const tab = tabs.get(activeId);
+  const currentCwd = tab ? tab.session.cwd : '';
+
+  for (let i = 0; i < projects.length; i++) {
+    const p = projects[i];
+    const isActive = currentCwd === p.path;
+    const item = document.createElement('div');
+    item.className = `project-item${isActive ? ' active' : ''}`;
+    item.innerHTML = `
+      <div style="flex:1;min-width:0;">
+        <div class="project-name">${esc(p.name)}</div>
+        <div class="project-path">${esc(p.path)}</div>
+      </div>
+      <button class="project-remove" data-idx="${i}">&times;</button>
+    `;
+    item.addEventListener('click', (e) => {
+      if (e.target.closest('.project-remove')) return;
+      newTab(currentMode, p.path);
+    });
+    item.querySelector('.project-remove').addEventListener('click', async (e) => {
+      e.stopPropagation();
+      projects.splice(i, 1);
+      await window.api.harnessSaveProjects(projects);
+      loadProjects();
+    });
+    listEl.appendChild(item);
+  }
 }
 
 // ── Util ──

@@ -1,6 +1,21 @@
-# Claude Code Desktop
+# Claude Code Desktop (Archived)
 
-> **Looking for the next generation?** Check out [**Code Harness**](https://github.com/koach08/code-harness) — multi-AI support (Claude Code + Codex + Aider), Harness Engineering UI, 13 languages, and more.
+> **This project has been superseded by [Code Harness](https://github.com/koach08/code-harness).** All new development and features are in Code Harness.
+
+---
+
+**Code Harness** includes everything from Claude Code Desktop plus:
+- Multi-AI support (Claude Code + Codex + Aider)
+- Harness Engineering UI (CLAUDE.md editor, Hooks, Memory, Projects)
+- 13 languages (i18n)
+- Pro features with license system
+- And more
+
+**[Download Code Harness](https://github.com/koach08/code-harness/releases)**
+
+---
+
+*Original description below for reference:*
 
 A user-friendly desktop interface for [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code).
 

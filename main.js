@@ -60,6 +60,8 @@ function createWindow() {
   mainWindow.loadFile(path.join(__dirname, 'src', 'index.html'));
 
   mainWindow.on('close', () => {
+    // Save sessions + buffers BEFORE the window closes (critical for restore)
+    saveSessionsSync();
     try {
       fs.mkdirSync(SESSIONS_DIR, { recursive: true });
       fs.writeFileSync(
@@ -523,6 +525,166 @@ ipcMain.handle('scan-project', async (_e, { cwd }) => {
   return result;
 });
 
+// ── Harness Engineering: CLAUDE.md ──
+ipcMain.handle('harness-read-claudemd', async (_e, { cwd }) => {
+  const filePath = path.join(cwd, 'CLAUDE.md');
+  try {
+    if (fs.existsSync(filePath)) {
+      return { exists: true, content: fs.readFileSync(filePath, 'utf-8') };
+    }
+    return { exists: false, content: '' };
+  } catch { return { exists: false, content: '' }; }
+});
+
+ipcMain.handle('harness-write-claudemd', async (_e, { cwd, content }) => {
+  try {
+    fs.writeFileSync(path.join(cwd, 'CLAUDE.md'), content, 'utf-8');
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('harness-read-user-claudemd', async () => {
+  const filePath = path.join(os.homedir(), '.claude', 'CLAUDE.md');
+  try {
+    if (fs.existsSync(filePath)) {
+      return { exists: true, content: fs.readFileSync(filePath, 'utf-8') };
+    }
+    return { exists: false, content: '' };
+  } catch { return { exists: false, content: '' }; }
+});
+
+ipcMain.handle('harness-write-user-claudemd', async (_e, { content }) => {
+  const dir = path.join(os.homedir(), '.claude');
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'CLAUDE.md'), content, 'utf-8');
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+// ── Harness Engineering: Hooks (settings.json) ──
+ipcMain.handle('harness-read-hooks', async (_e, { cwd }) => {
+  const projectSettings = path.join(cwd, '.claude', 'settings.json');
+  const userSettings = path.join(os.homedir(), '.claude', 'settings.json');
+  const result = { project: null, user: null };
+  try {
+    if (fs.existsSync(projectSettings)) {
+      const data = JSON.parse(fs.readFileSync(projectSettings, 'utf-8'));
+      result.project = data.hooks || null;
+    }
+  } catch (_) {}
+  try {
+    if (fs.existsSync(userSettings)) {
+      const data = JSON.parse(fs.readFileSync(userSettings, 'utf-8'));
+      result.user = data.hooks || null;
+    }
+  } catch (_) {}
+  return result;
+});
+
+ipcMain.handle('harness-write-hooks', async (_e, { cwd, hooks }) => {
+  const settingsPath = path.join(cwd, '.claude', 'settings.json');
+  try {
+    fs.mkdirSync(path.join(cwd, '.claude'), { recursive: true });
+    let data = {};
+    try { data = JSON.parse(fs.readFileSync(settingsPath, 'utf-8')); } catch (_) {}
+    data.hooks = hooks;
+    fs.writeFileSync(settingsPath, JSON.stringify(data, null, 2));
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+// ── Harness Engineering: Memory ──
+ipcMain.handle('harness-read-memory', async () => {
+  const memoryDir = path.join(os.homedir(), '.claude', 'memory');
+  const result = [];
+  try {
+    if (!fs.existsSync(memoryDir)) return result;
+    const files = fs.readdirSync(memoryDir).filter(f => f.endsWith('.md') && f !== 'MEMORY.md');
+    for (const file of files) {
+      try {
+        const content = fs.readFileSync(path.join(memoryDir, file), 'utf-8');
+        const nameMatch = content.match(/^name:\s*(.+)/m);
+        const typeMatch = content.match(/^type:\s*(.+)/m);
+        const descMatch = content.match(/^description:\s*(.+)/m);
+        result.push({
+          file,
+          name: nameMatch ? nameMatch[1].trim() : file.replace('.md', ''),
+          type: typeMatch ? typeMatch[1].trim() : 'unknown',
+          description: descMatch ? descMatch[1].trim() : '',
+        });
+      } catch (_) {}
+    }
+  } catch (_) {}
+  return result;
+});
+
+ipcMain.handle('harness-read-memory-content', async (_e, { file }) => {
+  const memoryDir = path.join(os.homedir(), '.claude', 'memory');
+  try {
+    return { content: fs.readFileSync(path.join(memoryDir, file), 'utf-8') };
+  } catch (e) {
+    return { content: '', error: e.message };
+  }
+});
+
+ipcMain.handle('harness-write-memory', async (_e, { file, content }) => {
+  const memoryDir = path.join(os.homedir(), '.claude', 'memory');
+  try {
+    fs.mkdirSync(memoryDir, { recursive: true });
+    fs.writeFileSync(path.join(memoryDir, file), content, 'utf-8');
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('harness-delete-memory', async (_e, { file }) => {
+  const memoryDir = path.join(os.homedir(), '.claude', 'memory');
+  try {
+    fs.unlinkSync(path.join(memoryDir, file));
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+// ── Harness Engineering: Projects ──
+const PROJECTS_FILE = path.join(SESSIONS_DIR, 'projects.json');
+
+ipcMain.handle('harness-load-projects', async () => {
+  try {
+    if (fs.existsSync(PROJECTS_FILE)) {
+      return JSON.parse(fs.readFileSync(PROJECTS_FILE, 'utf-8'));
+    }
+  } catch (_) {}
+  return [];
+});
+
+ipcMain.handle('harness-save-projects', async (_e, projects) => {
+  try {
+    fs.mkdirSync(SESSIONS_DIR, { recursive: true });
+    fs.writeFileSync(PROJECTS_FILE, JSON.stringify(projects, null, 2));
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('harness-pick-folder', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openDirectory'],
+  });
+  if (result.canceled || !result.filePaths.length) return null;
+  return result.filePaths[0];
+});
+
 // ── Persistence ──
 function saveSessionsSync() {
   try {
@@ -643,41 +805,105 @@ ipcMain.handle('open-app-folder', async () => {
   shell.openPath(path.join(__dirname));
 });
 
-// ── Auto-Update (git-based) ──
-ipcMain.handle('check-update', async () => {
+// ── Auto-Update (git-based for dev, GitHub API for packaged) ──
+function getSourceDir() {
+  // In packaged app, __dirname is inside .asar — resolve to the unpacked source if available
   const appDir = path.join(__dirname);
   try {
-    execSync('git fetch origin', { cwd: appDir, encoding: 'utf-8', timeout: 15000 });
-    const status = execSync('git status -uno --porcelain -b', { cwd: appDir, encoding: 'utf-8', timeout: 5000 });
-    const behind = status.includes('behind');
-    let remoteLog = '';
-    if (behind) {
-      try {
-        remoteLog = execSync('git log HEAD..origin/main --oneline -10', { cwd: appDir, encoding: 'utf-8', timeout: 5000 }).trim();
-      } catch (_) {}
+    fs.accessSync(path.join(appDir, '.git'), fs.constants.R_OK);
+    return appDir;
+  } catch (_) {
+    return null; // packaged app — no .git
+  }
+}
+
+ipcMain.handle('check-update', async () => {
+  const sourceDir = getSourceDir();
+
+  if (sourceDir) {
+    // Dev mode: use git
+    try {
+      execSync('git fetch origin', { cwd: sourceDir, encoding: 'utf-8', timeout: 15000 });
+      const status = execSync('git status -uno --porcelain -b', { cwd: sourceDir, encoding: 'utf-8', timeout: 5000 });
+      const behind = status.includes('behind');
+      let remoteLog = '';
+      if (behind) {
+        try {
+          remoteLog = execSync('git log HEAD..origin/main --oneline -10', { cwd: sourceDir, encoding: 'utf-8', timeout: 5000 }).trim();
+        } catch (_) {}
+      }
+      return { updateAvailable: behind, changes: remoteLog };
+    } catch (e) {
+      return { updateAvailable: false, error: e.message };
     }
-    return { updateAvailable: behind, changes: remoteLog };
+  }
+
+  // Packaged app: check GitHub releases via API
+  try {
+    const https = require('https');
+    const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf-8'));
+    const currentVersion = pkg.version;
+    const repoUrl = (pkg.repository && pkg.repository.url) || '';
+    const match = repoUrl.match(/github\.com\/([^/]+)\/([^/.]+)/);
+    if (!match) return { updateAvailable: false, error: 'リポジトリURL未設定' };
+
+    const [, owner, repo] = match;
+    const data = await new Promise((resolve, reject) => {
+      https.get(`https://api.github.com/repos/${owner}/${repo}/releases/latest`, {
+        headers: { 'User-Agent': 'claude-code-desktop' }
+      }, (res) => {
+        let body = '';
+        res.on('data', c => body += c);
+        res.on('end', () => {
+          if (res.statusCode === 200) resolve(JSON.parse(body));
+          else reject(new Error(`GitHub API: ${res.statusCode}`));
+        });
+      }).on('error', reject);
+    });
+
+    const latestTag = (data.tag_name || '').replace(/^v/, '');
+    const updateAvailable = latestTag && latestTag !== currentVersion;
+    return {
+      updateAvailable,
+      changes: updateAvailable ? `${currentVersion} → ${latestTag}\n${data.body || ''}`.trim() : '',
+      latestVersion: latestTag,
+      downloadUrl: data.html_url || '',
+    };
   } catch (e) {
     return { updateAvailable: false, error: e.message };
   }
 });
 
 ipcMain.handle('apply-update', async () => {
-  const appDir = path.join(__dirname);
-  try {
-    execSync('git stash', { cwd: appDir, encoding: 'utf-8', timeout: 10000 });
-    execSync('git pull origin main', { cwd: appDir, encoding: 'utf-8', timeout: 30000 });
-    try { execSync('git stash pop', { cwd: appDir, encoding: 'utf-8', timeout: 10000 }); } catch (_) {}
+  const sourceDir = getSourceDir();
+
+  if (sourceDir) {
+    // Dev mode: git pull
     try {
-      const diff = execSync('git diff HEAD~1 --name-only', { cwd: appDir, encoding: 'utf-8', timeout: 5000 });
-      if (diff.includes('package.json') || diff.includes('package-lock.json')) {
-        execSync('npm install', { cwd: appDir, encoding: 'utf-8', timeout: 120000 });
-      }
-    } catch (_) {}
-    return { success: true };
-  } catch (e) {
-    return { success: false, error: e.message };
+      execSync('git stash', { cwd: sourceDir, encoding: 'utf-8', timeout: 10000 });
+      execSync('git pull origin main', { cwd: sourceDir, encoding: 'utf-8', timeout: 30000 });
+      try { execSync('git stash pop', { cwd: sourceDir, encoding: 'utf-8', timeout: 10000 }); } catch (_) {}
+      try {
+        const diff = execSync('git diff HEAD~1 --name-only', { cwd: sourceDir, encoding: 'utf-8', timeout: 5000 });
+        if (diff.includes('package.json') || diff.includes('package-lock.json')) {
+          execSync('npm install', { cwd: sourceDir, encoding: 'utf-8', timeout: 120000 });
+        }
+      } catch (_) {}
+      return { success: true };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
   }
+
+  // Packaged app: open GitHub releases page for manual download
+  const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf-8'));
+  const repoUrl = (pkg.repository && pkg.repository.url) || '';
+  const match = repoUrl.match(/github\.com\/([^/]+)\/([^/.]+)/);
+  if (match) {
+    shell.openExternal(`https://github.com/${match[1]}/${match[2]}/releases/latest`);
+    return { success: true, openedBrowser: true };
+  }
+  return { success: false, error: 'リポジトリURL未設定' };
 });
 
 ipcMain.handle('restart-app', async () => {
@@ -703,11 +929,22 @@ app.whenReady().then(() => {
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
 app.on('before-quit', () => {
-  saveSessionsSync();
+  // Save sessions if not already saved by window-all-closed (e.g. Cmd+Q path)
+  if (!sessionsSavedOnClose) {
+    saveSessionsSync();
+    sessionsSavedOnClose = true;
+  }
   clearCrashFlag();
   if (timer) clearInterval(timer);
 });
+let sessionsSavedOnClose = false;
+
 app.on('window-all-closed', () => {
+  // Save sessions to disk BEFORE clearing in-memory data
+  if (!sessionsSavedOnClose) {
+    saveSessionsSync();
+    sessionsSavedOnClose = true;
+  }
   for (const [, s] of sessions) { try { s.pty.kill(); } catch (_) {} }
   sessions.clear();
   sessionBuffers.clear();

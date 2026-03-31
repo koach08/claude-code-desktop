@@ -29,6 +29,21 @@ contextBridge.exposeInMainWorld('api', {
   restartApp: () => ipcRenderer.invoke('restart-app'),
   getAppInfo: () => ipcRenderer.invoke('get-app-info'),
 
+  // Harness Engineering
+  harnessReadClaudeMd: (cwd) => ipcRenderer.invoke('harness-read-claudemd', { cwd }),
+  harnessWriteClaudeMd: (cwd, content) => ipcRenderer.invoke('harness-write-claudemd', { cwd, content }),
+  harnessReadUserClaudeMd: () => ipcRenderer.invoke('harness-read-user-claudemd'),
+  harnessWriteUserClaudeMd: (content) => ipcRenderer.invoke('harness-write-user-claudemd', { content }),
+  harnessReadHooks: (cwd) => ipcRenderer.invoke('harness-read-hooks', { cwd }),
+  harnessWriteHooks: (cwd, hooks) => ipcRenderer.invoke('harness-write-hooks', { cwd, hooks }),
+  harnessReadMemory: () => ipcRenderer.invoke('harness-read-memory'),
+  harnessReadMemoryContent: (file) => ipcRenderer.invoke('harness-read-memory-content', { file }),
+  harnessWriteMemory: (file, content) => ipcRenderer.invoke('harness-write-memory', { file, content }),
+  harnessDeleteMemory: (file) => ipcRenderer.invoke('harness-delete-memory', { file }),
+  harnessLoadProjects: () => ipcRenderer.invoke('harness-load-projects'),
+  harnessSaveProjects: (projects) => ipcRenderer.invoke('harness-save-projects', projects),
+  harnessPickFolder: () => ipcRenderer.invoke('harness-pick-folder'),
+
   onSessionOutput: (id, cb) => {
     const h = (_e, d) => cb(d);
     ipcRenderer.on(`session-output-${id}`, h);
