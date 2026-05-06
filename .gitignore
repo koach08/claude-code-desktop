@@ -5,3 +5,8 @@ build/icon.iconset/
 *.log
 *.dmg
 *.blockmap
+
+# Environment
+.env
+.env.*
+!.env.example
