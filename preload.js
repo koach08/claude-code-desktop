@@ -29,6 +29,29 @@ contextBridge.exposeInMainWorld('api', {
   restartApp: () => ipcRenderer.invoke('restart-app'),
   getAppInfo: () => ipcRenderer.invoke('get-app-info'),
 
+  // AI Hub Chat API
+  hubChat: (opts) => ipcRenderer.invoke('hub-chat', opts),
+  hubTranscribe: (opts) => ipcRenderer.invoke('hub-transcribe', opts),
+  hubSuggestRoute: (text) => ipcRenderer.invoke('hub-suggest-route', { text }),
+  hubProviders: () => ipcRenderer.invoke('hub-providers'),
+  hubLoadConfig: () => ipcRenderer.invoke('hub-load-config'),
+  hubSaveConfig: (cfg) => ipcRenderer.invoke('hub-save-config', cfg),
+  onHubChunk: (cb) => {
+    const h = (_e, d) => cb(d);
+    ipcRenderer.on('hub-chat-chunk', h);
+    return () => ipcRenderer.removeListener('hub-chat-chunk', h);
+  },
+  onHubDone: (cb) => {
+    const h = (_e, d) => cb(d);
+    ipcRenderer.on('hub-chat-done', h);
+    return () => ipcRenderer.removeListener('hub-chat-done', h);
+  },
+  onHubError: (cb) => {
+    const h = (_e, d) => cb(d);
+    ipcRenderer.on('hub-chat-error', h);
+    return () => ipcRenderer.removeListener('hub-chat-error', h);
+  },
+
   // Harness Engineering
   harnessReadClaudeMd: (cwd) => ipcRenderer.invoke('harness-read-claudemd', { cwd }),
   harnessWriteClaudeMd: (cwd, content) => ipcRenderer.invoke('harness-write-claudemd', { cwd, content }),

@@ -1,0 +1,20 @@
+{
+  "name": "koach-ai-hub-api",
+  "version": "1.0.0",
+  "description": "Multi-engine AI API proxy for Koach AI Hub",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "eventsource-parser": "^3.0.0",
+    "express": "^4.21.0",
+    "helmet": "^8.0.0",
+    "multer": "^2.1.1"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

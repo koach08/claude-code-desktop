@@ -7,6 +7,7 @@ const history = [];
 let histIdx = 0;
 let appSettings = { fontSize: 14, autoSaveInterval: 10, doubleEnterDelay: 500 };
 let claudeMdScope = 'project'; // 'project' | 'user'
+let agentLayout = 'cols'; // 'cols' | 'rows' | 'grid'
 
 // ── Boot ──
 document.addEventListener('DOMContentLoaded', async () => {
@@ -42,6 +43,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       const idx = Math.min(activeIdx, tabIds.length - 1);
       switchTab(tabIds[idx]);
     }
+    // Save new sessions immediately so new buffer files exist before deleting old ones
+    await window.api.saveSessions();
     window.api.cleanupOldBuffers(oldIds);
 
     // Show restore notification
@@ -49,22 +52,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       ? `${saved.length}個のセッションを復元しました (前回クラッシュ検出)`
       : `${saved.length}個のセッションを復元しました`;
     setStatus('ready', msg);
-
-    const log = await window.api.loadWorkLog();
-    if (log && log.length > 0) {
-      const lastEntries = log.slice(-3).reverse();
-      const activeTab = tabs.get(activeId);
-      if (activeTab) {
-        activeTab.term.write(`\r\n\x1b[33m[復元] 最近の作業:\x1b[0m\r\n`);
-        for (const e of lastEntries) {
-          const d = new Date(e.timestamp);
-          const time = `${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`;
-          const short = e.prompt.length > 80 ? e.prompt.slice(0, 80) + '...' : e.prompt;
-          activeTab.term.write(`\x1b[36m  ${time}\x1b[0m \x1b[2m${e.sessionName}\x1b[0m ${short}\r\n`);
-        }
-        activeTab.term.write(`\r\n`);
-      }
-    }
   } else {
     await newTab(currentMode);
   }
@@ -92,7 +79,7 @@ function saveTabState() {
 // ── Restore a saved session ──
 async function restoreTab(savedSession) {
   try {
-    const oldBuffer = await window.api.loadBuffer(savedSession.id);
+    const hasConvId = !!savedSession.conversationId;
     const session = await window.api.createSession({
       mode: savedSession.mode || 'claude',
       cwd: savedSession.cwd,
@@ -100,7 +87,15 @@ async function restoreTab(savedSession) {
       restoreFromId: savedSession.id,
       conversationId: savedSession.conversationId || null,
     });
-    addTab(session, oldBuffer);
+    // Don't replay old buffer — it creates confusing overlap with new session output.
+    // Instead show a clean restore marker with context about what was restored.
+    const restoreInfo = {
+      name: savedSession.name || 'Claude Code',
+      cwd: savedSession.cwd || '~',
+      conversationId: savedSession.conversationId || null,
+      mode: savedSession.mode || 'claude',
+    };
+    addTab(session, null, restoreInfo);
   } catch (err) {
     console.error('Session restore failed:', err);
     await newTab(savedSession.mode || currentMode);
@@ -218,8 +213,16 @@ function setupListeners() {
       e.preventDefault();
 
       if (!ta.value.trim()) {
-        // Empty: send Enter to PTY (for yes/no confirmations)
-        if (activeId) window.api.sendInput(activeId, '\r');
+        // Empty: send Enter to PTY (for yes/no confirmations) with retry
+        if (activeId) {
+          (async () => {
+            for (let i = 0; i < 3; i++) {
+              const r = await window.api.sendInput(activeId, '\r');
+              if (r && r.ok) break;
+              await new Promise(resolve => setTimeout(resolve, 100));
+            }
+          })();
+        }
       } else {
         send();
       }
@@ -239,9 +242,8 @@ function setupListeners() {
         .replace(/\\r/g, '\r')
         .replace(/\\x([0-9a-fA-F]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
       window.api.sendInput(activeId, raw);
-      // Scroll terminal to show response
-      const tab = tabs.get(activeId);
-      if (tab) tab.term.scrollToBottom();
+      // Don't scroll here — xterm.js auto-scrolls on new output if already at bottom.
+      // Forcing scrollToBottom() before PTY response arrives causes viewport jump.
       // Visual feedback
       b.classList.add('qbtn-pressed');
       setTimeout(() => { b.classList.remove('qbtn-pressed'); }, 400);
@@ -302,6 +304,36 @@ function setupListeners() {
     }
   });
 
+  // Agent mode controls
+  document.querySelectorAll('.alayout-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      agentLayout = btn.dataset.layout;
+      document.querySelectorAll('.alayout-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      const tc = document.getElementById('terminal-container');
+      tc.classList.remove('layout-cols', 'layout-rows', 'layout-grid');
+      tc.classList.add(`layout-${agentLayout}`);
+      updateAgentGrid();
+      setTimeout(() => refitAllTerminals(), 50);
+    });
+  });
+  document.getElementById('agent-add-claude').addEventListener('click', async () => {
+    await newTab('claude');
+    if (uiMode === 'agent') {
+      updateAgentGrid();
+      updateAgentCount();
+      setTimeout(() => refitAllTerminals(), 100);
+    }
+  });
+  document.getElementById('agent-add-shell').addEventListener('click', async () => {
+    await newTab('shell');
+    if (uiMode === 'agent') {
+      updateAgentGrid();
+      updateAgentCount();
+      setTimeout(() => refitAllTerminals(), 100);
+    }
+  });
+
   // Drag & Drop
   document.addEventListener('dragover', (e) => {
     e.preventDefault();
@@ -349,29 +381,54 @@ function setUiMode(mode) {
   });
   tabs.forEach(t => {
     if (t.pane.classList.contains('active')) {
+      // Capture scroll state before async refit
+      const wasAtBottom = t.term.buffer.active.viewportY >= t.term.buffer.active.baseY;
+      const savedViewportY = t.term.buffer.active.viewportY;
       setTimeout(() => {
         try {
-          // Save scroll state before refit
-          const wasAtBottom = t.term.buffer.active.viewportY >= t.term.buffer.active.baseY;
-          const savedViewportY = t.term.buffer.active.viewportY;
           t.fit.fit();
           const sid = getTabSessionId(t.tabEl);
           if (sid) window.api.resizeTerminal(sid, t.term.cols, t.term.rows);
-          // Restore scroll position after refit
-          if (wasAtBottom) {
-            t.term.scrollToBottom();
-          } else {
-            t.term.scrollToLine(savedViewportY);
-          }
+          requestAnimationFrame(() => {
+            if (wasAtBottom) {
+              t.term.scrollToBottom();
+            } else {
+              t.term.scrollToLine(savedViewportY);
+            }
+          });
         } catch (_) {}
       }, 80);
     }
   });
-  if (mode === 'simple' || mode === 'builder' || mode === 'harness') {
+  if (mode === 'agent') {
+    // Set layout class on terminal container
+    const tc = document.getElementById('terminal-container');
+    tc.classList.remove('layout-cols', 'layout-rows', 'layout-grid');
+    tc.classList.add(`layout-${agentLayout}`);
+    // Ensure at least 2 sessions for agent mode
+    if (tabs.size < 2) {
+      newTab('claude').then(() => {
+        updateAgentGrid();
+        updateAgentCount();
+        refitAllTerminals();
+      });
+    } else {
+      updateAgentGrid();
+      updateAgentCount();
+      setTimeout(() => refitAllTerminals(), 100);
+    }
+    document.getElementById('prompt-input').focus();
+  } else if (mode === 'chat') {
+    initChatProviders();
+    document.getElementById('chat-input').focus();
+  } else if (mode === 'simple' || mode === 'builder' || mode === 'harness') {
+    // Clear agent grid inline styles
+    document.getElementById('terminal-container').style.gridTemplateRows = '';
     document.getElementById('prompt-input').focus();
     if (mode === 'builder') scanCurrentProject();
     if (mode === 'harness') refreshHarnessPanel();
   } else {
+    document.getElementById('terminal-container').style.gridTemplateRows = '';
     const tab = tabs.get(activeId);
     if (tab) {
       tab.term.focus();
@@ -424,6 +481,11 @@ async function switchSessionMode(newMode) {
   tab.tabEl.querySelector('.tname').textContent = result.name;
   const icon = newMode === 'claude' ? 'AI' : newMode === 'codex' ? 'CX' : '>';
   tab.tabEl.querySelector('.tab-icon').textContent = icon;
+  // Update pane header
+  if (tab.paneHeader) {
+    tab.paneHeader.querySelector('.ph-icon').textContent = icon;
+    tab.paneHeader.querySelector('.ph-name').textContent = result.name;
+  }
 
   // Update Map key
   tabs.delete(activeId);
@@ -449,7 +511,7 @@ async function newTabWithCwd(mode, droppedPath) {
   await newTab(mode, cwd);
 }
 
-function addTab(session, replayBuffer) {
+function addTab(session, replayBuffer, restoreInfo) {
   const term = new Terminal({
     theme: {
       background: '#1a1b26', foreground: '#c0caf5', cursor: '#c0caf5',
@@ -480,15 +542,29 @@ function addTab(session, replayBuffer) {
   tabEl.className = 'tab';
   tabEl.dataset.sid = session.id; // Store session ID on element (updated on mode switch)
   tabEl.innerHTML = `<span class="tab-icon">${icon}</span><span class="tname">${esc(session.name)}</span><span class="tab-badge"></span><span class="tclose">&times;</span>`;
-  document.getElementById('tabs').appendChild(tabEl);
+  const tabsContainer = document.getElementById('tabs');
+  tabsContainer.appendChild(tabEl);
+  // Scroll tabs container so the new tab (and the "+" button) stays visible
+  requestAnimationFrame(() => { tabsContainer.scrollLeft = tabsContainer.scrollWidth; });
 
   // Pane
   const pane = document.createElement('div');
   pane.className = 'pane';
+
+  // Pane header (visible in agent mode)
+  const paneHeader = document.createElement('div');
+  paneHeader.className = 'pane-header';
+  paneHeader.innerHTML = `<span class="ph-icon">${icon}</span><span class="ph-name">${esc(session.name)}</span><span class="ph-cwd">${esc(session.cwd || '')}</span><span class="ph-status"></span>`;
+  pane.appendChild(paneHeader);
+  paneHeader.addEventListener('click', () => {
+    const sid = getTabSessionId(tabEl);
+    if (sid) switchTab(sid);
+  });
+
   document.getElementById('terminal-container').appendChild(pane);
   term.open(pane);
 
-  const data = { term, fit, tabEl, pane, session, ended: false };
+  const data = { term, fit, tabEl, pane, paneHeader, session, ended: false };
   tabs.set(session.id, data);
 
   // Tab click: use data attribute (not closure) to get current session ID
@@ -504,10 +580,18 @@ function addTab(session, replayBuffer) {
     if (sid) closeTab(sid);
   });
 
-  // Replay old buffer
-  if (replayBuffer) {
+  // Show restore marker (clean, no stale buffer replay)
+  if (restoreInfo) {
+    const shortCwd = restoreInfo.cwd.replace(/^\/Users\/[^/]+/, '~');
+    const convLabel = restoreInfo.conversationId
+      ? `\x1b[2m会話ID: ${restoreInfo.conversationId.slice(0, 8)}...\x1b[0m`
+      : '\x1b[2m新規セッション\x1b[0m';
+    term.write(`\x1b[36m┌─ セッション復元 ─────────────────────┐\x1b[0m\r\n`);
+    term.write(`\x1b[36m│\x1b[0m 📂 ${shortCwd}\r\n`);
+    term.write(`\x1b[36m│\x1b[0m ${convLabel}\r\n`);
+    term.write(`\x1b[36m└──────────────────────────────────────┘\x1b[0m\r\n\r\n`);
+  } else if (replayBuffer) {
     term.write(replayBuffer);
-    term.write('\r\n\x1b[2m\x1b[36m── セッション復元 ──\x1b[0m\r\n\r\n');
   }
 
   // Live output
@@ -520,25 +604,37 @@ function addTab(session, replayBuffer) {
     tabEl.classList.add('ended');
     data.ended = true;
     setStatus('ended', '終了しました — 新しいタブを開くか、モードを切替えてください');
+    // Update pane header status
+    const phStatus = paneHeader.querySelector('.ph-status');
+    if (phStatus) { phStatus.className = 'ph-status ended'; }
+    // Show yellow badge on non-active tab when session ends
+    if (session.id !== activeId) {
+      const badge = tabEl.querySelector('.tab-badge');
+      if (badge) { badge.classList.add('visible'); badge.classList.remove('approval'); }
+    }
   });
 
   // Resize observer with debounce to prevent layout thrashing
   let resizeTimer = null;
   const ro = new ResizeObserver(() => {
-    if (!pane.classList.contains('active')) return;
+    if (uiMode !== 'agent' && !pane.classList.contains('active')) return;
+    // Capture scroll state before debounce — it may change during the delay
+    const snapViewportY = term.buffer.active.viewportY;
+    const snapAtBottom = term.buffer.active.viewportY >= term.buffer.active.baseY;
     clearTimeout(resizeTimer);
     resizeTimer = setTimeout(() => {
       try {
-        const wasAtBottom = term.buffer.active.viewportY >= term.buffer.active.baseY;
-        const savedViewportY = term.buffer.active.viewportY;
         fit.fit();
         const sid = getTabSessionId(tabEl);
         if (sid) window.api.resizeTerminal(sid, term.cols, term.rows);
-        if (wasAtBottom) {
-          term.scrollToBottom();
-        } else {
-          term.scrollToLine(savedViewportY);
-        }
+        // Restore scroll in next frame after reflow
+        requestAnimationFrame(() => {
+          if (snapAtBottom) {
+            term.scrollToBottom();
+          } else {
+            term.scrollToLine(snapViewportY);
+          }
+        });
       } catch (_) {}
     }, 80);
   });
@@ -579,22 +675,25 @@ function switchTab(id) {
       updateStatusMode(mode);
       document.getElementById('status-cwd').textContent = t.session.cwd || '';
       // Delayed fit to let layout settle, preserve scroll position
+      const savedViewportY = t.term.buffer.active.viewportY;
+      const wasAtBottom = t.term.buffer.active.viewportY >= t.term.buffer.active.baseY;
       setTimeout(() => {
         try {
-          const wasAtBottom = t.term.buffer.active.viewportY >= t.term.buffer.active.baseY;
-          const savedViewportY = t.term.buffer.active.viewportY;
           t.fit.fit();
           window.api.resizeTerminal(tid, t.term.cols, t.term.rows);
-          if (wasAtBottom) {
-            t.term.scrollToBottom();
-          } else {
-            t.term.scrollToLine(savedViewportY);
-          }
+          // Restore scroll in next frame after fit reflow completes
+          requestAnimationFrame(() => {
+            if (wasAtBottom) {
+              t.term.scrollToBottom();
+            } else {
+              t.term.scrollToLine(savedViewportY);
+            }
+          });
         } catch (_) {}
-      }, 50);
+      }, 100);
     }
   });
-  if (uiMode === 'simple' || uiMode === 'builder' || uiMode === 'harness') {
+  if (uiMode === 'simple' || uiMode === 'builder' || uiMode === 'harness' || uiMode === 'agent') {
     document.getElementById('prompt-input').focus();
     if (uiMode === 'harness') refreshHarnessPanel();
   } else {
@@ -619,11 +718,16 @@ async function closeTab(id) {
     activeId = null;
     await newTab(currentMode);
   }
+  if (uiMode === 'agent') {
+    updateAgentGrid();
+    updateAgentCount();
+    setTimeout(() => refitAllTerminals(), 50);
+  }
   saveTabState();
 }
 
 // ── Input ──
-function send() {
+async function send() {
   const ta = document.getElementById('prompt-input');
   const text = ta.value.trim();
   if (!text || !activeId) return;
@@ -639,7 +743,20 @@ function send() {
   history.push(text);
   if (history.length > 100) history.shift();
   histIdx = history.length;
-  window.api.sendInput(activeId, text + '\r');
+
+  // Send with retry — PTY may not be ready on first attempt
+  const input = text + '\r';
+  let sent = false;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const result = await window.api.sendInput(activeId, input);
+    if (result && result.ok) { sent = true; break; }
+    await new Promise(r => setTimeout(r, 100));
+  }
+
+  if (!sent) {
+    if (tab) tab.term.write('\r\n\x1b[31m[送信失敗] 再度お試しください\x1b[0m\r\n');
+    return;
+  }
 
   // Scroll terminal to bottom after sending
   if (tab) tab.term.scrollToBottom();
@@ -665,6 +782,30 @@ function navHist(dir) {
   histIdx = Math.max(0, Math.min(histIdx + dir, history.length));
   document.getElementById('prompt-input').value =
     histIdx === history.length ? '' : history[histIdx];
+}
+
+// ── Agent Mode Helpers ──
+function refitAllTerminals() {
+  tabs.forEach((t) => {
+    try {
+      t.fit.fit();
+      const sid = getTabSessionId(t.tabEl);
+      if (sid) window.api.resizeTerminal(sid, t.term.cols, t.term.rows);
+    } catch (_) {}
+  });
+}
+
+function updateAgentGrid() {
+  const tc = document.getElementById('terminal-container');
+  const paneCount = tc.querySelectorAll('.pane').length;
+  const cols = agentLayout === 'rows' ? 1 : 2;
+  const rows = Math.max(1, Math.ceil(paneCount / cols));
+  tc.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
+}
+
+function updateAgentCount() {
+  const el = document.getElementById('agent-count');
+  if (el) el.textContent = `${tabs.size} Agents`;
 }
 
 // ── Activity Detection ──
@@ -697,7 +838,22 @@ function detectActivity(output, sessionId) {
     }
   }
 
-  // Show badge on non-active tabs when approval needed or activity detected
+  // Update pane header status indicator (agent mode)
+  if (sessionId) {
+    const tab = tabs.get(sessionId);
+    if (tab && tab.paneHeader) {
+      const phStatus = tab.paneHeader.querySelector('.ph-status');
+      if (phStatus) {
+        phStatus.className = 'ph-status';
+        if (isApproval) phStatus.classList.add('waiting');
+        else if (/\$\s*$|❯|>\s*$/m.test(output)) { /* ready - default green */ }
+        else phStatus.classList.add('busy');
+      }
+    }
+  }
+
+  // Show badge on non-active tabs: RED for approval, YELLOW only for completion
+  const isCompleted = /✓|✔|Done|Complete|finished|completed|Task completed/i.test(output);
   if (sessionId && sessionId !== activeId) {
     const tab = tabs.get(sessionId);
     if (tab) {
@@ -705,10 +861,11 @@ function detectActivity(output, sessionId) {
       if (badge) {
         if (isApproval) {
           badge.classList.add('visible', 'approval');
-        } else {
+        } else if (isCompleted) {
           badge.classList.add('visible');
           badge.classList.remove('approval');
         }
+        // Regular activity (reading, writing, etc.) does NOT show a badge
       }
     }
   }
@@ -1832,6 +1989,422 @@ async function loadProjects() {
     listEl.appendChild(item);
   }
 }
+
+// ══════════════════════════════════════════════════
+// ── AI Hub Chat ──
+// ══════════════════════════════════════════════════
+
+let chatMessages = [];
+let chatProvider = 'openai';
+let chatModel = '';
+let chatProviders = {};
+let chatStreaming = false;
+let chatCleanupChunk = null;
+let chatCleanupDone = null;
+let chatCleanupError = null;
+
+document.addEventListener('DOMContentLoaded', () => {
+  // Engine buttons
+  document.querySelectorAll('.chat-engine-btn').forEach(btn => {
+    btn.addEventListener('click', () => switchChatEngine(btn.dataset.provider));
+  });
+
+  // Model select
+  document.getElementById('chat-model-select').addEventListener('change', (e) => {
+    chatModel = e.target.value;
+  });
+
+  // Send
+  document.getElementById('chat-send-btn').addEventListener('click', sendChatMessage);
+  document.getElementById('chat-input').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+      e.preventDefault();
+      sendChatMessage();
+    }
+  });
+
+  // Auto-resize + Smart Route suggestion
+  let routeDebounce = null;
+  document.getElementById('chat-input').addEventListener('input', (e) => {
+    e.target.style.height = 'auto';
+    e.target.style.height = Math.min(e.target.scrollHeight, 200) + 'px';
+
+    // Debounced route suggestion
+    clearTimeout(routeDebounce);
+    const text = e.target.value.trim();
+    if (text.length > 5) {
+      routeDebounce = setTimeout(async () => {
+        const suggestion = await window.api.hubSuggestRoute(text);
+        const statusEl = document.getElementById('chat-status');
+        if (suggestion && suggestion.provider !== chatProvider) {
+          statusEl.innerHTML = `<span style="color:var(--yellow)">Smart Router: ${suggestion.reason} → </span><span style="color:var(--accent);cursor:pointer;text-decoration:underline;" id="route-accept">${suggestion.provider.toUpperCase()} に切替</span>`;
+          document.getElementById('route-accept')?.addEventListener('click', () => {
+            switchChatEngine(suggestion.provider);
+            statusEl.textContent = '';
+          });
+        } else {
+          statusEl.textContent = '';
+        }
+      }, 300);
+    }
+  });
+
+  // Clear
+  document.getElementById('chat-clear-btn').addEventListener('click', () => {
+    chatMessages = [];
+    renderChatMessages();
+  });
+
+  // Config dialog
+  document.getElementById('chat-config-btn').addEventListener('click', openChatConfig);
+  document.getElementById('chat-config-close').addEventListener('click', () => {
+    document.getElementById('chat-config-dialog').classList.add('hidden');
+  });
+  document.getElementById('chat-config-dialog').addEventListener('click', (e) => {
+    if (e.target.id === 'chat-config-dialog') e.target.classList.add('hidden');
+  });
+  document.getElementById('hub-config-save').addEventListener('click', saveChatConfig);
+  document.getElementById('hub-config-test').addEventListener('click', testChatConnection);
+
+  // SSE listeners
+  chatCleanupChunk = window.api.onHubChunk(onChatChunk);
+  chatCleanupDone = window.api.onHubDone(onChatDone);
+  chatCleanupError = window.api.onHubError(onChatError);
+
+  // Show welcome
+  renderChatMessages();
+});
+
+async function initChatProviders() {
+  const result = await window.api.hubProviders();
+  if (result && !result.error) {
+    chatProviders = result;
+    // Mark unavailable engines
+    document.querySelectorAll('.chat-engine-btn').forEach(btn => {
+      const p = chatProviders[btn.dataset.provider];
+      if (p && !p.available) btn.classList.add('unavailable');
+      else btn.classList.remove('unavailable');
+    });
+    updateChatModelSelect();
+  }
+}
+
+function switchChatEngine(provider) {
+  chatProvider = provider;
+  document.querySelectorAll('.chat-engine-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.provider === provider);
+  });
+  updateChatModelSelect();
+  document.getElementById('chat-input').focus();
+}
+
+function updateChatModelSelect() {
+  const sel = document.getElementById('chat-model-select');
+  sel.innerHTML = '';
+  const p = chatProviders[chatProvider];
+  if (p && p.models) {
+    for (const m of p.models) {
+      const opt = document.createElement('option');
+      opt.value = m;
+      opt.textContent = m;
+      if (m === p.defaultModel) opt.selected = true;
+      sel.appendChild(opt);
+    }
+    chatModel = sel.value;
+  }
+}
+
+function renderChatMessages() {
+  const container = document.getElementById('chat-messages');
+
+  if (chatMessages.length === 0) {
+    container.innerHTML = `
+      <div class="chat-welcome">
+        <h2>Koach AI Hub</h2>
+        <p>5つのAIエンジンを切り替えながら、何でも聞ける。コード、研究、子育て、大学事務、なんでも。</p>
+        <div class="engine-pills">
+          <span class="engine-pill">Claude</span>
+          <span class="engine-pill">GPT</span>
+          <span class="engine-pill">Perplexity</span>
+          <span class="engine-pill">Groq</span>
+          <span class="engine-pill">Venice.ai</span>
+          <span class="engine-pill">Gemini</span>
+        </div>
+      </div>`;
+    return;
+  }
+
+  container.innerHTML = '';
+  const avatarLetters = { openai: 'G', claude: 'C', venice: 'V', gemini: 'G', perplexity: 'P', groq: 'Q' };
+
+  for (const msg of chatMessages) {
+    if (msg.error) {
+      const errDiv = document.createElement('div');
+      errDiv.className = 'chat-msg error';
+      errDiv.textContent = msg.content || 'Error';
+      container.appendChild(errDiv);
+      continue;
+    }
+
+    const row = document.createElement('div');
+    row.className = `chat-msg ${msg.role}`;
+    if (msg.streaming) row.classList.add('streaming');
+    if (msg.engine) row.dataset.engine = msg.engine;
+
+    // Avatar
+    const avatar = document.createElement('div');
+    avatar.className = 'msg-avatar';
+    if (msg.role === 'user') {
+      avatar.textContent = 'K';
+    } else {
+      avatar.textContent = avatarLetters[msg.engine] || 'AI';
+    }
+    row.appendChild(avatar);
+
+    // Body
+    const body = document.createElement('div');
+    body.className = 'msg-body';
+
+    const label = document.createElement('div');
+    label.className = 'msg-provider';
+    label.textContent = msg.role === 'user' ? 'You' : (msg.provider || 'AI');
+    body.appendChild(label);
+
+    const content = document.createElement('div');
+    content.className = 'msg-content';
+    content.textContent = msg.content || '';
+    body.appendChild(content);
+
+    row.appendChild(body);
+    container.appendChild(row);
+  }
+  container.scrollTop = container.scrollHeight;
+}
+
+async function sendChatMessage() {
+  const input = document.getElementById('chat-input');
+  const text = input.value.trim();
+  if (!text || chatStreaming) return;
+
+  // Add user message
+  chatMessages.push({ role: 'user', content: text });
+
+  // Add placeholder for assistant
+  const providerNames = { openai: 'GPT', claude: 'Claude', venice: 'Venice.ai', gemini: 'Gemini', perplexity: 'Perplexity', groq: 'Groq' };
+  chatMessages.push({
+    role: 'assistant',
+    content: '',
+    provider: providerNames[chatProvider] || chatProvider,
+    engine: chatProvider,
+    streaming: true,
+  });
+  renderChatMessages();
+
+  input.value = '';
+  input.style.height = 'auto';
+  chatStreaming = true;
+  document.getElementById('chat-send-btn').disabled = true;
+  document.getElementById('chat-status').textContent = `${providerNames[chatProvider] || chatProvider} (${chatModel}) で生成中...`;
+
+  // Build messages for API (exclude metadata)
+  const apiMessages = chatMessages
+    .filter(m => m.role === 'user' || (m.role === 'assistant' && !m.streaming))
+    .map(m => ({ role: m.role, content: m.content }));
+  // Add current user message
+  if (apiMessages[apiMessages.length - 1]?.role !== 'user') {
+    apiMessages.push({ role: 'user', content: text });
+  }
+
+  window.api.hubChat({
+    provider: chatProvider,
+    model: chatModel,
+    messages: apiMessages,
+  });
+}
+
+function onChatChunk({ content }) {
+  const last = chatMessages[chatMessages.length - 1];
+  if (last && last.role === 'assistant' && last.streaming) {
+    last.content += content;
+    // Update the last message element directly (avoid full re-render)
+    const container = document.getElementById('chat-messages');
+    const lastEl = container.lastElementChild;
+    if (lastEl) {
+      const contentEl = lastEl.querySelector('.msg-content');
+      if (contentEl) contentEl.textContent = last.content;
+      container.scrollTop = container.scrollHeight;
+    }
+  }
+}
+
+function onChatDone() {
+  const last = chatMessages[chatMessages.length - 1];
+  if (last && last.streaming) {
+    last.streaming = false;
+  }
+  chatStreaming = false;
+  document.getElementById('chat-send-btn').disabled = false;
+  document.getElementById('chat-status').textContent = '';
+  renderChatMessages();
+  document.getElementById('chat-input').focus();
+}
+
+function onChatError({ error }) {
+  const last = chatMessages[chatMessages.length - 1];
+  if (last && last.streaming) {
+    last.streaming = false;
+    if (!last.content) {
+      // Replace empty assistant message with error
+      chatMessages.pop();
+      chatMessages.push({ role: 'error', content: error, error: true });
+    }
+  }
+  chatStreaming = false;
+  document.getElementById('chat-send-btn').disabled = false;
+  document.getElementById('chat-status').textContent = '';
+  renderChatMessages();
+}
+
+async function openChatConfig() {
+  const cfg = await window.api.hubLoadConfig();
+  document.getElementById('hub-api-url').value = cfg.apiUrl || 'http://localhost:3900';
+  document.getElementById('hub-api-secret').value = cfg.apiSecret || '';
+  document.getElementById('hub-default-provider').value = cfg.defaultProvider || 'openai';
+  document.getElementById('hub-config-status').textContent = '';
+  document.getElementById('chat-config-dialog').classList.remove('hidden');
+}
+
+async function saveChatConfig() {
+  const cfg = {
+    apiUrl: document.getElementById('hub-api-url').value.trim().replace(/\/$/, ''),
+    apiSecret: document.getElementById('hub-api-secret').value,
+    defaultProvider: document.getElementById('hub-default-provider').value,
+  };
+  const result = await window.api.hubSaveConfig(cfg);
+  const status = document.getElementById('hub-config-status');
+  if (result.success) {
+    status.textContent = '保存しました';
+    status.style.color = 'var(--green)';
+    // Refresh providers
+    await initChatProviders();
+    switchChatEngine(cfg.defaultProvider);
+  } else {
+    status.textContent = result.error;
+    status.style.color = 'var(--red)';
+  }
+}
+
+async function testChatConnection() {
+  const status = document.getElementById('hub-config-status');
+  status.textContent = '接続テスト中...';
+  status.style.color = 'var(--yellow)';
+
+  // Temporarily save and test
+  await saveChatConfig();
+  const providers = await window.api.hubProviders();
+  if (providers.error) {
+    status.textContent = `接続失敗: ${providers.error}`;
+    status.style.color = 'var(--red)';
+  } else {
+    const available = Object.entries(providers)
+      .filter(([, v]) => v.available)
+      .map(([, v]) => v.name);
+    status.textContent = `接続OK! 利用可能: ${available.length > 0 ? available.join(', ') : '(APIキー未設定)'}`;
+    status.style.color = 'var(--green)';
+  }
+}
+
+// ══════════════════════════════════════════════════
+// ── Voice Input (Whisper) ──
+// ══════════════════════════════════════════════════
+
+let voiceRecorder = null;
+let voiceChunks = [];
+let voiceTargetInput = null; // which textarea to fill
+
+function setupVoiceButton(btnId, targetInputId) {
+  const btn = document.getElementById(btnId);
+  if (!btn) return;
+  btn.addEventListener('click', () => {
+    if (voiceRecorder && voiceRecorder.state === 'recording') {
+      stopVoiceRecording(btn, targetInputId);
+    } else {
+      startVoiceRecording(btn, targetInputId);
+    }
+  });
+}
+
+async function startVoiceRecording(btn, targetInputId) {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    voiceChunks = [];
+    voiceTargetInput = targetInputId;
+
+    voiceRecorder = new MediaRecorder(stream, {
+      mimeType: MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus' : 'audio/webm',
+    });
+
+    voiceRecorder.ondataavailable = (e) => {
+      if (e.data.size > 0) voiceChunks.push(e.data);
+    };
+
+    voiceRecorder.onstop = async () => {
+      // Stop all tracks
+      stream.getTracks().forEach(t => t.stop());
+      btn.classList.remove('recording');
+      btn.classList.add('transcribing');
+      btn.textContent = '...';
+
+      const blob = new Blob(voiceChunks, { type: voiceRecorder.mimeType });
+      const arrayBuffer = await blob.arrayBuffer();
+
+      try {
+        const result = await window.api.hubTranscribe({
+          audioBuffer: Array.from(new Uint8Array(arrayBuffer)),
+          mimeType: voiceRecorder.mimeType,
+        });
+
+        if (result.text) {
+          const input = document.getElementById(voiceTargetInput);
+          if (input) {
+            // Append to existing text
+            const existing = input.value;
+            input.value = existing ? existing + ' ' + result.text : result.text;
+            input.style.height = 'auto';
+            input.style.height = Math.min(input.scrollHeight, 200) + 'px';
+            input.focus();
+          }
+        } else if (result.error) {
+          console.error('Transcription error:', result.error);
+        }
+      } catch (e) {
+        console.error('Transcription failed:', e);
+      }
+
+      btn.classList.remove('transcribing');
+      btn.textContent = '\u{1F3A4}';
+    };
+
+    voiceRecorder.start();
+    btn.classList.add('recording');
+    btn.textContent = '\u{23F9}';
+  } catch (e) {
+    console.error('Microphone access denied:', e);
+  }
+}
+
+function stopVoiceRecording(btn, targetInputId) {
+  if (voiceRecorder && voiceRecorder.state === 'recording') {
+    voiceRecorder.stop();
+  }
+}
+
+// Initialize voice buttons when DOM ready
+document.addEventListener('DOMContentLoaded', () => {
+  setupVoiceButton('chat-mic-btn', 'chat-input');
+  setupVoiceButton('terminal-mic-btn', 'prompt-input');
+});
 
 // ── Util ──
 function esc(t) {

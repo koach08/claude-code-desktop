@@ -170,14 +170,13 @@ ipcMain.handle('create-session', async (_event, { cwd, name, mode, restoreFromId
   const nodePty = getPty();
   const sessionCwd = cwd || os.homedir();
   const sessionMode = mode || 'claude';
+  const isRestore = !!(restoreFromId || conversationId);
 
   let cmd, args;
   if (sessionMode === 'claude') {
     cmd = IS_WIN ? 'claude.cmd' : 'claude';
     if (conversationId) {
       args = ['--resume', conversationId];
-    } else if (restoreFromId) {
-      args = ['--continue'];
     } else {
       args = [];
     }
@@ -212,14 +211,12 @@ ipcMain.handle('create-session', async (_event, { cwd, name, mode, restoreFromId
   };
   sessions.set(id, sessionData);
 
-  // Initialize output buffer (with old data if restoring)
-  let initialBuffer = '';
-  if (restoreFromId) {
-    try {
-      initialBuffer = fs.readFileSync(path.join(BUFFERS_DIR, `${restoreFromId}.buf`), 'utf-8');
-    } catch (_) {}
-  }
-  sessionBuffers.set(id, initialBuffer);
+  // Start with empty buffer — don't replay stale old output
+  sessionBuffers.set(id, '');
+
+  // Auto-detect conversation ID from Claude CLI output (parse session UUID)
+  const convIdPattern = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/;
+  let convIdDetected = !!conversationId;
 
   ptyProcess.onData((data) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -228,14 +225,46 @@ ipcMain.handle('create-session', async (_event, { cwd, name, mode, restoreFromId
     let buf = (sessionBuffers.get(id) || '') + data;
     if (buf.length > MAX_BUFFER) buf = buf.slice(-MAX_BUFFER);
     sessionBuffers.set(id, buf);
+
+    // Detect conversation ID from Claude's project directory changes (first 15 seconds)
+    if (sessionMode === 'claude' && !convIdDetected) {
+      const s = sessions.get(id);
+      if (s && !s.conversationId) {
+        const cwdKey = sessionCwd.replace(/\//g, '-');
+        const projectDir = path.join(os.homedir(), '.claude', 'projects', cwdKey);
+        try {
+          if (fs.existsSync(projectDir)) {
+            const files = fs.readdirSync(projectDir)
+              .filter(f => f.endsWith('.jsonl'))
+              .map(f => ({ name: f, mtime: fs.statSync(path.join(projectDir, f)).mtimeMs }))
+              .sort((a, b) => b.mtime - a.mtime);
+            // Only pick the newest file if it was modified in the last 10 seconds
+            if (files.length > 0) {
+              const newest = files[0];
+              if (Date.now() - newest.mtime < 10000) {
+                const detectedId = newest.name.replace('.jsonl', '');
+                s.conversationId = detectedId;
+                convIdDetected = true;
+              }
+            }
+          }
+        } catch (_) {}
+      }
+    }
   });
+
+  // Stop trying to detect after 15 seconds
+  if (sessionMode === 'claude' && !convIdDetected) {
+    setTimeout(() => { convIdDetected = true; }, 15000);
+  }
+
   ptyProcess.onExit(({ exitCode, signal }) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send(`session-exit-${id}`, { exitCode, signal });
     }
   });
 
-  return { id, name: sessionData.name, cwd: sessionData.cwd, mode: sessionMode };
+  return { id, name: sessionData.name, cwd: sessionData.cwd, mode: sessionMode, restored: isRestore };
 });
 
 // ── IPC: Switch mode (kills current, starts new) ──
@@ -298,8 +327,12 @@ ipcMain.handle('switch-mode', async (_event, { sessionId, newMode }) => {
 
 ipcMain.handle('send-input', async (_e, { sessionId, input }) => {
   const s = sessions.get(sessionId);
-  if (s && s.pty) {
-    try { s.pty.write(input); } catch (_) {}
+  if (!s || !s.pty) return { ok: false, reason: 'no-session' };
+  try {
+    s.pty.write(input);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, reason: err.message };
   }
 });
 
@@ -523,6 +556,189 @@ ipcMain.handle('scan-project', async (_e, { cwd }) => {
   } catch (_) {}
 
   return result;
+});
+
+// ══════════════════════════════════════
+// ── AI Hub Chat API ──
+// ══════════════════════════════════════
+const HUB_CONFIG_FILE = path.join(SESSIONS_DIR, 'hub-config.json');
+const DEFAULT_HUB_CONFIG = {
+  apiUrl: 'http://localhost:3900',
+  apiSecret: '',
+  defaultProvider: 'openai',
+};
+
+ipcMain.handle('hub-load-config', async () => {
+  try {
+    if (fs.existsSync(HUB_CONFIG_FILE)) {
+      return { ...DEFAULT_HUB_CONFIG, ...JSON.parse(fs.readFileSync(HUB_CONFIG_FILE, 'utf-8')) };
+    }
+  } catch (_) {}
+  return { ...DEFAULT_HUB_CONFIG };
+});
+
+ipcMain.handle('hub-save-config', async (_e, cfg) => {
+  try {
+    fs.mkdirSync(SESSIONS_DIR, { recursive: true });
+    fs.writeFileSync(HUB_CONFIG_FILE, JSON.stringify(cfg, null, 2));
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('hub-providers', async () => {
+  const cfg = (() => {
+    try {
+      if (fs.existsSync(HUB_CONFIG_FILE)) {
+        return { ...DEFAULT_HUB_CONFIG, ...JSON.parse(fs.readFileSync(HUB_CONFIG_FILE, 'utf-8')) };
+      }
+    } catch (_) {}
+    return { ...DEFAULT_HUB_CONFIG };
+  })();
+  try {
+    const headers = {};
+    if (cfg.apiSecret) headers['Authorization'] = `Bearer ${cfg.apiSecret}`;
+    const res = await fetch(`${cfg.apiUrl}/providers`, { headers });
+    if (!res.ok) throw new Error(`${res.status}`);
+    return await res.json();
+  } catch (e) {
+    return { error: e.message };
+  }
+});
+
+ipcMain.handle('hub-transcribe', async (_e, { audioBuffer, mimeType }) => {
+  const cfg = (() => {
+    try {
+      if (fs.existsSync(HUB_CONFIG_FILE)) {
+        return { ...DEFAULT_HUB_CONFIG, ...JSON.parse(fs.readFileSync(HUB_CONFIG_FILE, 'utf-8')) };
+      }
+    } catch (_) {}
+    return { ...DEFAULT_HUB_CONFIG };
+  })();
+
+  try {
+    const formData = new FormData();
+    formData.append('audio', new Blob([Buffer.from(audioBuffer)], { type: mimeType || 'audio/webm' }), 'audio.webm');
+
+    const headers = {};
+    if (cfg.apiSecret) headers['Authorization'] = `Bearer ${cfg.apiSecret}`;
+
+    const res = await fetch(`${cfg.apiUrl}/transcribe`, {
+      method: 'POST',
+      headers,
+      body: formData,
+    });
+
+    if (!res.ok) {
+      const err = await res.text();
+      return { error: err };
+    }
+    return await res.json();
+  } catch (e) {
+    return { error: e.message };
+  }
+});
+
+ipcMain.handle('hub-suggest-route', async (_e, { text }) => {
+  const cfg = (() => {
+    try {
+      if (fs.existsSync(HUB_CONFIG_FILE)) {
+        return { ...DEFAULT_HUB_CONFIG, ...JSON.parse(fs.readFileSync(HUB_CONFIG_FILE, 'utf-8')) };
+      }
+    } catch (_) {}
+    return { ...DEFAULT_HUB_CONFIG };
+  })();
+  try {
+    const headers = { 'Content-Type': 'application/json' };
+    if (cfg.apiSecret) headers['Authorization'] = `Bearer ${cfg.apiSecret}`;
+    const res = await fetch(`${cfg.apiUrl}/suggest-route`, {
+      method: 'POST', headers, body: JSON.stringify({ text }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.suggestion;
+  } catch (_) {
+    return null;
+  }
+});
+
+ipcMain.handle('hub-chat', async (_e, { provider, model, messages, system, temperature }) => {
+  const cfg = (() => {
+    try {
+      if (fs.existsSync(HUB_CONFIG_FILE)) {
+        return { ...DEFAULT_HUB_CONFIG, ...JSON.parse(fs.readFileSync(HUB_CONFIG_FILE, 'utf-8')) };
+      }
+    } catch (_) {}
+    return { ...DEFAULT_HUB_CONFIG };
+  })();
+
+  const headers = { 'Content-Type': 'application/json' };
+  if (cfg.apiSecret) headers['Authorization'] = `Bearer ${cfg.apiSecret}`;
+
+  try {
+    const res = await fetch(`${cfg.apiUrl}/chat`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ provider, model, messages, system, temperature }),
+    });
+
+    if (!res.ok) {
+      const err = await res.text();
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('hub-chat-error', { error: err });
+      }
+      return;
+    }
+
+    // Read SSE stream
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || !trimmed.startsWith('data: ')) continue;
+        const data = trimmed.slice(6);
+
+        if (data === '[DONE]') {
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('hub-chat-done', {});
+          }
+          return;
+        }
+
+        try {
+          const parsed = JSON.parse(data);
+          if (parsed.error) {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('hub-chat-error', { error: parsed.error });
+            }
+            return;
+          }
+          if (parsed.content && mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('hub-chat-chunk', { content: parsed.content });
+          }
+        } catch (_) {}
+      }
+    }
+
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('hub-chat-done', {});
+    }
+  } catch (e) {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('hub-chat-error', { error: e.message });
+    }
+  }
 });
 
 // ── Harness Engineering: CLAUDE.md ──
@@ -807,13 +1023,16 @@ ipcMain.handle('open-app-folder', async () => {
 
 // ── Auto-Update (git-based for dev, GitHub API for packaged) ──
 function getSourceDir() {
-  // In packaged app, __dirname is inside .asar — resolve to the unpacked source if available
   const appDir = path.join(__dirname);
+  // Packaged Electron: __dirname is inside .asar (a file, not a directory).
+  // Electron patches fs to work with asar paths, but child_process does NOT —
+  // execSync with cwd pointing through .asar causes ENOTDIR.
+  if (appDir.includes('.asar')) return null;
   try {
     fs.accessSync(path.join(appDir, '.git'), fs.constants.R_OK);
     return appDir;
   } catch (_) {
-    return null; // packaged app — no .git
+    return null;
   }
 }
 
@@ -907,6 +1126,11 @@ ipcMain.handle('apply-update', async () => {
 });
 
 ipcMain.handle('restart-app', async () => {
+  // Save all sessions and buffers before exit — app.exit() bypasses lifecycle events
+  saveSessionsSync();
+  clearCrashFlag();
+  // Kill PTY processes cleanly
+  for (const [, s] of sessions) { try { s.pty.kill(); } catch (_) {} }
   app.relaunch();
   app.exit(0);
 });
@@ -914,7 +1138,10 @@ ipcMain.handle('restart-app', async () => {
 // ── Get app info ──
 ipcMain.handle('get-app-info', async () => {
   let gitHash = '';
-  try { gitHash = execSync('git rev-parse --short HEAD', { cwd: __dirname, encoding: 'utf-8', timeout: 3000 }).trim(); } catch (_) {}
+  const srcDir = getSourceDir();
+  if (srcDir) {
+    try { gitHash = execSync('git rev-parse --short HEAD', { cwd: srcDir, encoding: 'utf-8', timeout: 3000 }).trim(); } catch (_) {}
+  }
   const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf-8'));
   return { version: pkg.version, gitHash, electronVersion: process.versions.electron, nodeVersion: process.versions.node };
 });

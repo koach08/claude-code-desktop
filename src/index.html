@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <title>Claude Code Desktop</title>
-  <link rel="stylesheet" href="../node_modules/xterm/css/xterm.css">
+  <link rel="stylesheet" href="../node_modules/@xterm/xterm/css/xterm.css">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body data-ui="simple">
@@ -24,8 +24,23 @@
         <button class="ui-btn" data-ui="advanced">Advanced</button>
         <button class="ui-btn" data-ui="builder">Builder</button>
         <button class="ui-btn" data-ui="harness">Harness</button>
+        <button class="ui-btn" data-ui="agent">Agent</button>
+        <button class="ui-btn" data-ui="chat">Chat</button>
       </div>
       <button id="settings-btn" title="設定 (Cmd+,)">&#9881;</button>
+    </div>
+
+    <!-- Agent Controls (visible in Agent mode) -->
+    <div id="agent-controls">
+      <div id="agent-layout-toggle">
+        <button class="alayout-btn active" data-layout="cols" title="横分割">&#124;&#124;</button>
+        <button class="alayout-btn" data-layout="rows" title="縦分割">&#9776;</button>
+        <button class="alayout-btn" data-layout="grid" title="2x2 グリッド">&#9638;</button>
+      </div>
+      <span id="agent-count"></span>
+      <div id="agent-controls-spacer"></div>
+      <button id="agent-add-claude" class="agent-add-btn">+ Claude</button>
+      <button id="agent-add-shell" class="agent-add-btn secondary">+ Terminal</button>
     </div>
 
     <!-- Main Area -->
@@ -138,6 +153,72 @@
               <div class="bcard" data-target="domain-ssl"><div class="bcard-icon">&#127760;</div><div class="bcard-name">ドメイン</div><div class="bcard-desc">DNS + SSL</div></div>
             </div>
           </div>
+        </div>
+      </div>
+
+      <!-- Chat Panel (AI Hub) — Claude.ai-style -->
+      <div id="chat-panel">
+        <div id="chat-messages">
+          <!-- messages injected here -->
+        </div>
+        <div id="chat-bottom">
+          <div id="chat-input-wrapper">
+            <div id="chat-engine-row">
+              <div id="chat-engine-select">
+                <button class="chat-engine-btn active" data-provider="openai">GPT</button>
+                <button class="chat-engine-btn" data-provider="claude">Claude</button>
+                <button class="chat-engine-btn" data-provider="perplexity">Perplexity</button>
+                <button class="chat-engine-btn" data-provider="groq">Groq</button>
+                <button class="chat-engine-btn" data-provider="venice">Venice</button>
+                <button class="chat-engine-btn" data-provider="gemini">Gemini</button>
+              </div>
+              <select id="chat-model-select"></select>
+              <div id="chat-engine-spacer"></div>
+              <button id="chat-clear-btn" title="会話クリア">New</button>
+              <button id="chat-config-btn" title="API設定">&#9881;</button>
+            </div>
+            <div id="chat-compose">
+              <textarea id="chat-input" placeholder="何でも聞いてください..." rows="1"></textarea>
+              <button id="chat-mic-btn" class="mic-btn" title="音声入力">&#127908;</button>
+              <button id="chat-send-btn" title="送信">&#8593;</button>
+            </div>
+            <div id="chat-status"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Chat API Config Dialog -->
+      <div id="chat-config-dialog" class="dialog hidden">
+        <div class="dialog-content" style="max-width:450px;">
+          <div class="dialog-header">
+            <h2>AI Hub API 設定</h2>
+            <button id="chat-config-close" class="dialog-close-btn">&times;</button>
+          </div>
+          <div class="settings-section">
+            <div class="setting-row">
+              <label>API Server URL</label>
+              <input type="text" id="hub-api-url" placeholder="http://localhost:3900" style="width:100%;background:var(--bg1);color:var(--fg);border:1px solid var(--border);border-radius:4px;padding:6px;font-size:13px;font-family:Menlo,monospace;">
+            </div>
+            <div class="setting-row">
+              <label>API Secret</label>
+              <input type="password" id="hub-api-secret" placeholder="(optional)" style="width:100%;background:var(--bg1);color:var(--fg);border:1px solid var(--border);border-radius:4px;padding:6px;font-size:13px;font-family:Menlo,monospace;">
+            </div>
+            <div class="setting-row">
+              <label>デフォルトエンジン</label>
+              <select id="hub-default-provider" style="background:var(--bg1);color:var(--fg);border:1px solid var(--border);border-radius:4px;padding:6px;font-size:13px;">
+                <option value="openai">GPT</option>
+                <option value="claude">Claude</option>
+                <option value="grok">Grok</option>
+                <option value="venice">Venice.ai</option>
+                <option value="gemini">Gemini</option>
+              </select>
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;margin-top:12px;">
+            <button class="setup-btn primary" id="hub-config-save">保存</button>
+            <button class="setup-btn" id="hub-config-test">接続テスト</button>
+          </div>
+          <div id="hub-config-status" style="margin-top:8px;font-size:12px;"></div>
         </div>
       </div>
 
@@ -305,6 +386,7 @@
       <!-- Normal Prompt -->
       <div id="input-row">
         <textarea id="prompt-input" placeholder="プロンプトを入力... (Enter で送信, Shift+Enter で改行)" rows="2"></textarea>
+        <button id="terminal-mic-btn" class="mic-btn" title="音声入力">&#127908;</button>
         <button id="send-btn">送信</button>
       </div>
       <div id="enter-hint" class="hidden"></div>
@@ -468,8 +550,8 @@
     </div>
   </div>
 
-  <script src="../node_modules/xterm/lib/xterm.js"></script>
-  <script src="../node_modules/xterm-addon-fit/lib/xterm-addon-fit.js"></script>
+  <script src="../node_modules/@xterm/xterm/lib/xterm.js"></script>
+  <script src="../node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
   <script src="renderer.js"></script>
 </body>
 </html>
