@@ -1036,6 +1036,24 @@ function getSourceDir() {
   }
 }
 
+// Compare two semver strings. Returns true only if `latest` is strictly newer
+// than `current`. Pre-release/build suffixes (e.g. "1.2.0-beta.1") are ignored
+// for the numeric comparison. Guards against showing a downgrade as an "update"
+// when the latest GitHub release is older than the installed app.
+function isNewerSemver(latest, current) {
+  if (!latest || !current) return false;
+  const parse = (v) => String(v).replace(/^v/, '').split('-')[0].split('.').map((n) => parseInt(n, 10) || 0);
+  const a = parse(latest);
+  const b = parse(current);
+  for (let i = 0; i < 3; i++) {
+    const x = a[i] || 0;
+    const y = b[i] || 0;
+    if (x > y) return true;
+    if (x < y) return false;
+  }
+  return false; // equal
+}
+
 ipcMain.handle('check-update', async () => {
   const sourceDir = getSourceDir();
 
@@ -1081,7 +1099,7 @@ ipcMain.handle('check-update', async () => {
     });
 
     const latestTag = (data.tag_name || '').replace(/^v/, '');
-    const updateAvailable = latestTag && latestTag !== currentVersion;
+    const updateAvailable = isNewerSemver(latestTag, currentVersion);
     return {
       updateAvailable,
       changes: updateAvailable ? `${currentVersion} → ${latestTag}\n${data.body || ''}`.trim() : '',
