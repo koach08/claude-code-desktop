@@ -721,6 +721,46 @@ ipcMain.handle('suggest-engine', async (_e, { task }) => {
   return { engine, label, reason };
 });
 
+// ── 出荷プラン生成 (#8): 配布先を自動判定し RELEASE.md を書き出す ──
+ipcMain.handle('generate-release-plan', async (_e, { cwd }) => {
+  try {
+    const dir = cwd || os.homedir();
+    const exists = (p) => { try { return fs.existsSync(path.join(dir, p)); } catch { return false; } };
+    let pkg = {};
+    try { pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf-8')); } catch (_) {}
+    const dep = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
+    const has = (n) => Object.keys(dep).some(k => k.includes(n));
+
+    let channel, steps;
+    if (exists('capacitor.config.ts') || exists('capacitor.config.json') || exists('ios')) {
+      channel = 'iOS App Store';
+      steps = `1. [自動] npm run build && npx cap sync ios\n2. [自動] Info.plist: ITSAppUsesNonExemptEncryption=false 確認\n3. [要本人] Xcode で Archive → Distribute → App Store Connect Upload\n4. [自動/事前] スクショ 6.7"(1290x2796)/6.5"(1242x2688)/iPad 12.9"(2048x2732)\n5. [要本人] App Store Connect: メタデータ・App Privacy・審査提出`;
+    } else if (has('electron')) {
+      const masish = JSON.stringify(pkg.build || {}).includes('mas');
+      channel = masish ? 'Mac App Store' : 'Gumroad (DMG)';
+      steps = masish
+        ? `1. [自動] electron-builder --mac mas (3rd Party Mac Developer 署名+provisioning)\n2. [自動] .pkg 検証\n3. [要本人] Transporter/altool で App Store Connect アップロード\n4. [要本人] メタデータ・スクショ(2880x1800)・審査提出`
+        : `1. [自動] electron-builder --mac (Developer ID Application 署名)\n2. [自動] notarize: xcrun notarytool submit <dmg> --keychain-profile "notarytool-profile" --wait\n3. [自動] staple: xcrun stapler staple <dmg> && spctl -a -vvv -t install <dmg>\n4. [自動] 販売文(EN/JP)生成\n5. [要本人] gumroad.com で商品作成→DMGアップロード→価格→公開`;
+    } else if (exists('next.config.js') || exists('next.config.ts') || exists('vercel.json') || has('next')) {
+      channel = 'Web SaaS (Vercel)';
+      steps = `1. [自動] ship-check(SEO/OG/決済/本番設定)\n2. [自動] vercel --prod (EGAKU系はwebhook故障のためcommit後に必須)\n3. [要本人] Stripe本番キー・Webエンドポイント確認、テストキー残留チェック\n4. [自動] Search Console/sitemap/OG 最終確認`;
+    } else {
+      channel = '汎用 / Gumroad(デジタル)';
+      steps = `1. [自動] 成果物パッケージング(zip/pdf等)\n2. [自動] 販売文(志柿スタイル)生成\n3. [要本人] gumroad.com で商品作成→アップロード→公開`;
+    }
+
+    const name = pkg.name || path.basename(dir);
+    const md = `# RELEASE — ${name}\n\n配布先(自動判定): **${channel}**\n\n> GitHub push はゴールではなく途中の1ステップ。全項目 ✅ になるまで「完成」と言わない。\n> [自動]=アプリ/AIが実行 / [要本人]=Apple・Gumroad等の対話操作。\n\n## 手順\n${steps}\n\n---\n- Apple Team ID: HDSYA72T8Z / notarytool profile: notarytool-profile\n- プライバシーポリシー: https://gist.github.com/koach08/fe3cf9201983f03b64dcad8bce4f74f0\n- 方針: まず Gumroad で最速公開 → 売れたら App Store 追加\n`;
+    const outPath = path.join(dir, 'RELEASE.md');
+    fs.writeFileSync(outPath, md, 'utf-8');
+    return { ok: true, path: outPath, channel };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
+ipcMain.handle('open-path', async (_e, { p }) => { try { shell.openPath(p); } catch (_) {} });
+
 ipcMain.handle('hub-chat', async (_e, { provider, model, messages, system, temperature }) => {
   const cfg = (() => {
     try {

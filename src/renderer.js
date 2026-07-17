@@ -142,6 +142,24 @@ function setupListeners() {
     });
   }
 
+  // Ship / Store (#8): アクティブタブの作業フォルダで配布先判定→RELEASE.md生成
+  const shipCard = document.getElementById('ship-release-card');
+  if (shipCard) {
+    shipCard.addEventListener('click', async () => {
+      const status = document.getElementById('ship-status');
+      const cwd = document.getElementById('status-cwd').textContent.trim();
+      if (!cwd) { status.textContent = 'アクティブなタブがありません'; return; }
+      status.textContent = '判定中...';
+      const r = await window.api.generateReleasePlan(cwd);
+      if (r && r.ok) {
+        status.innerHTML = `配布先: <b style="color:var(--accent)">${esc(r.channel)}</b> → RELEASE.md 生成`;
+        window.api.openPath(r.path);
+      } else {
+        status.textContent = '失敗: ' + ((r && r.error) || '');
+      }
+    });
+  }
+
   // Work log
   document.getElementById('worklog-toggle').addEventListener('click', toggleWorkLog);
   document.getElementById('worklog-close').addEventListener('click', () => {
