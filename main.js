@@ -165,6 +165,29 @@ function createMenu() {
 }
 
 // ── IPC: Create session ──
+// Derive a friendly, project-aware tab name from the working directory.
+// Known project folders map to readable labels; otherwise the folder basename is used.
+function deriveSessionName(cwd, mode) {
+  const norm = String(cwd || '').replace(/\/+$/, '');
+  const base = (norm === os.homedir() || !norm) ? '' : norm.split('/').pop();
+  const MAP = {
+    'ai-studio': 'EGAKU', 'egaku-ai': 'EGAKU', 'egaku-diffusion': 'EGAKU Diffusion',
+    'crypto-trader': '仮想通貨AI', 'code-harness': 'Code Harness',
+    'claude-code-desktop': 'CC Desktop', 'koach-voice': 'koach-voice',
+    'english-platform-commercial': 'SpeakSmart', 'english-platform-next': '英語大学版',
+    'spanish-platform': 'スペイン語', 'persian-learning': 'ペルシア語',
+    'english_assessment_v2': '英語評価', 'koach-os-app-live': 'Koach OS',
+    'uni-agent-app': 'UniAgent', 'eduplanner': 'EduPlanner', 'souji': 'Souji',
+    'investment-app': '投資分析', 'RIPE2026-paper': 'RIPE論文',
+  };
+  const project = MAP[base] || base;
+  if (!project) {
+    return mode === 'claude' ? 'Claude Code' : mode === 'codex' ? 'Codex' : 'Terminal';
+  }
+  const suffix = mode === 'codex' ? ' · Codex' : mode === 'shell' ? ' · sh' : '';
+  return project + suffix;
+}
+
 ipcMain.handle('create-session', async (_event, { cwd, name, mode, restoreFromId, conversationId }) => {
   const id = `s_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
   const nodePty = getPty();
@@ -204,7 +227,7 @@ ipcMain.handle('create-session', async (_event, { cwd, name, mode, restoreFromId
   const sessionData = {
     pty: ptyProcess,
     cwd: sessionCwd,
-    name: name || (sessionMode === 'claude' ? 'Claude Code' : sessionMode === 'codex' ? 'Codex' : 'Terminal'),
+    name: name || deriveSessionName(sessionCwd, sessionMode),
     mode: sessionMode,
     conversationId: conversationId || null,
     createdAt: new Date().toISOString(),
