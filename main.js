@@ -1081,11 +1081,22 @@ ipcMain.handle('check-update', async () => {
     });
 
     const latestTag = (data.tag_name || '').replace(/^v/, '');
-    const updateAvailable = latestTag && latestTag !== currentVersion;
+    // semver比較: 更新ありは latest > current のときだけ。
+    // (GitHub最新releaseが実体より古い場合にダウングレードを"更新"と誤表示するのを防ぐ)
+    const isNewer = (a, b) => {
+      const pa = String(a).split('.').map(n => parseInt(n, 10) || 0);
+      const pb = String(b).split('.').map(n => parseInt(n, 10) || 0);
+      for (let i = 0; i < 3; i++) {
+        if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) > (pb[i] || 0);
+      }
+      return false;
+    };
+    const updateAvailable = !!latestTag && isNewer(latestTag, currentVersion);
     return {
       updateAvailable,
       changes: updateAvailable ? `${currentVersion} → ${latestTag}\n${data.body || ''}`.trim() : '',
       latestVersion: latestTag,
+      currentVersion,
       downloadUrl: data.html_url || '',
     };
   } catch (e) {
