@@ -1,69 +1,50 @@
-# Claude Code Desktop (Archived)
+# Ariya Bridge 開発エージェント
 
-> **This project has been superseded by [Code Harness](https://github.com/koach08/code-harness).** All new development and features are in Code Harness.
+**あなたと AI の開発チームをつなぐ、デスクトップの開発エージェント。**
 
----
+Ariya Bridge は Claude Code / Codex / Gemini をひとつのウィンドウで束ね、
+案件ごとにエンジンを切り替え、出荷まで面倒を見るための macOS / Windows / Linux アプリです。
+ターミナルに不慣れでも、GUI から AI コーディングエージェントを動かせます。
 
-**Code Harness** includes everything from Claude Code Desktop plus:
-- Multi-AI support (Claude Code + Codex + Aider)
-- Harness Engineering UI (CLAUDE.md editor, Hooks, Memory, Projects)
-- 13 languages (i18n)
-- Pro features with license system
-- And more
+> 旧称 **Claude Code Desktop**。単一エンジンの GUI ラッパーから、
+> 複数エンジンを役割分担させる「AI の開発会社」へと発展させています。
+> 方針は [VISION.md](VISION.md) を参照。
 
-**[Download Code Harness](https://github.com/koach08/code-harness/releases)**
+![Ariya Bridge](build/icon.png)
 
----
+## 特長
 
-*Original description below for reference:*
+- **マルチエンジン** — Claude Code / Codex / Gemini / 素のターミナルをタブごとに選択・切替
+- **エンジン判定** — タスク文を渡すと、設計は Claude・リファクタは Codex・量産/UI は Gemini と推奨（`suggest-engine`）
+- **タブのエンジンだけ再起動** — `Cmd+Shift+R` でアプリ全体を落とさず、そのタブのエンジンだけ入れ替え
+- **タブ自動命名** — 作業フォルダ / プロジェクト名から読みやすいタブ名を自動生成
+- **フォルダ D&D** — プロジェクトフォルダをドロップして、そのディレクトリでエージェントを起動
+- **出荷プラン生成** — 作業フォルダの構成から配布先（iOS / Mac App Store / Gumroad / Vercel）を判定し `RELEASE.md` を書き出し
+- **CLI 自動更新** — 起動時に Codex / Gemini CLI をバックグラウンドで更新
+- **AI Hub** — チャット / 音声文字起こし / ルート提案を内蔵
+- **Harness 編集** — CLAUDE.md・Hooks・Memory・Projects をアプリから編集
+- **セッション自動保存 / 復元** — 再起動しても会話を `--resume` で復元
+- **クイック承認** — Yes / No / Ctrl+C をワンクリック
 
-A user-friendly desktop interface for [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code).
-
-Non-engineers and engineers alike can use Claude Code through an intuitive GUI — no terminal experience required.
-
-![Claude Code Desktop](build/icon.png)
-
-## Features
-
-- **Auto-launch Claude Code** — Opens Claude Code immediately on startup
-- **Claude / Terminal toggle** — Switch between Claude Code and a regular terminal
-- **Simple / Advanced UI modes** — Simplified interface for non-engineers, compact mode for engineers
-- **Multi-tab sessions** — Run multiple Claude Code or terminal sessions simultaneously
-- **Drag & drop folders** — Drop a project folder to open Claude Code in that directory
-- **Rich text input** — Edit prompts freely with cursor positioning (unlike raw terminal)
-- **Command reference sidebar** — All Claude Code commands and keyboard shortcuts at a glance
-- **Quick action buttons** — One-click Yes/No/Ctrl+C for tool approvals
-- **Status bar** — Real-time activity indicator (reading files, editing, waiting for approval...)
-- **Session auto-save** — Sessions are saved automatically and can be restored on restart
-- **CLI auto-detection** — Checks for Claude Code CLI and guides installation if missing
-
-## Supported Platforms
+## 対応プラットフォーム
 
 | Platform | Format | Architecture |
 |----------|--------|-------------|
 | **macOS** | `.dmg` | Apple Silicon (M1-M4) / Intel |
-| **Windows** | `.exe` (installer + portable) | x64 |
+| **Windows** | `.exe`（installer + portable） | x64 |
 | **Linux** | `.AppImage` / `.deb` | x64 |
 
-## Prerequisites
+## 必要環境
 
-- **Node.js** v18+ ([nodejs.org](https://nodejs.org))
-- **Claude Code CLI** (`npm install -g @anthropic-ai/claude-code`)
-- **Anthropic account** (Pro plan or API key)
+- **Node.js** v18+（[nodejs.org](https://nodejs.org)）
+- **Claude Code CLI**（`npm install -g @anthropic-ai/claude-code`）
+- 任意: **Codex CLI** / **Gemini CLI**（該当レーンを使う場合）
+- **Anthropic アカウント**（Pro プラン または API キー）
 
-> The app checks for Claude Code CLI on startup and guides you through installation if needed.
+> 各エンジンは利用者自身のアカウントで動作します。本アプリは UI ラッパーであり、
+> API キーの保存・共有は行いません。
 
-## Install
-
-### Option 1: Download (Recommended)
-
-Download the latest release for your platform from [Releases](https://github.com/koach08/claude-code-desktop/releases).
-
-- **macOS**: Open `.dmg`, drag to Applications
-- **Windows**: Run `.exe` installer, or use the portable version
-- **Linux**: Run `.AppImage` directly, or install `.deb`
-
-### Option 2: Build from source
+## ビルド / 起動
 
 ```bash
 git clone https://github.com/koach08/claude-code-desktop.git
@@ -72,7 +53,7 @@ npm install
 npm start
 ```
 
-Build for your platform:
+配布ビルド:
 
 ```bash
 npm run build:mac    # macOS (.dmg)
@@ -80,32 +61,24 @@ npm run build:win    # Windows (.exe)
 npm run build:linux  # Linux (.AppImage, .deb)
 ```
 
-## Keyboard Shortcuts
+## キーボードショートカット
 
-| Shortcut | Action |
+| ショートカット | 動作 |
 |----------|--------|
-| `Cmd+Enter` | Send input |
-| `Cmd+T` | New tab |
-| `Cmd+W` | Close tab |
-| `Cmd+1-9` | Switch tabs |
-| `Alt+↑↓` | Input history |
+| `Cmd+Enter` | 送信 |
+| `Cmd+T` | 新規タブ |
+| `Cmd+W` | タブを閉じる |
+| `Cmd+Shift+R` | このタブのエンジンだけ再起動 |
+| `Cmd+1-9` | タブ切替 |
+| `Alt+↑↓` | 入力履歴 |
 
-## Claude Code Commands
+## アーキテクチャ
 
-| Command | Description |
-|---------|-------------|
-| `/help` | Show help |
-| `/clear` | Clear conversation |
-| `/compact` | Summarize and compress conversation |
-| `/cost` | Show token usage and cost |
-| `/model` | Change AI model |
-| `/review` | Request code review |
+Electron メインプロセス（`main.js`）が各エンジンを `node-pty` で起動し、
+レンダラー（`src/`）が xterm ベースの端末とサイドバー UI を提供します。
+`api-server/` は補助的な API サーバーです。
 
-## Architecture
-
-Each user runs Claude Code with **their own Anthropic account**. This app is a UI wrapper — no API keys are stored or shared.
-
-## License
+## ライセンス
 
 MIT
 
