@@ -1024,6 +1024,7 @@ const DEFAULT_SETTINGS = {
   fontSize: 14,
   autoSaveInterval: 10,
   doubleEnterDelay: 500,
+  autoUpdateClis: true,
 };
 
 ipcMain.handle('load-settings', async () => {
@@ -1039,6 +1040,31 @@ ipcMain.handle('save-settings', async (_e, settings) => {
     fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2));
   } catch (_) {}
 });
+
+// ── CLI auto-update (codex / gemini), throttled to once per 24h ──
+const CLI_UPDATE_STAMP = path.join(SESSIONS_DIR, 'cli-update.json');
+function autoUpdateClisInBackground() {
+  try {
+    let settings;
+    try { settings = { ...DEFAULT_SETTINGS, ...JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf-8')) }; }
+    catch { settings = { ...DEFAULT_SETTINGS }; }
+    if (!settings.autoUpdateClis) return;
+
+    let last = 0;
+    try { last = JSON.parse(fs.readFileSync(CLI_UPDATE_STAMP, 'utf-8')).ts || 0; } catch (_) {}
+    if (Date.now() - last < 24 * 60 * 60 * 1000) return; // 1日1回まで
+    try { fs.mkdirSync(SESSIONS_DIR, { recursive: true }); fs.writeFileSync(CLI_UPDATE_STAMP, JSON.stringify({ ts: Date.now() })); } catch (_) {}
+
+    const { exec } = require('child_process');
+    const run = (label, cmd) => exec(cmd, { env: shellEnv, timeout: 180000 }, (err) => {
+      const msg = `[cli-update] ${label}: ${err ? 'skip/err (' + (err.message || '').split('\n')[0] + ')' : 'up to date'}`;
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('cli-update-log', msg);
+    });
+    // Codex は専用 update サブコマンド、Gemini は npm グローバル更新。無ければ静かに失敗。
+    run('codex', 'codex update');
+    run('gemini', 'npm install -g @google/gemini-cli@latest');
+  } catch (_) {}
+}
 
 // ── Open app folder in Finder/Explorer ──
 ipcMain.handle('open-app-folder', async () => {
@@ -1188,6 +1214,7 @@ app.whenReady().then(() => {
   createWindow();
   createMenu();
   timer = setInterval(saveSessionsSync, 10000);
+  setTimeout(autoUpdateClisInBackground, 8000); // 起動を邪魔しないよう遅延実行
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
 app.on('before-quit', () => {
