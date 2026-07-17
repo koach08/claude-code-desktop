@@ -17,8 +17,10 @@
       <div id="mode-toggle">
         <button class="mode-btn active" data-mode="claude">Claude</button>
         <button class="mode-btn" data-mode="codex">Codex</button>
+        <button class="mode-btn" data-mode="gemini">Gemini</button>
         <button class="mode-btn" data-mode="shell">Terminal</button>
       </div>
+      <button id="engine-suggest-btn" title="やりたいことからエンジンを判定">&#128256;</button>
       <div id="ui-toggle">
         <button class="ui-btn active" data-ui="simple">Simple</button>
         <button class="ui-btn" data-ui="advanced">Advanced</button>
@@ -429,6 +431,29 @@
       <div style="display: flex; gap: 8px;">
         <button id="setup-auto-install" class="setup-btn primary">自動インストール</button>
         <button id="setup-skip" class="setup-btn">ターミナルで開く</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Engine Suggest Dialog -->
+  <div id="engine-dialog" class="dialog hidden">
+    <div class="dialog-content" style="max-width:460px;">
+      <div class="dialog-header">
+        <h2>エンジン判定</h2>
+        <button id="engine-close" class="dialog-close-btn">&times;</button>
+      </div>
+      <p style="font-size:12px;color:var(--fg2);margin-bottom:8px;">やりたいこと・アイデアを入れると、最適な開発エンジン(Claude Code / Codex / Gemini)を判定します。</p>
+      <textarea id="engine-task-input" placeholder="例：EGAKUのworkerを全部見て生成コストを下げたい / 新機能をUIまで作って動作確認したい" style="width:100%;min-height:80px;background:var(--bg1);border:1px solid var(--border);border-radius:6px;color:var(--fg);padding:10px;font-size:13px;resize:vertical;outline:none;"></textarea>
+      <div style="display:flex;gap:8px;margin-top:8px;">
+        <button id="engine-judge-btn" class="setup-btn primary">判定</button>
+      </div>
+      <div id="engine-result" class="hidden" style="margin-top:12px;">
+        <div id="engine-result-text" style="font-size:13px;color:var(--fg);margin-bottom:10px;"></div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;">
+          <button class="setup-btn engine-open" data-mode="claude">Claude Code で開く</button>
+          <button class="setup-btn engine-open" data-mode="codex">Codex で開く</button>
+          <button class="setup-btn engine-open" data-mode="gemini">Gemini で開く</button>
+        </div>
       </div>
     </div>
   </div>

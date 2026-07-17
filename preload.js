@@ -33,6 +33,7 @@ contextBridge.exposeInMainWorld('api', {
   hubChat: (opts) => ipcRenderer.invoke('hub-chat', opts),
   hubTranscribe: (opts) => ipcRenderer.invoke('hub-transcribe', opts),
   hubSuggestRoute: (text) => ipcRenderer.invoke('hub-suggest-route', { text }),
+  suggestEngine: (task) => ipcRenderer.invoke('suggest-engine', { task }),
   hubProviders: () => ipcRenderer.invoke('hub-providers'),
   hubLoadConfig: () => ipcRenderer.invoke('hub-load-config'),
   hubSaveConfig: (cfg) => ipcRenderer.invoke('hub-save-config', cfg),

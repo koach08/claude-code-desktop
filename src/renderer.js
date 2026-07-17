@@ -113,6 +113,35 @@ function setupListeners() {
   document.getElementById('send-btn').addEventListener('click', send);
   document.getElementById('settings-btn').addEventListener('click', openSettings);
 
+  // Engine suggest dialog (#6): タスクを入れて最適エンジンを判定→そのエンジンで新規タブ
+  const engineDialog = document.getElementById('engine-dialog');
+  if (engineDialog) {
+    document.getElementById('engine-suggest-btn').addEventListener('click', () => {
+      document.getElementById('engine-result').classList.add('hidden');
+      engineDialog.classList.remove('hidden');
+      document.getElementById('engine-task-input').focus();
+    });
+    document.getElementById('engine-close').addEventListener('click', () => engineDialog.classList.add('hidden'));
+    engineDialog.addEventListener('click', (e) => { if (e.target === engineDialog) engineDialog.classList.add('hidden'); });
+    document.getElementById('engine-judge-btn').addEventListener('click', async () => {
+      const task = document.getElementById('engine-task-input').value.trim();
+      if (!task) return;
+      const r = await window.api.suggestEngine(task);
+      document.getElementById('engine-result-text').innerHTML =
+        `推奨: <b style="color:var(--accent)">${esc(r.label)}</b><br><span style="color:var(--fg2)">${esc(r.reason)}</span>`;
+      document.getElementById('engine-result').classList.remove('hidden');
+      document.querySelectorAll('#engine-result .engine-open').forEach(b => {
+        b.classList.toggle('primary', b.dataset.mode === r.engine);
+      });
+    });
+    document.querySelectorAll('#engine-dialog .engine-open').forEach(b => {
+      b.addEventListener('click', () => {
+        engineDialog.classList.add('hidden');
+        newTab(b.dataset.mode);
+      });
+    });
+  }
+
   // Work log
   document.getElementById('worklog-toggle').addEventListener('click', toggleWorkLog);
   document.getElementById('worklog-close').addEventListener('click', () => {
@@ -474,7 +503,7 @@ async function switchSessionMode(newMode) {
   const oldSid = getTabSessionId(tab.tabEl);
   window.api.removeListeners(oldSid);
   tab.term.clear();
-  const modeLabel = newMode === 'claude' ? 'Claude Code' : newMode === 'codex' ? 'Codex' : 'Terminal';
+  const modeLabel = newMode === 'claude' ? 'Claude Code' : newMode === 'codex' ? 'Codex' : newMode === 'gemini' ? 'Gemini' : 'Terminal';
   tab.term.write(`\x1b[36m${modeLabel} を起動中...\x1b[0m\r\n`);
 
   const result = await window.api.switchMode(oldSid, newMode);
@@ -502,7 +531,7 @@ async function switchSessionMode(newMode) {
 
   // Update tab UI
   tab.tabEl.querySelector('.tname').textContent = result.name;
-  const icon = newMode === 'claude' ? 'AI' : newMode === 'codex' ? 'CX' : '>';
+  const icon = newMode === 'claude' ? 'AI' : newMode === 'codex' ? 'CX' : newMode === 'gemini' ? 'GM' : '>';
   tab.tabEl.querySelector('.tab-icon').textContent = icon;
   // Update pane header
   if (tab.paneHeader) {
@@ -560,7 +589,7 @@ function addTab(session, replayBuffer, restoreInfo) {
   });
 
   // Tab element
-  const icon = session.mode === 'claude' ? 'AI' : session.mode === 'codex' ? 'CX' : '>';
+  const icon = session.mode === 'claude' ? 'AI' : session.mode === 'codex' ? 'CX' : session.mode === 'gemini' ? 'GM' : '>';
   const tabEl = document.createElement('div');
   tabEl.className = 'tab';
   tabEl.dataset.sid = session.id; // Store session ID on element (updated on mode switch)

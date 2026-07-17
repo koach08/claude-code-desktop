@@ -165,6 +165,16 @@ function createMenu() {
 }
 
 // ── IPC: Create session ──
+// Read a KEY=value entry from the user's local secrets file (non-persistent use).
+function readSecretKey(name) {
+  try {
+    const p = path.join(os.homedir(), '.config', 'app-secrets', 'env.txt');
+    const line = fs.readFileSync(p, 'utf-8').split('\n').find(l => l.trim().startsWith(name + '='));
+    if (line) return line.slice(line.indexOf('=') + 1).trim();
+  } catch (_) {}
+  return '';
+}
+
 // Derive a friendly, project-aware tab name from the working directory.
 // Known project folders map to readable labels; otherwise the folder basename is used.
 function deriveSessionName(cwd, mode) {
@@ -182,9 +192,9 @@ function deriveSessionName(cwd, mode) {
   };
   const project = MAP[base] || base;
   if (!project) {
-    return mode === 'claude' ? 'Claude Code' : mode === 'codex' ? 'Codex' : 'Terminal';
+    return mode === 'claude' ? 'Claude Code' : mode === 'codex' ? 'Codex' : mode === 'gemini' ? 'Gemini' : 'Terminal';
   }
-  const suffix = mode === 'codex' ? ' · Codex' : mode === 'shell' ? ' · sh' : '';
+  const suffix = mode === 'codex' ? ' · Codex' : mode === 'gemini' ? ' · Gemini' : mode === 'shell' ? ' · sh' : '';
   return project + suffix;
 }
 
@@ -206,6 +216,9 @@ ipcMain.handle('create-session', async (_event, { cwd, name, mode, restoreFromId
   } else if (sessionMode === 'codex') {
     cmd = IS_WIN ? 'codex.cmd' : 'codex';
     args = [];
+  } else if (sessionMode === 'gemini') {
+    cmd = IS_WIN ? 'gemini.cmd' : 'gemini';
+    args = [];
   } else {
     if (IS_WIN) {
       cmd = 'powershell.exe';
@@ -216,12 +229,17 @@ ipcMain.handle('create-session', async (_event, { cwd, name, mode, restoreFromId
     }
   }
 
+  const spawnEnv = { ...shellEnv };
+  if (sessionMode === 'gemini' && !spawnEnv.GEMINI_API_KEY) {
+    const k = readSecretKey('GEMINI_API_KEY');
+    if (k) spawnEnv.GEMINI_API_KEY = k;
+  }
   const ptyProcess = nodePty.spawn(cmd, args, {
     name: IS_WIN ? undefined : 'xterm-256color',
     cols: 120,
     rows: 30,
     cwd: sessionCwd,
-    env: shellEnv,
+    env: spawnEnv,
   });
 
   const sessionData = {
@@ -685,6 +703,22 @@ ipcMain.handle('hub-suggest-route', async (_e, { text }) => {
   } catch (_) {
     return null;
   }
+});
+
+// ── ローカルなエンジン判別 (Claude Code / Codex / Gemini) ──
+// タスク説明のキーワードから最適な開発エンジンを1つ推奨する(外部API不要)。
+ipcMain.handle('suggest-engine', async (_e, { task }) => {
+  const t = String(task || '').toLowerCase();
+  const has = (arr) => arr.some(k => t.includes(k));
+  const codexKw = ['リファクタ', 'refactor', 'バグ', 'bug', 'デバッグ', 'debug', '修正', '直し', '横断', '全体を', 'どこで使', '影響範囲', '影響を', '既存の', 'アルゴリズム', '最適化', 'テストを', 'コードベース'];
+  const geminiKw = ['速く', '急ぎ', '大量', '量産', 'たくさん', 'ui', '画面', 'フロント', 'front', 'ブラウザ', 'browser', 'デザイン', 'スクショ', 'プロトタイプ', '試作', '安く', 'コスト', '反復'];
+  const claudeKw = ['設計', 'アーキ', '新規', '実装して', '記事', '論文', 'ドキュメント', '書い', '説明', 'レビュー', '丁寧', '品質', 'mcp', 'supabase', 'vercel', 'デプロイ', '戦略', '企画'];
+  let engine = 'claude', reason = '既定：品質・繊細な作業・書き物・MCP連携に強い';
+  if (has(codexKw)) { engine = 'codex'; reason = '既存コードの横断理解・影響追跡・リファクタ/バグ修正に強い'; }
+  else if (has(geminiKw)) { engine = 'gemini'; reason = '速度・量・UI/ブラウザ検証・コスト効率に強い'; }
+  else if (has(claudeKw)) { engine = 'claude'; reason = '設計・新規実装・書き物・MCP連携に強い'; }
+  const label = { claude: 'Claude Code', codex: 'Codex', gemini: 'Gemini' }[engine];
+  return { engine, label, reason };
 });
 
 ipcMain.handle('hub-chat', async (_e, { provider, model, messages, system, temperature }) => {
