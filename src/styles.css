@@ -16,11 +16,11 @@ body {
 
 /* ── Top Bar ── */
 #topbar {
-  display: flex; align-items: center; gap: 4px;
+  display: flex; align-items: flex-end; gap: 6px;
   background: var(--bg2); border-bottom: 1px solid var(--border);
-  padding: 6px 10px 0; flex-shrink: 0;
+  padding: 16px 16px 0; flex-shrink: 0;
   -webkit-app-region: drag;
-  height: 42px;
+  height: 60px;
 }
 /* macOS traffic lights spacing */
 #drag-region { width: 72px; flex-shrink: 0; }
@@ -30,20 +30,20 @@ body {
 }
 
 #tabs {
-  display: flex; gap: 2px; scrollbar-width: none;
+  display: flex; gap: 5px; scrollbar-width: none; margin-left: 6px;
   flex: 0 1 auto; min-width: 0; max-width: 60%; overflow-x: auto; overflow-y: hidden;
 }
 #tabs::-webkit-scrollbar { display: none; }
 
 .tab {
   display: flex; align-items: center; gap: 6px;
-  padding: 7px 12px; border-radius: 7px 7px 0 0;
+  padding: 8px 14px; border-radius: 8px 8px 0 0;
   cursor: pointer; font-size: 12px; color: var(--fg2);
   transition: background .15s, color .15s; white-space: nowrap;
-  flex: 1 1 0; min-width: 80px; max-width: 240px;
+  flex: 1 1 0; min-width: 92px; max-width: 240px;
   overflow: hidden;
 }
-.tab.active { background: var(--bg1); color: var(--fg); border-top: 2px solid var(--accent); padding-top: 5px; }
+.tab.active { background: var(--bg1); color: var(--fg); border-top: 2px solid var(--accent); padding-top: 6px; }
 .tab:hover:not(.active) { background: rgba(65,72,104,.4); }
 .tab.ended .tname { opacity: .4; text-decoration: line-through; }
 .tname { overflow: hidden; text-overflow: ellipsis; flex: 1; }
