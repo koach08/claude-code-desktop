@@ -439,7 +439,7 @@ input[type="range"]::-webkit-slider-thumb {
 
 /* ── Drag & Drop ── */
 #app.drag-over::after {
-  content: 'フォルダをドロップ';
+  content: 'ドロップでパス挿入（Shift+ドロップで新規タブ）';
   position: fixed; inset: 0; z-index: 100;
   background: rgba(122,162,247,.15);
   border: 3px dashed var(--accent);

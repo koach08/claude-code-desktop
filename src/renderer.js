@@ -350,10 +350,33 @@ function setupListeners() {
     e.stopPropagation();
     document.getElementById('app').classList.remove('drag-over');
     const files = e.dataTransfer.files;
-    if (files.length > 0 && files[0].path) {
-      newTabWithCwd(currentMode, files[0].path);
+    if (!files || files.length === 0) return;
+    const paths = Array.from(files).map(f => f.path).filter(Boolean);
+    if (paths.length === 0) return;
+
+    // Shift+ドロップ: 従来どおりフォルダを新規タブで開く
+    if (e.shiftKey) {
+      newTabWithCwd(currentMode, paths[0]);
+      return;
     }
+
+    // 通常ドロップ: ファイル/フォルダのパスをアクティブ入力に挿入(shellエスケープ)
+    const quoted = paths.map(quoteDropPath).join(' ');
+    const ta = document.getElementById('builder-prompt') && document.body.dataset.ui === 'builder'
+      ? document.getElementById('builder-prompt')
+      : document.getElementById('prompt-input');
+    if (!ta) { newTabWithCwd(currentMode, paths[0]); return; }
+    const needsSpace = ta.value && !ta.value.endsWith(' ');
+    ta.value += (needsSpace ? ' ' : '') + quoted + ' ';
+    ta.focus();
+    ta.dispatchEvent(new Event('input'));
   });
+}
+
+// ドロップされたファイル/フォルダのパスを shell 安全にクォート
+function quoteDropPath(p) {
+  if (/^[A-Za-z0-9_./~@%+=:,-]+$/.test(p)) return p;
+  return "'" + String(p).replace(/'/g, "'\\''") + "'";
 }
 
 // ── Enter hint ──
