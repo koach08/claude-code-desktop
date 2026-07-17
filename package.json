@@ -35,7 +35,7 @@
   },
   "build": {
     "appId": "com.languagexai.claude-code-desktop",
-    "productName": "Claude Code Desktop",
+    "productName": "Ariya Bridge 開発エージェント",
     "mac": {
       "category": "public.app-category.developer-tools",
       "icon": "build/icon.icns",
@@ -93,7 +93,7 @@
       "category": "Development"
     },
     "dmg": {
-      "title": "Claude Code Desktop",
+      "title": "Ariya Bridge 開発エージェント",
       "contents": [
         {
           "x": 130,

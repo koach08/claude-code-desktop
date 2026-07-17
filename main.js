@@ -48,7 +48,7 @@ function createWindow() {
     minWidth: 700,
     minHeight: 450,
     backgroundColor: '#1a1b26',
-    title: 'Claude Code Desktop',
+    title: 'Ariya Bridge 開発エージェント',
     titleBarStyle: IS_MAC ? 'hiddenInset' : 'default',
     trafficLightPosition: IS_MAC ? { x: 12, y: 12 } : undefined,
     webPreferences: {
