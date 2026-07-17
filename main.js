@@ -214,9 +214,13 @@ ipcMain.handle('create-session', async (_event, { cwd, name, mode, restoreFromId
   // Start with empty buffer — don't replay stale old output
   sessionBuffers.set(id, '');
 
-  // Auto-detect conversation ID from Claude CLI output (parse session UUID)
-  const convIdPattern = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/;
+  // Auto-detect conversation ID by matching the .jsonl session file Claude creates
+  // for this cwd. Runs for the whole session lifetime (throttled) until found — so a
+  // tab whose first message comes late still gets a resumable conversationId, which is
+  // what lets a restart --resume the real conversation instead of losing it.
+  const sessionStartMs = Date.now();
   let convIdDetected = !!conversationId;
+  let lastConvCheck = 0;
 
   ptyProcess.onData((data) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -226,37 +230,34 @@ ipcMain.handle('create-session', async (_event, { cwd, name, mode, restoreFromId
     if (buf.length > MAX_BUFFER) buf = buf.slice(-MAX_BUFFER);
     sessionBuffers.set(id, buf);
 
-    // Detect conversation ID from Claude's project directory changes (first 15 seconds)
+    // Detect conversation ID from Claude's project directory (throttled to ~1.5s).
     if (sessionMode === 'claude' && !convIdDetected) {
-      const s = sessions.get(id);
-      if (s && !s.conversationId) {
-        const cwdKey = sessionCwd.replace(/\//g, '-');
-        const projectDir = path.join(os.homedir(), '.claude', 'projects', cwdKey);
-        try {
-          if (fs.existsSync(projectDir)) {
-            const files = fs.readdirSync(projectDir)
-              .filter(f => f.endsWith('.jsonl'))
-              .map(f => ({ name: f, mtime: fs.statSync(path.join(projectDir, f)).mtimeMs }))
-              .sort((a, b) => b.mtime - a.mtime);
-            // Only pick the newest file if it was modified in the last 10 seconds
-            if (files.length > 0) {
-              const newest = files[0];
-              if (Date.now() - newest.mtime < 10000) {
-                const detectedId = newest.name.replace('.jsonl', '');
-                s.conversationId = detectedId;
+      const now = Date.now();
+      if (now - lastConvCheck > 1500) {
+        lastConvCheck = now;
+        const s = sessions.get(id);
+        if (s && !s.conversationId) {
+          const cwdKey = sessionCwd.replace(/\//g, '-');
+          const projectDir = path.join(os.homedir(), '.claude', 'projects', cwdKey);
+          try {
+            if (fs.existsSync(projectDir)) {
+              // Only consider .jsonl files created at/after this session started, so we
+              // attach THIS session's conversation, not an older one in the same cwd.
+              const files = fs.readdirSync(projectDir)
+                .filter(f => f.endsWith('.jsonl'))
+                .map(f => ({ name: f, mtime: fs.statSync(path.join(projectDir, f)).mtimeMs }))
+                .filter(f => f.mtime >= sessionStartMs - 2000)
+                .sort((a, b) => b.mtime - a.mtime);
+              if (files.length > 0) {
+                s.conversationId = files[0].name.replace('.jsonl', '');
                 convIdDetected = true;
               }
             }
-          }
-        } catch (_) {}
+          } catch (_) {}
+        }
       }
     }
   });
-
-  // Stop trying to detect after 15 seconds
-  if (sessionMode === 'claude' && !convIdDetected) {
-    setTimeout(() => { convIdDetected = true; }, 15000);
-  }
 
   ptyProcess.onExit(({ exitCode, signal }) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
