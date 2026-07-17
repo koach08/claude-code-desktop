@@ -320,6 +320,7 @@ function setupListeners() {
     const inTextarea = document.activeElement === ta;
 
     if ((e.metaKey || e.ctrlKey) && e.key === 't') { e.preventDefault(); newTab(currentMode); }
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'r' || e.key === 'R')) { e.preventDefault(); reloadActiveEngine(); }
     if ((e.metaKey || e.ctrlKey) && e.key === 'w') { e.preventDefault(); if (activeId) closeTab(activeId); }
     if ((e.metaKey || e.ctrlKey) && e.key === 's') {
       e.preventDefault();
@@ -505,6 +506,17 @@ function setUiMode(mode) {
       tab.term.scrollToBottom();
     }
   }
+}
+
+// エンジン(Claude/Codex/Gemini CLI)更新後、アプリ全体を再起動せず
+// アクティブなタブのエンジンだけ再起動して新バージョンを反映する (#2 / Cmd+Shift+R)。
+async function reloadActiveEngine() {
+  if (!activeId) return;
+  const tab = tabs.get(activeId);
+  if (!tab || !tab.session) return;
+  const mode = tab.session.mode;
+  if (mode === 'shell') return; // 通常シェルは対象外
+  await switchSessionMode(mode);
 }
 
 // ── Session Mode Switch ──
