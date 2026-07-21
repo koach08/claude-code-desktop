@@ -18,6 +18,9 @@ const IS_WIN = process.platform === 'win32';
 const IS_MAC = process.platform === 'darwin';
 
 let shellEnv = { ...process.env };
+// Grok コーディングレーンの既定モデル。grok-build-0.1 = grok-code-fast（速い・安いコーディング特化）。
+// TUI 内で /models から grok-4.5 等へ切替可。
+const GROK_MODEL = 'xai/grok-build-0.1';
 if (!IS_WIN) {
   try {
     const shell = IS_MAC ? '/bin/zsh' : '/bin/bash';
@@ -192,9 +195,9 @@ function deriveSessionName(cwd, mode) {
   };
   const project = MAP[base] || base;
   if (!project) {
-    return mode === 'claude' ? 'Claude Code' : mode === 'codex' ? 'Codex' : mode === 'gemini' ? 'Gemini' : 'Terminal';
+    return mode === 'claude' ? 'Claude Code' : mode === 'codex' ? 'Codex' : mode === 'gemini' ? 'Gemini' : mode === 'grok' ? 'Grok' : 'Terminal';
   }
-  const suffix = mode === 'codex' ? ' · Codex' : mode === 'gemini' ? ' · Gemini' : mode === 'shell' ? ' · sh' : '';
+  const suffix = mode === 'codex' ? ' · Codex' : mode === 'gemini' ? ' · Gemini' : mode === 'grok' ? ' · Grok' : mode === 'shell' ? ' · sh' : '';
   return project + suffix;
 }
 
@@ -219,6 +222,12 @@ ipcMain.handle('create-session', async (_event, { cwd, name, mode, restoreFromId
   } else if (sessionMode === 'gemini') {
     cmd = IS_WIN ? 'gemini.cmd' : 'gemini';
     args = [];
+  } else if (sessionMode === 'grok') {
+    // Grok コーディングレーン: Grok 専用 CLI は現行 xAI API と噛み合わない(Codex→xAI は
+    // responses API 非互換、@vibe-kit/grok-cli は廃止 live-search で 410)。実績ある
+    // opencode(TUI エージェント)を xAI/grok に向けて起動する。認証は XAI_API_KEY を注入。
+    cmd = IS_WIN ? 'opencode.cmd' : 'opencode';
+    args = ['-m', GROK_MODEL];
   } else {
     if (IS_WIN) {
       cmd = 'powershell.exe';
@@ -233,6 +242,10 @@ ipcMain.handle('create-session', async (_event, { cwd, name, mode, restoreFromId
   if (sessionMode === 'gemini' && !spawnEnv.GEMINI_API_KEY) {
     const k = readSecretKey('GEMINI_API_KEY');
     if (k) spawnEnv.GEMINI_API_KEY = k;
+  }
+  if (sessionMode === 'grok' && !spawnEnv.XAI_API_KEY) {
+    const k = readSecretKey('XAI_API_KEY');
+    if (k) { spawnEnv.XAI_API_KEY = k; spawnEnv.GROK_API_KEY = k; }
   }
   const ptyProcess = nodePty.spawn(cmd, args, {
     name: IS_WIN ? undefined : 'xterm-256color',
@@ -326,9 +339,26 @@ ipcMain.handle('switch-mode', async (_event, { sessionId, newMode }) => {
   } else if (newMode === 'codex') {
     cmd = IS_WIN ? 'codex.cmd' : 'codex';
     args = [];
+  } else if (newMode === 'gemini') {
+    cmd = IS_WIN ? 'gemini.cmd' : 'gemini';
+    args = [];
+  } else if (newMode === 'grok') {
+    cmd = IS_WIN ? 'opencode.cmd' : 'opencode';
+    args = ['-m', GROK_MODEL];
   } else {
     if (IS_WIN) { cmd = 'powershell.exe'; args = []; }
     else { cmd = IS_MAC ? '/bin/zsh' : (process.env.SHELL || '/bin/bash'); args = ['--login', '-i']; }
+  }
+
+  // create-session と同じくエンジン別の API キーを注入(gemini/grok)。
+  const switchEnv = { ...shellEnv };
+  if (newMode === 'gemini' && !switchEnv.GEMINI_API_KEY) {
+    const k = readSecretKey('GEMINI_API_KEY');
+    if (k) switchEnv.GEMINI_API_KEY = k;
+  }
+  if (newMode === 'grok' && !switchEnv.XAI_API_KEY) {
+    const k = readSecretKey('XAI_API_KEY');
+    if (k) { switchEnv.XAI_API_KEY = k; switchEnv.GROK_API_KEY = k; }
   }
 
   const newId = `s_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
@@ -337,10 +367,10 @@ ipcMain.handle('switch-mode', async (_event, { sessionId, newMode }) => {
     cols: 120,
     rows: 30,
     cwd,
-    env: shellEnv,
+    env: switchEnv,
   });
 
-  const modeName = newMode === 'claude' ? 'Claude Code' : newMode === 'codex' ? 'Codex' : 'Terminal';
+  const modeName = newMode === 'claude' ? 'Claude Code' : newMode === 'codex' ? 'Codex' : newMode === 'gemini' ? 'Gemini' : newMode === 'grok' ? 'Grok' : 'Terminal';
   sessions.set(newId, {
     pty: ptyProcess,
     cwd,
@@ -713,11 +743,13 @@ ipcMain.handle('suggest-engine', async (_e, { task }) => {
   const codexKw = ['リファクタ', 'refactor', 'バグ', 'bug', 'デバッグ', 'debug', '修正', '直し', '横断', '全体を', 'どこで使', '影響範囲', '影響を', '既存の', 'アルゴリズム', '最適化', 'テストを', 'コードベース'];
   const geminiKw = ['速く', '急ぎ', '大量', '量産', 'たくさん', 'ui', '画面', 'フロント', 'front', 'ブラウザ', 'browser', 'デザイン', 'スクショ', 'プロトタイプ', '試作', '安く', 'コスト', '反復'];
   const claudeKw = ['設計', 'アーキ', '新規', '実装して', '記事', '論文', 'ドキュメント', '書い', '説明', 'レビュー', '丁寧', '品質', 'mcp', 'supabase', 'vercel', 'デプロイ', '戦略', '企画'];
+  const grokKw = ['grok', 'グロック', 'xai', 'grok-code'];
   let engine = 'claude', reason = '既定：品質・繊細な作業・書き物・MCP連携に強い';
-  if (has(codexKw)) { engine = 'codex'; reason = '既存コードの横断理解・影響追跡・リファクタ/バグ修正に強い'; }
+  if (has(grokKw)) { engine = 'grok'; reason = '高速・低コストなコーディング(grok-code-fast)。Grok 指定時に'; }
+  else if (has(codexKw)) { engine = 'codex'; reason = '既存コードの横断理解・影響追跡・リファクタ/バグ修正に強い'; }
   else if (has(geminiKw)) { engine = 'gemini'; reason = '速度・量・UI/ブラウザ検証・コスト効率に強い'; }
   else if (has(claudeKw)) { engine = 'claude'; reason = '設計・新規実装・書き物・MCP連携に強い'; }
-  const label = { claude: 'Claude Code', codex: 'Codex', gemini: 'Gemini' }[engine];
+  const label = { claude: 'Claude Code', codex: 'Codex', gemini: 'Gemini', grok: 'Grok' }[engine];
   return { engine, label, reason };
 });
 

@@ -533,7 +533,7 @@ async function switchSessionMode(newMode) {
   const oldSid = getTabSessionId(tab.tabEl);
   window.api.removeListeners(oldSid);
   tab.term.clear();
-  const modeLabel = newMode === 'claude' ? 'Claude Code' : newMode === 'codex' ? 'Codex' : newMode === 'gemini' ? 'Gemini' : 'Terminal';
+  const modeLabel = newMode === 'claude' ? 'Claude Code' : newMode === 'codex' ? 'Codex' : newMode === 'gemini' ? 'Gemini' : newMode === 'grok' ? 'Grok' : 'Terminal';
   tab.term.write(`\x1b[36m${modeLabel} を起動中...\x1b[0m\r\n`);
 
   const result = await window.api.switchMode(oldSid, newMode);
@@ -619,7 +619,7 @@ function addTab(session, replayBuffer, restoreInfo) {
   });
 
   // Tab element
-  const icon = session.mode === 'claude' ? 'AI' : session.mode === 'codex' ? 'CX' : session.mode === 'gemini' ? 'GM' : '>';
+  const icon = session.mode === 'claude' ? 'AI' : session.mode === 'codex' ? 'CX' : session.mode === 'gemini' ? 'GM' : session.mode === 'grok' ? 'GK' : '>';
   const tabEl = document.createElement('div');
   tabEl.className = 'tab';
   tabEl.dataset.sid = session.id; // Store session ID on element (updated on mode switch)
@@ -977,7 +977,7 @@ function setStatus(state, text) {
 }
 
 function updateStatusMode(mode) {
-  const labels = { claude: 'Claude Code', codex: 'Codex', shell: 'Terminal' };
+  const labels = { claude: 'Claude Code', codex: 'Codex', gemini: 'Gemini', grok: 'Grok', shell: 'Terminal' };
   document.getElementById('status-mode').textContent = labels[mode] || mode;
 }
 
