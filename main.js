@@ -79,6 +79,11 @@ function createWindow() {
 
   // Save sessions when window loses focus (crash resilience)
   mainWindow.on('blur', () => saveSessionsSync());
+
+  // 起動中に ariya:// で叩かれた分は、タブ復元が落ち着いてから渡す
+  mainWindow.webContents.on('did-finish-load', () => {
+    if (pendingDeepLink) setTimeout(flushPendingDeepLink, 1200);
+  });
 }
 
 // ── Application Menu ──
@@ -1316,10 +1321,81 @@ ipcMain.handle('get-app-info', async () => {
   return { version: pkg.version, gitHash, electronVersion: process.versions.electron, nodeVersion: process.versions.node };
 });
 
+// ── Deep link (ariya://) ──
+// 外部ツール (Fleet View など) から「このセッションのタブを開いて」と呼ばれる入口。
+//   ariya://resume?session=<Claude Code の sessionId>&cwd=<作業フォルダ>&name=<表示名>
+//   ariya://new?cwd=<作業フォルダ>&mode=<claude|codex|gemini|grok|shell>
+// macOS は起動済みインスタンスに open-url を届けるので single-instance lock は使わない
+// (入れると開発用の `npm start` が黙って起動しなくなる)。
+const DEEP_LINK_SCHEME = 'ariya';
+const DEEP_LINK_MODES = ['claude', 'codex', 'gemini', 'grok', 'shell'];
+let pendingDeepLink = null;
+
+function parseDeepLink(url) {
+  let u;
+  try { u = new URL(url); } catch (_) { return null; }
+  if (u.protocol !== `${DEEP_LINK_SCHEME}:`) return null;
+  // ariya://resume?… は hostname に、ariya:///resume?… は pathname に出る
+  const action = (u.hostname || u.pathname.replace(/^\/+/, '').split('/')[0] || '').toLowerCase();
+  const q = u.searchParams;
+  const cwd = q.get('cwd') || '';
+  const mode = (q.get('mode') || 'claude').toLowerCase();
+  const req = {
+    action,
+    cwd,
+    mode: DEEP_LINK_MODES.includes(mode) ? mode : 'claude',
+    name: q.get('name') || '',
+    conversationId: q.get('session') || q.get('conversationId') || '',
+  };
+  if (action === 'resume') return req.conversationId ? req : null;
+  if (action === 'new') return req;
+  return null;
+}
+
+function handleDeepLink(url) {
+  const req = parseDeepLink(url);
+  if (!req) return;
+  if (!app.isReady()) { pendingDeepLink = req; return; }
+  if (!mainWindow || mainWindow.isDestroyed()) { pendingDeepLink = req; createWindow(); return; }
+  // 呼ばれたら前に出る (Dock から探させない)
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+  try { app.focus({ steal: true }); } catch (_) {}
+  deliverDeepLink(req);
+}
+
+function deliverDeepLink(req) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (req.action === 'resume') {
+    // 同じ会話のタブが既にあるなら、新しく起こさずそのタブへ切り替える
+    for (const [id, s] of sessions) {
+      if (s.conversationId && s.conversationId === req.conversationId) {
+        mainWindow.webContents.send('open-session', { ...req, action: 'focus', sessionId: id });
+        return;
+      }
+    }
+  }
+  mainWindow.webContents.send('open-session', req);
+}
+
+function flushPendingDeepLink() {
+  if (!pendingDeepLink) return;
+  const req = pendingDeepLink;
+  pendingDeepLink = null;
+  deliverDeepLink(req);
+}
+
+app.on('open-url', (event, url) => {
+  event.preventDefault();
+  handleDeepLink(url);
+});
+
 // ── Lifecycle ──
 let timer;
 app.whenReady().then(() => {
   setCrashFlag();
+  try { app.setAsDefaultProtocolClient(DEEP_LINK_SCHEME); } catch (_) {}
   createWindow();
   createMenu();
   timer = setInterval(saveSessionsSync, 10000);

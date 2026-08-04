@@ -352,6 +352,30 @@ function setupListeners() {
     }
   });
 
+  // 外部から ariya:// で開かれたとき (Fleet View →「このセッションを開く」)
+  // 既に開いているタブならそこへ切り替え、無ければ --resume 付きで起こす。
+  window.api.onOpenSession(async (req) => {
+    if (!req) return;
+    try {
+      if (req.action === 'focus' && req.sessionId && tabs.has(req.sessionId)) {
+        switchTab(req.sessionId);
+        return;
+      }
+      if (req.action === 'resume' && req.conversationId) {
+        await restoreTab({
+          mode: req.mode || 'claude',
+          cwd: req.cwd || undefined,
+          name: req.name || undefined,
+          conversationId: req.conversationId,
+        });
+        return;
+      }
+      await newTab(req.mode || 'claude', req.cwd || undefined);
+    } catch (err) {
+      console.error('open-session failed:', err);
+    }
+  });
+
   // Agent mode controls
   document.querySelectorAll('.alayout-btn').forEach(btn => {
     btn.addEventListener('click', () => {

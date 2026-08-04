@@ -80,6 +80,12 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.on(`session-exit-${id}`, h);
     return () => ipcRenderer.removeListener(`session-exit-${id}`, h);
   },
+  // 外部から ariya:// で開かれたときに飛んでくる (Fleet View → 該当タブ)
+  onOpenSession: (cb) => {
+    const h = (_e, d) => cb(d);
+    ipcRenderer.on('open-session', h);
+    return () => ipcRenderer.removeListener('open-session', h);
+  },
   onMenuAction: (cb) => {
     ipcRenderer.on('menu-action', (_e, action) => cb(action));
   },
