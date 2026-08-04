@@ -10,3 +10,9 @@ build/icon.iconset/
 .env
 .env.*
 !.env.example
+
+# ビルド出力（dist/ 以外の派生ディレクトリ）
+dist-*/
+
+# opencode/grok のローカル作業ディレクトリ
+.grok/

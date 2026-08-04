@@ -35,10 +35,13 @@
   },
   "build": {
     "appId": "com.languagexai.claude-code-desktop",
-    "productName": "Ariya Bridge 開発エージェント",
+    "productName": "Ariya Bridge",
     "mac": {
       "category": "public.app-category.developer-tools",
       "icon": "build/icon.icns",
+      "extendInfo": {
+        "CFBundleDisplayName": "Ariya Bridge 開発エージェント"
+      },
       "target": [
         {
           "target": "dmg",

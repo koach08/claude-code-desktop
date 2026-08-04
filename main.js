@@ -21,6 +21,9 @@ let shellEnv = { ...process.env };
 // Grok コーディングレーンの既定モデル。grok-build-0.1 = grok-code-fast（速い・安いコーディング特化）。
 // TUI 内で /models から grok-4.5 等へ切替可。
 const GROK_MODEL = 'xai/grok-build-0.1';
+// Claude Code レーンで起動時に固定するモデル。Opus 4.8 が現行最上位Opus
+// （"Opus 5" は存在しない。上位ティア Fable 5 は輸出規制で非公開）。
+const CLAUDE_MODEL = 'claude-opus-4-8';
 if (!IS_WIN) {
   try {
     const shell = IS_MAC ? '/bin/zsh' : '/bin/bash';
@@ -212,9 +215,9 @@ ipcMain.handle('create-session', async (_event, { cwd, name, mode, restoreFromId
   if (sessionMode === 'claude') {
     cmd = IS_WIN ? 'claude.cmd' : 'claude';
     if (conversationId) {
-      args = ['--resume', conversationId];
+      args = ['--model', CLAUDE_MODEL, '--resume', conversationId];
     } else {
-      args = [];
+      args = ['--model', CLAUDE_MODEL];
     }
   } else if (sessionMode === 'codex') {
     cmd = IS_WIN ? 'codex.cmd' : 'codex';
@@ -335,7 +338,7 @@ ipcMain.handle('switch-mode', async (_event, { sessionId, newMode }) => {
   let cmd, args;
   if (newMode === 'claude') {
     cmd = IS_WIN ? 'claude.cmd' : 'claude';
-    args = [];
+    args = ['--model', CLAUDE_MODEL];
   } else if (newMode === 'codex') {
     cmd = IS_WIN ? 'codex.cmd' : 'codex';
     args = [];

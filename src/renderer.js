@@ -618,6 +618,32 @@ function addTab(session, replayBuffer, restoreInfo) {
     if (activeId) window.api.sendInput(activeId, data);
   });
 
+  // Mouse-wheel scroll fix for inline CLI TUIs (Codex, Gemini).
+  // These render in the *normal* buffer using absolute cursor positioning + a scroll
+  // region to pin the composer, and they do NOT enable mouse tracking. As a result
+  // almost nothing lands in xterm's scrollback and the wheel is inert — the user can't
+  // review output that scrolled off the top ("上に行ったのを確認できない"). Codex ignores
+  // mouse events but scrolls its own transcript on PageUp/PageDown (verified), so when
+  // xterm has no local scrollback to move through we translate the wheel into those keys.
+  // Native scroll is preserved whenever xterm actually has scrollback (Claude Code, shell)
+  // and the alternate buffer (vim/less/htop) is left completely untouched.
+  let wheelAccum = 0;
+  term.attachCustomWheelEventHandler((ev) => {
+    const buf = term.buffer.active;
+    if (buf.type !== 'normal') return true;   // alt buffer (vim/less/htop): native behavior
+    if (buf.baseY > 0) return true;           // xterm has real scrollback: native scroll
+    wheelAccum += ev.deltaY;
+    const STEP = 60;                          // wheel travel per PageUp/PageDown notch
+    if (wheelAccum <= -STEP) {
+      wheelAccum = 0;
+      if (activeId) window.api.sendInput(activeId, '\x1b[5~'); // PageUp
+    } else if (wheelAccum >= STEP) {
+      wheelAccum = 0;
+      if (activeId) window.api.sendInput(activeId, '\x1b[6~'); // PageDown
+    }
+    return false;                             // handled locally; don't forward raw wheel
+  });
+
   // Tab element
   const icon = session.mode === 'claude' ? 'AI' : session.mode === 'codex' ? 'CX' : session.mode === 'gemini' ? 'GM' : session.mode === 'grok' ? 'GK' : '>';
   const tabEl = document.createElement('div');
