@@ -18,12 +18,12 @@ const IS_WIN = process.platform === 'win32';
 const IS_MAC = process.platform === 'darwin';
 
 let shellEnv = { ...process.env };
-// Grok コーディングレーンの既定モデル。grok-build-0.1 = grok-code-fast（速い・安いコーディング特化）。
-// TUI 内で /models から grok-4.5 等へ切替可。
-const GROK_MODEL = 'xai/grok-build-0.1';
-// Claude Code レーンで起動時に固定するモデル。Opus 4.8 が現行最上位Opus
-// （"Opus 5" は存在しない。上位ティア Fable 5 は輸出規制で非公開）。
-const CLAUDE_MODEL = 'claude-opus-4-8';
+// Grok コーディングレーンの既定モデル。grok-4.6 = xAI の現行最上位。
+// TUI 内で /models から grok-build-0.1（速い・安いコーディング特化）等へ切替可。
+const GROK_MODEL = 'xai/grok-4.6';
+// Claude Code レーンで起動時に固定するモデル。opus[1m] = 現行最上位 Opus（Opus 5）の
+// 1M コンテキスト版。上位ティア Fable 5 は輸出規制で非公開。
+const CLAUDE_MODEL = 'opus[1m]';
 if (!IS_WIN) {
   try {
     const shell = IS_MAC ? '/bin/zsh' : '/bin/bash';
