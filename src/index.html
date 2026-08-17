@@ -452,8 +452,9 @@
         <h2>エンジン判定</h2>
         <button id="engine-close" class="dialog-close-btn">&times;</button>
       </div>
-      <p style="font-size:12px;color:var(--fg2);margin-bottom:8px;">やりたいこと・アイデアを入れると、最適な開発エンジン(Claude Code / Codex / Gemini)を判定します。</p>
-      <textarea id="engine-task-input" placeholder="例：EGAKUのworkerを全部見て生成コストを下げたい / 新機能をUIまで作って動作確認したい" style="width:100%;min-height:80px;background:var(--bg1);border:1px solid var(--border);border-radius:6px;color:var(--fg);padding:10px;font-size:13px;resize:vertical;outline:none;"></textarea>
+      <p style="font-size:12px;color:var(--fg2);margin-bottom:8px;">やりたいことを入れると、Claude Code / Codex / Gemini / Grok / ターミナル のどれで着手すべきかを判定します（打ちながら随時更新）。</p>
+      <textarea id="engine-task-input" placeholder="例：EGAKUのworkerを全部見て生成コストを下げたい / なぜ本番だけ落ちるか原因が分からない / git push だけしたい" style="width:100%;min-height:80px;background:var(--bg1);border:1px solid var(--border);border-radius:6px;color:var(--fg);padding:10px;font-size:13px;resize:vertical;outline:none;"></textarea>
+      <div id="engine-live" style="font-size:12px;color:var(--fg2);margin-top:6px;min-height:16px;"></div>
       <div style="display:flex;gap:8px;margin-top:8px;">
         <button id="engine-judge-btn" class="setup-btn primary">判定</button>
       </div>
@@ -464,6 +465,7 @@
           <button class="setup-btn engine-open" data-mode="codex">Codex で開く</button>
           <button class="setup-btn engine-open" data-mode="gemini">Gemini で開く</button>
           <button class="setup-btn engine-open" data-mode="grok">Grok で開く</button>
+          <button class="setup-btn engine-open" data-mode="shell">ターミナルで開く</button>
         </div>
       </div>
     </div>

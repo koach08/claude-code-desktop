@@ -118,21 +118,43 @@ function setupListeners() {
   if (engineDialog) {
     document.getElementById('engine-suggest-btn').addEventListener('click', () => {
       document.getElementById('engine-result').classList.add('hidden');
+      document.getElementById('engine-live').textContent = '';
       engineDialog.classList.remove('hidden');
       document.getElementById('engine-task-input').focus();
     });
     document.getElementById('engine-close').addEventListener('click', () => engineDialog.classList.add('hidden'));
     engineDialog.addEventListener('click', (e) => { if (e.target === engineDialog) engineDialog.classList.add('hidden'); });
-    document.getElementById('engine-judge-btn').addEventListener('click', async () => {
-      const task = document.getElementById('engine-task-input').value.trim();
-      if (!task) return;
-      const r = await window.api.suggestEngine(task);
+    // 決め手の強さを言葉で添える。弱いときに「これが正解」と言い切らないため。
+    const CONFIDENCE_NOTE = { high: '', medium: '（決め手はやや弱め）', low: '（決め手が弱い：好みで選んでよい）' };
+    const renderEngineJudge = (r) => {
+      const runner = r.runnerUp
+        ? `<br><span style="color:var(--fg2)">次点: ${esc(r.runnerUp.label)}（${esc(r.runnerUp.reason)}）</span>`
+        : '';
       document.getElementById('engine-result-text').innerHTML =
-        `推奨: <b style="color:var(--accent)">${esc(r.label)}</b><br><span style="color:var(--fg2)">${esc(r.reason)}</span>`;
+        `推奨: <b style="color:var(--accent)">${esc(r.label)}</b> <span style="color:var(--fg2);font-size:12px;">${esc(CONFIDENCE_NOTE[r.confidence] || '')}</span>`
+        + `<br><span style="color:var(--fg2)">${esc(r.reason)}</span>${runner}`;
       document.getElementById('engine-result').classList.remove('hidden');
       document.querySelectorAll('#engine-result .engine-open').forEach(b => {
         b.classList.toggle('primary', b.dataset.mode === r.engine);
       });
+    };
+    document.getElementById('engine-judge-btn').addEventListener('click', async () => {
+      const task = document.getElementById('engine-task-input').value.trim();
+      if (!task) return;
+      renderEngineJudge(await window.api.suggestEngine(task));
+    });
+    // 打っている最中から推奨レーンを出す。判定ボタンを押す前に方向が見えるように。
+    let engineLiveTimer = null;
+    document.getElementById('engine-task-input').addEventListener('input', (e) => {
+      const task = e.target.value.trim();
+      const live = document.getElementById('engine-live');
+      clearTimeout(engineLiveTimer);
+      if (task.length < 4) { live.textContent = ''; return; }
+      engineLiveTimer = setTimeout(async () => {
+        const r = await window.api.suggestEngine(task);
+        live.innerHTML = `→ いまの入力なら <b style="color:var(--accent)">${esc(r.label)}</b>`
+          + (r.hits && r.hits.length ? `<span style="color:var(--fg2)">（${esc(r.hits.join('・'))}）</span>` : '');
+      }, 250);
     });
     document.querySelectorAll('#engine-dialog .engine-open').forEach(b => {
       b.addEventListener('click', () => {
@@ -330,6 +352,11 @@ function setupListeners() {
       setTimeout(() => setStatus('ready', '準備完了'), 2000);
     }
     if ((e.metaKey || e.ctrlKey) && e.key === ',') { e.preventDefault(); openSettings(); }
+    // Cmd+Shift+E: エンジン判定（どのレーンで着手するか迷ったとき）
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'e' || e.key === 'E')) {
+      e.preventDefault();
+      document.getElementById('engine-suggest-btn')?.click();
+    }
     if ((e.metaKey || e.ctrlKey) && e.key >= '1' && e.key <= '9') {
       e.preventDefault();
       const ids = [...tabs.keys()];
