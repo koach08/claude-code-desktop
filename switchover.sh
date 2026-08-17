@@ -39,6 +39,11 @@ fi
 
 echo "3) URL スキーム (ariya://) を LaunchServices に登録..."
 "$LSREG" -f "$DST" 2>/dev/null || true
+# dist/ に残るビルド成果物も同じ ariya: を主張し、OS がそちら(非起動)へ解決してしまう。
+# /Applications を唯一のハンドラにするため登録解除する。
+for d in "$SRC" "$(dirname "$(dirname "$SRC")")/mac/Ariya Bridge.app"; do
+  [ -d "$d" ] && "$LSREG" -u "$d" 2>/dev/null || true
+done
 
 echo "4) 新アプリを起動..."
 open "$DST"

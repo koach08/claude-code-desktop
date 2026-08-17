@@ -36,10 +36,10 @@ const PROVIDERS = {
     name: 'Claude',
     baseUrl: 'https://api.anthropic.com/v1/messages',
     keyEnv: 'ANTHROPIC_API_KEY',
-    defaultModel: 'claude-opus-4-8',
+    defaultModel: 'claude-opus-5',
     models: [
-      'claude-opus-4-8',
-      'claude-sonnet-4-6',
+      'claude-opus-5',
+      'claude-sonnet-5',
       'claude-haiku-4-5',
     ],
   },

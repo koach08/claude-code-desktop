@@ -815,7 +815,7 @@ body[data-ui="chat"] #mode-toggle { display: none; }
 
 /* ── Messages area ── */
 #chat-messages {
-  flex: 1; overflow-y: auto;
+  flex: 1; min-height: 0; overflow-y: auto;
   display: flex; flex-direction: column;
   padding: 24px 0 100px;
 }

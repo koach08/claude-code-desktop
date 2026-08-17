@@ -21,8 +21,10 @@ let shellEnv = { ...process.env };
 // Grok コーディングレーンの既定モデル。grok-4.6 = xAI の現行最上位。
 // TUI 内で /models から grok-build-0.1（速い・安いコーディング特化）等へ切替可。
 const GROK_MODEL = 'xai/grok-4.6';
-// Claude Code レーンで起動時に固定するモデル。opus[1m] = 現行最上位 Opus（Opus 5）の
-// 1M コンテキスト版。上位ティア Fable 5 は輸出規制で非公開。
+// Claude Code レーンで起動時に渡すモデル。'opus[1m]' = 最新 Opus への公式エイリアス
+// (CLI が現行最上位 Opus = Opus 5 を自動解決) の 1M コンテキスト版。バージョン固定に
+// すると新 Opus が出るたび書き換えが要るため、エイリアス + [1m] で最新へ自動追従する。
+// 上位ティア Fable 5 は輸出規制で非公開。
 const CLAUDE_MODEL = 'opus[1m]';
 if (!IS_WIN) {
   try {
@@ -720,27 +722,36 @@ ipcMain.handle('hub-transcribe', async (_e, { audioBuffer, mimeType }) => {
   }
 });
 
+// ── Smart Router (Hub チャットのプロバイダ提案) ──
+// タイプ中のテキストからキーワードで最適な LLM プロバイダを1つ提案する。
+// 外部 API 不要のローカル判定なので、api-server が落ちていても必ず動く
+// (以前は /suggest-route への fetch 依存で、サーバー停止時に無反応=機能消失していた)。
+const HUB_ROUTE_RULES = [
+  // Research / academic → Claude (long context, nuanced)
+  { pattern: /論文|paper|研究|research|科研費|kakenhi|査読|review|執筆|draft/i, provider: 'claude', reason: '学術・研究はClaude' },
+  { pattern: /英語|English|IELTS|TOEFL|発音|pronunciation|SLA|言語教育/i, provider: 'claude', reason: '言語教育はClaude' },
+  { pattern: /設計|アーキテクチャ|リファクタ|architect|design|refactor/i, provider: 'claude', reason: '設計判断はClaude' },
+  // Fact-checking / search / citations → Perplexity
+  { pattern: /調べ|検索|search|事実|fact.?check|引用|cite|何年|いつ|統計|データ|採択率/i, provider: 'perplexity', reason: 'Web検索+引用はPerplexity' },
+  { pattern: /最新|ニュース|news|トレンド|trending|今年|2026/i, provider: 'perplexity', reason: '最新情報はPerplexity' },
+  { pattern: /誰|who|どこ|where|比較|compare|ランキング|ranking/i, provider: 'perplexity', reason: '事実照会はPerplexity' },
+  // Uncensored / sensitive → Venice
+  { pattern: /法的(に|な)|legal|著作権|copyright|訴訟|裁判|NSFW|ノーガード|本音|グレー/i, provider: 'venice', reason: 'フィルタなし相談はVenice' },
+  // Quick / simple → Groq (ultra-fast, free)
+  { pattern: /翻訳|translate|要約|summarize|explain|説明して|簡単に|手短に|ちょっと/i, provider: 'groq', reason: '即答はGroq（最速）' },
+  { pattern: /子(供|ども)|育児|子育て|料理|レシピ|recipe|天気|weather/i, provider: 'groq', reason: '日常の質問はGroq（速い＋無料）' },
+  // Long text / bulk → Gemini (free tier, 2M context)
+  { pattern: /全文|全体|まとめて|一括|bulk|長い|PDF|ページ/i, provider: 'gemini', reason: '大量テキストはGemini（無料枠大）' },
+];
+
 ipcMain.handle('hub-suggest-route', async (_e, { text }) => {
-  const cfg = (() => {
-    try {
-      if (fs.existsSync(HUB_CONFIG_FILE)) {
-        return { ...DEFAULT_HUB_CONFIG, ...JSON.parse(fs.readFileSync(HUB_CONFIG_FILE, 'utf-8')) };
-      }
-    } catch (_) {}
-    return { ...DEFAULT_HUB_CONFIG };
-  })();
-  try {
-    const headers = { 'Content-Type': 'application/json' };
-    if (cfg.apiSecret) headers['Authorization'] = `Bearer ${cfg.apiSecret}`;
-    const res = await fetch(`${cfg.apiUrl}/suggest-route`, {
-      method: 'POST', headers, body: JSON.stringify({ text }),
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    return data.suggestion;
-  } catch (_) {
-    return null;
+  const t = String(text || '');
+  for (const rule of HUB_ROUTE_RULES) {
+    if (rule.pattern.test(t)) {
+      return { provider: rule.provider, reason: rule.reason, auto: true };
+    }
   }
+  return null;
 });
 
 // ── ローカルなエンジン判別 (Claude Code / Codex / Gemini) ──
