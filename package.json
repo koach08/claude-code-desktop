@@ -1,6 +1,6 @@
 {
   "name": "claude-code-desktop",
-  "version": "1.5.3",
+  "version": "1.5.4",
   "description": "Claude Code Desktop - A user-friendly desktop interface for Claude Code CLI",
   "main": "main.js",
   "author": {
@@ -53,7 +53,7 @@
         }
       ],
       "identity": null,
-    "hardenedRuntime": true,
+      "hardenedRuntime": true,
       "gatekeeperAssess": false,
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist"

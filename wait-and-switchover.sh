@@ -8,7 +8,14 @@
 # nohup で切り離して実行すること。呼び出し元 (Ariya Bridge 内の Claude) は
 # switchover の途中で殺されるが、このスクリプトは生き残って最後まで進む。
 
-SELF_SESSION="25331e8c-296f-4034-818b-197a9a7bfcc4"   # 待ち判定から除外する自分自身
+# 待ち判定から除外する「自分自身」のセッションID。
+#   第1引数 > $CLAUDE_CODE_SESSION_ID (Claude Code が自動で入れる) > 最後に書かれた .jsonl
+# の順に決める。以前は特定IDを直書きしていたため、次のセッションから走らせると
+# 既に終わったセッションを除外し、自分自身を「他人が作業中」と数えて永久に待ち続けた。
+SELF_SESSION="${1:-${CLAUDE_CODE_SESSION_ID:-${CLAUDE_SESSION_ID:-}}}"
+if [ -z "$SELF_SESSION" ]; then
+  SELF_SESSION=$(python3 -c 'import glob,os; fs=glob.glob(os.path.expanduser("~/.claude/projects/*/*.jsonl")); print(os.path.basename(max(fs,key=os.path.getmtime))[:-6] if fs else "")')
+fi
 QUIET_SEC=150            # これだけ誰も書かなければ「一段落」
 POLL_SEC=20              # 見に行く間隔
 MAX_WAIT_SEC=3600        # ここまで待って静かにならなければ諦める (勝手に落とさない)
@@ -16,7 +23,7 @@ DIR="${0:A:h}"
 LOG="$HOME/.claude-code-app/switchover.log"
 
 mkdir -p "$HOME/.claude-code-app"
-echo "=== $(date '+%F %T') 待機開始 (quiet=${QUIET_SEC}s, 上限=${MAX_WAIT_SEC}s) ===" >> "$LOG"
+echo "=== $(date '+%F %T') 待機開始 (self=${SELF_SESSION:-なし}, quiet=${QUIET_SEC}s, 上限=${MAX_WAIT_SEC}s) ===" >> "$LOG"
 
 started=$(date +%s)
 while true; do

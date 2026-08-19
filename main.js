@@ -44,11 +44,32 @@ function getPty() {
   return pty;
 }
 
+// 保存しておいた位置が今のディスプレイ構成に存在しないことがある(外部モニタを外した、
+// 解像度を変えた等)。そのまま復元するとウインドウが画面外に出て「起動しても何も出ない」
+// 状態になるので、どの表示領域とも重ならない位置は捨てて既定サイズへ戻す。
+function sanitizeBounds(saved) {
+  if (!saved || typeof saved.width !== 'number' || typeof saved.height !== 'number') return null;
+  const width = Math.max(700, Math.min(Math.round(saved.width), 10000));
+  const height = Math.max(450, Math.min(Math.round(saved.height), 10000));
+  if (typeof saved.x !== 'number' || typeof saved.y !== 'number') return { width, height };
+  let onScreen = false;
+  try {
+    const { screen } = require('electron');
+    onScreen = screen.getAllDisplays().some((d) => {
+      const a = d.workArea;
+      // タイトルバーを掴める程度に重なっていれば可とする
+      return saved.x + width > a.x + 60 && saved.x < a.x + a.width - 60
+          && saved.y + height > a.y + 20 && saved.y < a.y + a.height - 20;
+    });
+  } catch (_) { onScreen = true; }
+  return onScreen ? { x: Math.round(saved.x), y: Math.round(saved.y), width, height } : { width, height };
+}
+
 function createWindow() {
   let bounds = { width: 1300, height: 850 };
   try {
     const saved = JSON.parse(fs.readFileSync(path.join(SESSIONS_DIR, 'window.json'), 'utf-8'));
-    bounds = saved;
+    bounds = sanitizeBounds(saved) || bounds;
   } catch (_) {}
 
   mainWindow = new BrowserWindow({
@@ -188,6 +209,64 @@ function readSecretKey(name) {
   return '';
 }
 
+// Claude Code が ~/.claude/projects/ 以下に作るディレクトリ名の作り方。
+// パス中の「英数字以外」を全て '-' に置き換える。旧実装は '/' だけを置換していたため、
+// 日本語を含むパス(例: Desktop/アプリ開発プロジェクト/xxx)ではディレクトリ名が一致せず、
+// conversationId を永久に検出できなかった = 再起動時に --resume できず会話が消えていた。
+function claudeProjectSlug(cwd) {
+  return String(cwd || '').replace(/[^a-zA-Z0-9]/g, '-');
+}
+
+// この cwd で「今回のセッション開始以降に」書かれた .jsonl を探して会話IDを返す。
+// 旧スラッグ('/'だけ置換)でも探すので、過去に作られたディレクトリも拾える。
+// 絞り込みは mtime ではなく **birthtime(作成時刻)** で行う。mtime だと、同じ cwd の
+// 別タブが喋っているだけでその会話ファイルが「最近更新された」と見え、複数のタブが
+// 同一の conversationId を掴んでしまう。実測でも 12 タブ中 3 タブが同じ ID を共有し、
+// 同じ会話に claude が二重に --resume して接続していた(同一ファイルへ二重書き込み)。
+// 併せて、既に生きているタブが使用中の ID は候補から除外する。
+function findConversationId(cwd, sinceMs) {
+  const claimed = new Set();
+  for (const [, s] of sessions) if (s && s.conversationId) claimed.add(s.conversationId);
+
+  const keys = [...new Set([claudeProjectSlug(cwd), String(cwd || '').replace(/\//g, '-')])];
+  for (const key of keys) {
+    const projectDir = path.join(os.homedir(), '.claude', 'projects', key);
+    try {
+      if (!fs.existsSync(projectDir)) continue;
+      const files = fs.readdirSync(projectDir)
+        .filter(f => f.endsWith('.jsonl'))
+        .map(f => {
+          const st = fs.statSync(path.join(projectDir, f));
+          // birthtime 非対応のファイルシステムでは mtime に退避する
+          return { name: f, born: st.birthtimeMs || st.mtimeMs };
+        })
+        .filter(f => f.born >= sinceMs - 2000)
+        .filter(f => !claimed.has(f.name.replace(/\.jsonl$/, '')))
+        .sort((a, b) => b.born - a.born);
+      if (files.length > 0) return files[0].name.replace(/\.jsonl$/, '');
+    } catch (_) {}
+  }
+  return null;
+}
+
+// PTY の出力が来るたびに呼ぶ会話ID検出器(1.5秒スロットル)。create-session と
+// switch-mode の両方から使う。switch-mode 側には以前これが無く、モードを切り替えた
+// タブだけ conversationId を持たないまま = 再起動で会話を失っていた。
+function makeConvIdDetector(id, mode, cwd, startMs, preset) {
+  let detected = !!preset;
+  let lastCheck = 0;
+  return () => {
+    if (mode !== 'claude' || detected) return;
+    const now = Date.now();
+    if (now - lastCheck < 1500) return;
+    lastCheck = now;
+    const s = sessions.get(id);
+    if (!s || s.conversationId) return;
+    const found = findConversationId(cwd, startMs);
+    if (found) { s.conversationId = found; detected = true; }
+  };
+}
+
 // Derive a friendly, project-aware tab name from the working directory.
 // Known project folders map to readable labels; otherwise the folder basename is used.
 function deriveSessionName(cwd, mode) {
@@ -283,8 +362,7 @@ ipcMain.handle('create-session', async (_event, { cwd, name, mode, restoreFromId
   // tab whose first message comes late still gets a resumable conversationId, which is
   // what lets a restart --resume the real conversation instead of losing it.
   const sessionStartMs = Date.now();
-  let convIdDetected = !!conversationId;
-  let lastConvCheck = 0;
+  const detectConvId = makeConvIdDetector(id, sessionMode, sessionCwd, sessionStartMs, conversationId);
 
   ptyProcess.onData((data) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -295,32 +373,7 @@ ipcMain.handle('create-session', async (_event, { cwd, name, mode, restoreFromId
     sessionBuffers.set(id, buf);
 
     // Detect conversation ID from Claude's project directory (throttled to ~1.5s).
-    if (sessionMode === 'claude' && !convIdDetected) {
-      const now = Date.now();
-      if (now - lastConvCheck > 1500) {
-        lastConvCheck = now;
-        const s = sessions.get(id);
-        if (s && !s.conversationId) {
-          const cwdKey = sessionCwd.replace(/\//g, '-');
-          const projectDir = path.join(os.homedir(), '.claude', 'projects', cwdKey);
-          try {
-            if (fs.existsSync(projectDir)) {
-              // Only consider .jsonl files created at/after this session started, so we
-              // attach THIS session's conversation, not an older one in the same cwd.
-              const files = fs.readdirSync(projectDir)
-                .filter(f => f.endsWith('.jsonl'))
-                .map(f => ({ name: f, mtime: fs.statSync(path.join(projectDir, f)).mtimeMs }))
-                .filter(f => f.mtime >= sessionStartMs - 2000)
-                .sort((a, b) => b.mtime - a.mtime);
-              if (files.length > 0) {
-                s.conversationId = files[0].name.replace('.jsonl', '');
-                convIdDetected = true;
-              }
-            }
-          } catch (_) {}
-        }
-      }
-    }
+    detectConvId();
   });
 
   ptyProcess.onExit(({ exitCode, signal }) => {
@@ -380,15 +433,21 @@ ipcMain.handle('switch-mode', async (_event, { sessionId, newMode }) => {
     env: switchEnv,
   });
 
-  const modeName = newMode === 'claude' ? 'Claude Code' : newMode === 'codex' ? 'Codex' : newMode === 'gemini' ? 'Gemini' : newMode === 'grok' ? 'Grok' : 'Terminal';
+  // 切替後もフォルダ名から付ける(以前は 'Claude Code' 等の総称に戻り、
+  // どのプロジェクトのタブか分からなくなっていた)。
+  const modeName = deriveSessionName(cwd, newMode);
   sessions.set(newId, {
     pty: ptyProcess,
     cwd,
     name: modeName,
     mode: newMode,
+    conversationId: null,
     createdAt: new Date().toISOString(),
   });
   sessionBuffers.set(newId, '');
+
+  const switchStartMs = Date.now();
+  const detectConvId = makeConvIdDetector(newId, newMode, cwd, switchStartMs, null);
 
   ptyProcess.onData((data) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -397,6 +456,7 @@ ipcMain.handle('switch-mode', async (_event, { sessionId, newMode }) => {
     let buf = (sessionBuffers.get(newId) || '') + data;
     if (buf.length > MAX_BUFFER) buf = buf.slice(-MAX_BUFFER);
     sessionBuffers.set(newId, buf);
+    detectConvId();
   });
   ptyProcess.onExit(({ exitCode }) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -1033,8 +1093,31 @@ ipcMain.handle('harness-write-hooks', async (_e, { cwd, hooks }) => {
 });
 
 // ── Harness Engineering: Memory ──
-ipcMain.handle('harness-read-memory', async () => {
-  const memoryDir = path.join(os.homedir(), '.claude', 'memory');
+// 記憶ファイルの実体は ~/.claude/projects/<slug(cwd)>/memory/ にある。
+// 旧実装は ~/.claude/memory を見ていたが、そのディレクトリは存在しない。
+// 読み出しは常に空、保存は誰も読まない場所に落ちる、という壊れ方をしていた。
+function resolveMemoryDir(cwd) {
+  const base = path.join(os.homedir(), '.claude', 'projects');
+  const home = path.join(base, claudeProjectSlug(os.homedir()), 'memory');
+  const candidates = [];
+  if (cwd) candidates.push(path.join(base, claudeProjectSlug(cwd), 'memory'));
+  candidates.push(home);
+  candidates.push(path.join(os.homedir(), '.claude', 'memory')); // 旧配置(あれば拾う)
+  for (const c of candidates) {
+    try { if (fs.existsSync(c)) return c; } catch (_) {}
+  }
+  return home; // どれも無ければホーム側に作る
+}
+
+// ファイル名は呼び出し側から来るので、ディレクトリの外へ出ないことを確かめる。
+function memoryFilePath(dir, file) {
+  const name = path.basename(String(file || ''));
+  if (!name || !name.endsWith('.md')) return null;
+  return path.join(dir, name);
+}
+
+ipcMain.handle('harness-read-memory', async (_e, arg) => {
+  const memoryDir = resolveMemoryDir(arg && arg.cwd);
   const result = [];
   try {
     if (!fs.existsSync(memoryDir)) return result;
@@ -1042,9 +1125,10 @@ ipcMain.handle('harness-read-memory', async () => {
     for (const file of files) {
       try {
         const content = fs.readFileSync(path.join(memoryDir, file), 'utf-8');
-        const nameMatch = content.match(/^name:\s*(.+)/m);
-        const typeMatch = content.match(/^type:\s*(.+)/m);
-        const descMatch = content.match(/^description:\s*(.+)/m);
+        // 新形式は metadata: の下にインデントして type: が来るので行頭固定では拾えない。
+        const nameMatch = content.match(/^[ \t]*name:\s*(.+)$/m);
+        const typeMatch = content.match(/^[ \t]*type:\s*(.+)$/m);
+        const descMatch = content.match(/^[ \t]*description:\s*(.+)$/m);
         result.push({
           file,
           name: nameMatch ? nameMatch[1].trim() : file.replace('.md', ''),
@@ -1054,33 +1138,38 @@ ipcMain.handle('harness-read-memory', async () => {
       } catch (_) {}
     }
   } catch (_) {}
+  result.sort((a, b) => a.name.localeCompare(b.name, 'ja'));
   return result;
 });
 
-ipcMain.handle('harness-read-memory-content', async (_e, { file }) => {
-  const memoryDir = path.join(os.homedir(), '.claude', 'memory');
+ipcMain.handle('harness-read-memory-content', async (_e, { file, cwd }) => {
+  const fp = memoryFilePath(resolveMemoryDir(cwd), file);
+  if (!fp) return { content: '', error: 'invalid file' };
   try {
-    return { content: fs.readFileSync(path.join(memoryDir, file), 'utf-8') };
+    return { content: fs.readFileSync(fp, 'utf-8') };
   } catch (e) {
     return { content: '', error: e.message };
   }
 });
 
-ipcMain.handle('harness-write-memory', async (_e, { file, content }) => {
-  const memoryDir = path.join(os.homedir(), '.claude', 'memory');
+ipcMain.handle('harness-write-memory', async (_e, { file, content, cwd }) => {
+  const dir = resolveMemoryDir(cwd);
+  const fp = memoryFilePath(dir, file);
+  if (!fp) return { success: false, error: 'invalid file' };
   try {
-    fs.mkdirSync(memoryDir, { recursive: true });
-    fs.writeFileSync(path.join(memoryDir, file), content, 'utf-8');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(fp, content, 'utf-8');
     return { success: true };
   } catch (e) {
     return { success: false, error: e.message };
   }
 });
 
-ipcMain.handle('harness-delete-memory', async (_e, { file }) => {
-  const memoryDir = path.join(os.homedir(), '.claude', 'memory');
+ipcMain.handle('harness-delete-memory', async (_e, { file, cwd }) => {
+  const fp = memoryFilePath(resolveMemoryDir(cwd), file);
+  if (!fp) return { success: false, error: 'invalid file' };
   try {
-    fs.unlinkSync(path.join(memoryDir, file));
+    fs.unlinkSync(fp);
     return { success: true };
   } catch (e) {
     return { success: false, error: e.message };
@@ -1289,8 +1378,10 @@ ipcMain.handle('check-update', async () => {
       const behind = status.includes('behind');
       let remoteLog = '';
       if (behind) {
+        // 比較先は origin/main 固定ではなく「今のブランチの追跡先」(@{u})。
+        // 作業ブランチにいるときに main の差分を出してしまうのを防ぐ。
         try {
-          remoteLog = execSync('git log HEAD..origin/main --oneline -10', { cwd: sourceDir, encoding: 'utf-8', timeout: 5000 }).trim();
+          remoteLog = execSync('git log HEAD..@{u} --oneline -10', { cwd: sourceDir, encoding: 'utf-8', timeout: 5000 }).trim();
         } catch (_) {}
       }
       return { updateAvailable: behind, changes: remoteLog };
@@ -1352,9 +1443,13 @@ ipcMain.handle('apply-update', async () => {
   if (sourceDir) {
     // Dev mode: git pull
     try {
-      execSync('git stash', { cwd: sourceDir, encoding: 'utf-8', timeout: 10000 });
-      execSync('git pull origin main', { cwd: sourceDir, encoding: 'utf-8', timeout: 30000 });
-      try { execSync('git stash pop', { cwd: sourceDir, encoding: 'utf-8', timeout: 10000 }); } catch (_) {}
+      // 変更が無いのに git stash を打つと何も積まれないまま pop が走り、
+      // 無関係な古い stash を取り出してしまう。積んだときだけ戻す。
+      const dirty = execSync('git status --porcelain', { cwd: sourceDir, encoding: 'utf-8', timeout: 10000 }).trim() !== '';
+      if (dirty) execSync('git stash push -m "ariya-auto-update"', { cwd: sourceDir, encoding: 'utf-8', timeout: 10000 });
+      // origin/main 固定だと作業ブランチに main を流し込んでしまう。追跡先から早送りのみ。
+      execSync('git pull --ff-only', { cwd: sourceDir, encoding: 'utf-8', timeout: 30000 });
+      if (dirty) { try { execSync('git stash pop', { cwd: sourceDir, encoding: 'utf-8', timeout: 10000 }); } catch (_) {} }
       try {
         const diff = execSync('git diff HEAD~1 --name-only', { cwd: sourceDir, encoding: 'utf-8', timeout: 5000 });
         if (diff.includes('package.json') || diff.includes('package-lock.json')) {

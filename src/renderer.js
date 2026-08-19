@@ -2012,8 +2012,15 @@ async function addNewHook() {
   });
 }
 
+// 記憶は ~/.claude/projects/<cwd>/memory/ に置かれるので、今のタブの作業フォルダを渡す。
+// 該当が無ければ main 側がホーム(~)の記憶へ落とす。
+function memoryCwd() {
+  const tab = tabs.get(activeId);
+  return (tab && tab.session && tab.session.cwd) || '';
+}
+
 async function loadMemory() {
-  const memories = await window.api.harnessReadMemory();
+  const memories = await window.api.harnessReadMemory(memoryCwd());
   const emptyEl = document.getElementById('memory-empty');
   const listEl = document.getElementById('memory-list');
   const badge = document.getElementById('memory-badge');
@@ -2057,9 +2064,12 @@ async function openMemoryDialog(mem) {
   desc.textContent = mem.description;
   status.textContent = '';
 
-  const result = await window.api.harnessReadMemoryContent(mem.file);
+  const cwd = memoryCwd();
+  const result = await window.api.harnessReadMemoryContent(mem.file, cwd);
   textarea.value = result.content || '';
   dialog.dataset.file = mem.file;
+  // 開いた時点の作業フォルダを覚える(タブを切り替えても保存先がずれないように)
+  dialog.dataset.cwd = cwd;
   dialog.classList.remove('hidden');
 }
 
@@ -2078,7 +2088,7 @@ function setupMemoryDialog() {
   saveBtn.addEventListener('click', async () => {
     const file = dialog.dataset.file;
     const content = document.getElementById('memory-dialog-textarea').value;
-    const result = await window.api.harnessWriteMemory(file, content);
+    const result = await window.api.harnessWriteMemory(file, content, dialog.dataset.cwd || '');
     if (result.success) {
       status.textContent = '保存しました';
       status.style.color = 'var(--green)';
@@ -2093,7 +2103,7 @@ function setupMemoryDialog() {
   deleteBtn.addEventListener('click', async () => {
     const file = dialog.dataset.file;
     if (!confirm(`「${file}」を削除しますか？`)) return;
-    const result = await window.api.harnessDeleteMemory(file);
+    const result = await window.api.harnessDeleteMemory(file, dialog.dataset.cwd || '');
     if (result.success) {
       dialog.classList.add('hidden');
       loadMemory();
