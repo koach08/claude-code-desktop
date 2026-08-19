@@ -612,7 +612,7 @@ async function switchSessionMode(newMode) {
 
   // Update tab UI
   tab.tabEl.querySelector('.tname').textContent = result.name;
-  const icon = newMode === 'claude' ? 'AI' : newMode === 'codex' ? 'CX' : newMode === 'gemini' ? 'GM' : '>';
+  const icon = newMode === 'claude' ? 'AI' : newMode === 'codex' ? 'CX' : newMode === 'gemini' ? 'GM' : newMode === 'grok' ? 'GK' : '>';
   tab.tabEl.querySelector('.tab-icon').textContent = icon;
   // Update pane header
   if (tab.paneHeader) {
@@ -664,37 +664,6 @@ function addTab(session, replayBuffer, restoreInfo) {
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
 
-  // Forward terminal keyboard input to PTY (works in both Simple and Advanced modes)
-  term.onData((data) => {
-    if (activeId) window.api.sendInput(activeId, data);
-  });
-
-  // Mouse-wheel scroll fix for inline CLI TUIs (Codex, Gemini).
-  // These render in the *normal* buffer using absolute cursor positioning + a scroll
-  // region to pin the composer, and they do NOT enable mouse tracking. As a result
-  // almost nothing lands in xterm's scrollback and the wheel is inert — the user can't
-  // review output that scrolled off the top ("上に行ったのを確認できない"). Codex ignores
-  // mouse events but scrolls its own transcript on PageUp/PageDown (verified), so when
-  // xterm has no local scrollback to move through we translate the wheel into those keys.
-  // Native scroll is preserved whenever xterm actually has scrollback (Claude Code, shell)
-  // and the alternate buffer (vim/less/htop) is left completely untouched.
-  let wheelAccum = 0;
-  term.attachCustomWheelEventHandler((ev) => {
-    const buf = term.buffer.active;
-    if (buf.type !== 'normal') return true;   // alt buffer (vim/less/htop): native behavior
-    if (buf.baseY > 0) return true;           // xterm has real scrollback: native scroll
-    wheelAccum += ev.deltaY;
-    const STEP = 60;                          // wheel travel per PageUp/PageDown notch
-    if (wheelAccum <= -STEP) {
-      wheelAccum = 0;
-      if (activeId) window.api.sendInput(activeId, '\x1b[5~'); // PageUp
-    } else if (wheelAccum >= STEP) {
-      wheelAccum = 0;
-      if (activeId) window.api.sendInput(activeId, '\x1b[6~'); // PageDown
-    }
-    return false;                             // handled locally; don't forward raw wheel
-  });
-
   // Tab element
   const icon = session.mode === 'claude' ? 'AI' : session.mode === 'codex' ? 'CX' : session.mode === 'gemini' ? 'GM' : session.mode === 'grok' ? 'GK' : '>';
   const tabEl = document.createElement('div');
@@ -722,6 +691,44 @@ function addTab(session, replayBuffer, restoreInfo) {
 
   document.getElementById('terminal-container').appendChild(pane);
   term.open(pane);
+
+  // ターミナルへの直接入力は「そのタブ自身の」セッションへ送る。
+  // 以前は activeId 宛だったため、エージェントモードで複数ペインが見えている状態で
+  // 別ペインのターミナルに打つと、キー入力がアクティブなタブの方へ流れ込んでいた。
+  // ペイン本体のクリックでは activeId が変わらない(ヘッダのクリックでしか切り替わらない)
+  // ので、宛先は dataset.sid から都度引く(モード切替で ID が変わっても追従する)。
+  term.onData((data) => {
+    const sid = getTabSessionId(tabEl);
+    if (sid) window.api.sendInput(sid, data);
+  });
+
+  // Mouse-wheel scroll fix for inline CLI TUIs (Codex, Gemini).
+  // These render in the *normal* buffer using absolute cursor positioning + a scroll
+  // region to pin the composer, and they do NOT enable mouse tracking. As a result
+  // almost nothing lands in xterm's scrollback and the wheel is inert — the user can't
+  // review output that scrolled off the top ("上に行ったのを確認できない"). Codex ignores
+  // mouse events but scrolls its own transcript on PageUp/PageDown (verified), so when
+  // xterm has no local scrollback to move through we translate the wheel into those keys.
+  // Native scroll is preserved whenever xterm actually has scrollback (Claude Code, shell)
+  // and the alternate buffer (vim/less/htop) is left completely untouched.
+  let wheelAccum = 0;
+  term.attachCustomWheelEventHandler((ev) => {
+    const buf = term.buffer.active;
+    if (buf.type !== 'normal') return true;   // alt buffer (vim/less/htop): native behavior
+    if (buf.baseY > 0) return true;           // xterm has real scrollback: native scroll
+    wheelAccum += ev.deltaY;
+    const STEP = 60;                          // wheel travel per PageUp/PageDown notch
+    if (wheelAccum <= -STEP) {
+      wheelAccum = 0;
+      const sid = getTabSessionId(tabEl);
+      if (sid) window.api.sendInput(sid, '\x1b[5~'); // PageUp
+    } else if (wheelAccum >= STEP) {
+      wheelAccum = 0;
+      const sid = getTabSessionId(tabEl);
+      if (sid) window.api.sendInput(sid, '\x1b[6~'); // PageDown
+    }
+    return false;                             // handled locally; don't forward raw wheel
+  });
 
   const data = { term, fit, tabEl, pane, paneHeader, session, ended: false };
   tabs.set(session.id, data);

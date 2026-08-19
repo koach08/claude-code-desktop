@@ -9,6 +9,8 @@ const BUFFERS_DIR = path.join(SESSIONS_DIR, 'buffers');
 const CRASH_FLAG = path.join(SESSIONS_DIR, '.running');
 const sessions = new Map();
 const sessionBuffers = new Map();
+// 各セッションの .buf に「最後に書き込んだ長さ」。変化していないタブは書き直さない。
+const savedBufferLen = new Map();
 const MAX_BUFFER = 1024 * 1024; // 1MB per session
 let mainWindow = null;
 let pty = null;
@@ -551,7 +553,10 @@ ipcMain.handle('load-buffer', async (_e, { sessionId }) => {
 ipcMain.handle('cleanup-old-buffers', async (_e, { oldIds }) => {
   for (const id of oldIds) {
     try { fs.unlinkSync(path.join(BUFFERS_DIR, `${id}.buf`)); } catch (_) {}
+    savedBufferLen.delete(id);
   }
+  // 復元が終わった直後 = 生きているタブが確定した瞬間なので、ここで取りこぼしも掃除する。
+  pruneOrphanBuffers();
 });
 
 // ── Get app directory (for editing this app) ──
@@ -1216,10 +1221,38 @@ function saveSessionsSync() {
       data.push({ id, name: s.name, cwd: s.cwd, mode: s.mode, conversationId: s.conversationId || null, createdAt: s.createdAt, savedAt: new Date().toISOString() });
     }
     fs.writeFileSync(path.join(SESSIONS_DIR, 'sessions.json'), JSON.stringify(data, null, 2));
-    // Save output buffers
+    // 出力バッファは「前回保存から中身が変わったタブ」だけ書く。
+    // 以前は 10 秒ごと + ウインドウが非アクティブになるたびに、全タブ分(1タブ最大1MB)を
+    // 同期書き込みしていた。タブが多いと毎回数MBをメインスレッドで書くことになり、
+    // 体感の引っかかりと無駄な書き込みを生んでいた。
     for (const [id, buf] of sessionBuffers) {
+      if (savedBufferLen.get(id) === buf.length) continue;
       fs.writeFileSync(path.join(BUFFERS_DIR, `${id}.buf`), buf, 'utf-8');
+      savedBufferLen.set(id, buf.length);
     }
+    for (const id of [...savedBufferLen.keys()]) {
+      if (!sessionBuffers.has(id)) savedBufferLen.delete(id);
+    }
+  } catch (_) {}
+}
+
+// どのタブからも参照されていない .buf を捨てる。
+// タブを閉じれば close-session が消すが、クラッシュや強制終了で復元前に落ちると
+// 消し損ねが残り続ける。実測で 497 件中 479 件(62MB)が到達不能なゴミだった。
+// 呼ぶのは「復元が終わったあと」だけ。起動直後に呼ぶと、これから復元に使う
+// 前世代の .buf まで消してしまう。
+function pruneOrphanBuffers() {
+  try {
+    const keep = new Set(sessions.keys());
+    if (keep.size === 0) return;   // 復元前や終了処理中は何もしない
+    let n = 0, bytes = 0;
+    for (const f of fs.readdirSync(BUFFERS_DIR)) {
+      if (!f.endsWith('.buf')) continue;
+      if (keep.has(f.slice(0, -4))) continue;
+      const p = path.join(BUFFERS_DIR, f);
+      try { bytes += fs.statSync(p).size; fs.unlinkSync(p); n++; } catch (_) {}
+    }
+    if (n) console.log(`[buffers] 孤児 ${n} 件 (${(bytes / 1048576).toFixed(1)}MB) を削除`);
   } catch (_) {}
 }
 ipcMain.handle('save-sessions', async () => saveSessionsSync());
