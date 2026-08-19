@@ -9,8 +9,11 @@ const BUFFERS_DIR = path.join(SESSIONS_DIR, 'buffers');
 const CRASH_FLAG = path.join(SESSIONS_DIR, '.running');
 const sessions = new Map();
 const sessionBuffers = new Map();
-// 各セッションの .buf に「最後に書き込んだ長さ」。変化していないタブは書き直さない。
-const savedBufferLen = new Map();
+// 各セッションについて「最後に .buf へ書いた文字列そのもの」。同一なら書き直さない。
+// 長さで判定すると、バッファが上限 1MB に達して古い方から捨て始めたあと、
+// 長さが 1MB のまま中身だけ変わり続けるので永久に保存されなくなる。
+// 文字列は不変なので、変化が無い間は同じ実体を指すだけでメモリは増えない。
+const savedBuffer = new Map();
 const MAX_BUFFER = 1024 * 1024; // 1MB per session
 let mainWindow = null;
 let pty = null;
@@ -394,6 +397,10 @@ ipcMain.handle('switch-mode', async (_event, { sessionId, newMode }) => {
   const { cwd } = old;
   try { old.pty.kill(); } catch (_) {}
   sessionBuffers.delete(sessionId);
+  savedBuffer.delete(sessionId);
+  // モード切替では新しい ID を採番するので、古い .buf はここで捨てないと残り続ける
+  // (メモリ上の Map からは消えるがディスクには残っていた)。
+  try { fs.unlinkSync(path.join(BUFFERS_DIR, `${sessionId}.buf`)); } catch (_) {}
   sessions.delete(sessionId);
 
   const nodePty = getPty();
@@ -489,6 +496,7 @@ ipcMain.handle('close-session', async (_e, { sessionId }) => {
   const s = sessions.get(sessionId);
   if (s && s.pty) { try { s.pty.kill(); } catch (_) {} sessions.delete(sessionId); }
   sessionBuffers.delete(sessionId);
+  savedBuffer.delete(sessionId);
   try { fs.unlinkSync(path.join(BUFFERS_DIR, `${sessionId}.buf`)); } catch (_) {}
 });
 
@@ -553,7 +561,7 @@ ipcMain.handle('load-buffer', async (_e, { sessionId }) => {
 ipcMain.handle('cleanup-old-buffers', async (_e, { oldIds }) => {
   for (const id of oldIds) {
     try { fs.unlinkSync(path.join(BUFFERS_DIR, `${id}.buf`)); } catch (_) {}
-    savedBufferLen.delete(id);
+    savedBuffer.delete(id);
   }
   // 復元が終わった直後 = 生きているタブが確定した瞬間なので、ここで取りこぼしも掃除する。
   pruneOrphanBuffers();
@@ -1226,12 +1234,12 @@ function saveSessionsSync() {
     // 同期書き込みしていた。タブが多いと毎回数MBをメインスレッドで書くことになり、
     // 体感の引っかかりと無駄な書き込みを生んでいた。
     for (const [id, buf] of sessionBuffers) {
-      if (savedBufferLen.get(id) === buf.length) continue;
+      if (savedBuffer.get(id) === buf) continue;
       fs.writeFileSync(path.join(BUFFERS_DIR, `${id}.buf`), buf, 'utf-8');
-      savedBufferLen.set(id, buf.length);
+      savedBuffer.set(id, buf);
     }
-    for (const id of [...savedBufferLen.keys()]) {
-      if (!sessionBuffers.has(id)) savedBufferLen.delete(id);
+    for (const id of [...savedBuffer.keys()]) {
+      if (!sessionBuffers.has(id)) savedBuffer.delete(id);
     }
   } catch (_) {}
 }
