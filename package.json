@@ -21,7 +21,8 @@
     "build:mac:dir": "electron-builder --mac dir && ./build/sign-with-hash.sh",
     "build:win": "electron-builder --win",
     "build:linux": "electron-builder --linux",
-    "postinstall": "electron-rebuild"
+    "postinstall": "electron-rebuild",
+    "test": "node --test test/*.test.js"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
