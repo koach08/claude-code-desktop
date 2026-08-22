@@ -214,44 +214,16 @@ function readSecretKey(name) {
   return '';
 }
 
-// Claude Code が ~/.claude/projects/ 以下に作るディレクトリ名の作り方。
-// パス中の「英数字以外」を全て '-' に置き換える。旧実装は '/' だけを置換していたため、
-// 日本語を含むパス(例: Desktop/アプリ開発プロジェクト/xxx)ではディレクトリ名が一致せず、
-// conversationId を永久に検出できなかった = 再起動時に --resume できず会話が消えていた。
-function claudeProjectSlug(cwd) {
-  return String(cwd || '').replace(/[^a-zA-Z0-9]/g, '-');
-}
+// 会話ID検出の実装は src/conversation-id.js に切り出してある(テストから叩くため)。
+// ここが外れると再起動時に --resume が付かず会話が失われる。過去2度踏んだ穴
+// (スラッグの作り方 / mtime での絞り込み)は test/conversation-id.test.js で固定した。
+const { claudeProjectSlug, findConversationId: findConvIdIn } = require('./src/conversation-id');
 
-// この cwd で「今回のセッション開始以降に」書かれた .jsonl を探して会話IDを返す。
-// 旧スラッグ('/'だけ置換)でも探すので、過去に作られたディレクトリも拾える。
-// 絞り込みは mtime ではなく **birthtime(作成時刻)** で行う。mtime だと、同じ cwd の
-// 別タブが喋っているだけでその会話ファイルが「最近更新された」と見え、複数のタブが
-// 同一の conversationId を掴んでしまう。実測でも 12 タブ中 3 タブが同じ ID を共有し、
-// 同じ会話に claude が二重に --resume して接続していた(同一ファイルへ二重書き込み)。
-// 併せて、既に生きているタブが使用中の ID は候補から除外する。
+// 生きているタブが使用中の ID を除外したうえで検索する。
 function findConversationId(cwd, sinceMs) {
   const claimed = new Set();
   for (const [, s] of sessions) if (s && s.conversationId) claimed.add(s.conversationId);
-
-  const keys = [...new Set([claudeProjectSlug(cwd), String(cwd || '').replace(/\//g, '-')])];
-  for (const key of keys) {
-    const projectDir = path.join(os.homedir(), '.claude', 'projects', key);
-    try {
-      if (!fs.existsSync(projectDir)) continue;
-      const files = fs.readdirSync(projectDir)
-        .filter(f => f.endsWith('.jsonl'))
-        .map(f => {
-          const st = fs.statSync(path.join(projectDir, f));
-          // birthtime 非対応のファイルシステムでは mtime に退避する
-          return { name: f, born: st.birthtimeMs || st.mtimeMs };
-        })
-        .filter(f => f.born >= sinceMs - 2000)
-        .filter(f => !claimed.has(f.name.replace(/\.jsonl$/, '')))
-        .sort((a, b) => b.born - a.born);
-      if (files.length > 0) return files[0].name.replace(/\.jsonl$/, '');
-    } catch (_) {}
-  }
-  return null;
+  return findConvIdIn(cwd, sinceMs, { claimed });
 }
 
 // PTY の出力が来るたびに呼ぶ会話ID検出器(1.5秒スロットル)。create-session と
