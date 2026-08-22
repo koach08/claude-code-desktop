@@ -4,6 +4,22 @@ const fs = require('fs');
 const os = require('os');
 const { execSync, spawn } = require('child_process');
 
+// 検証用に起動したビルドが、本人が使っている /Applications 版と同じ領域を触らないようにする。
+//
+// HOME を差し替えれば ~/.claude-code-app は隔離できるが、**Electron の userData は
+// HOME に追従しない**。実測で、テスト起動したビルドも本番と同じ
+// ~/Library/Application Support/claude-code-desktop を --user-data-dir に使っており、
+// Local Storage / Session Storage を稼働中の本番インスタンスと共有していた。
+// single-instance lock を入れない設計(ariya:// を起動中インスタンスへ届けるため)なので、
+// 同時に動けば本番のタブUI状態を壊しうる。
+//
+// あわせてウインドウのタイトルに [DEV] を出す。同じ Dock アイコンの窓が隣に湧くと、
+// 使っている側には「勝手に二重起動した」ようにしか見えないため。
+const IS_DEV_BUILD = !app.getPath('exe').startsWith('/Applications/');
+if (IS_DEV_BUILD) {
+  app.setPath('userData', `${app.getPath('userData')}-dev`);
+}
+
 const SESSIONS_DIR = path.join(os.homedir(), '.claude-code-app');
 const BUFFERS_DIR = path.join(SESSIONS_DIR, 'buffers');
 const CRASH_FLAG = path.join(SESSIONS_DIR, '.running');
@@ -82,7 +98,7 @@ function createWindow() {
     minWidth: 700,
     minHeight: 450,
     backgroundColor: '#1a1b26',
-    title: 'Ariya Bridge 開発エージェント',
+    title: IS_DEV_BUILD ? '[DEV] Ariya Bridge 開発エージェント' : 'Ariya Bridge 開発エージェント',
     titleBarStyle: IS_MAC ? 'hiddenInset' : 'default',
     trafficLightPosition: IS_MAC ? { x: 12, y: 12 } : undefined,
     webPreferences: {

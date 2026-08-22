@@ -1,6 +1,6 @@
 {
   "name": "claude-code-desktop",
-  "version": "1.5.6",
+  "version": "1.5.7",
   "description": "Claude Code Desktop - A user-friendly desktop interface for Claude Code CLI",
   "main": "main.js",
   "author": {
