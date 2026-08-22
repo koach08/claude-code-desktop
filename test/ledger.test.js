@@ -129,3 +129,17 @@ test('実際の台帳の形(13タブ/会話7本)を通しても件数が変わ�
   assert.strictEqual(sessions.filter((s) => s.conversationId).length, 7, '生き残る会話が7本でない');
   assert.strictEqual(stripped.length, 6, '外された重複が6件でない');
 });
+
+test('本体が壊れているとき、保存しても退避を上書きしない', () => {
+  const d = tmpdir();
+  saveLedger(d, TABS);
+  saveLedger(d, TABS);                                     // prev に正常な内容が入る
+  fs.writeFileSync(path.join(d, MAIN), '[\n  {\n    "id');  // 書き込み途中で落ちた
+  saveLedger(d, []);                                       // 起動直後の保存が走る
+  const { sessions, from } = loadLedger(d);
+  assert.strictEqual(from, 'main');
+  assert.deepStrictEqual(sessions, [], '本体は新しく書けている');
+  // 退避は壊れた内容で潰されず、直前の正常な内容のままであること
+  const prev = JSON.parse(fs.readFileSync(path.join(d, PREV), 'utf-8'));
+  assert.strictEqual(prev.length, 2, '退避が壊れた本体で上書きされた');
+});

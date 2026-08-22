@@ -1115,7 +1115,22 @@ ipcMain.handle('harness-pick-folder', async () => {
 });
 
 // ── Persistence ──
+// タブ復元が終わるまで台帳を書かない。
+//
+// 起動直後は sessions がまだ空(または復元途中)なのに、blur / close / before-quit が
+// 来ると saveSessionsSync が走り、前回の台帳を空で上書きしてしまう。別アプリに
+// フォーカスがある状態で起動するだけで blur は飛ぶので、これは日常的に起きる。
+// 実機で再現済み: 起動 → 台帳が [] になる → 前回のタブが全部消える。
+//
+// 復元し終えた renderer が save-sessions を呼んだ時点で解禁する。
+// 復元自体が失敗して永久に呼ばれない事故もありうるので、保険で60秒後にも解禁する。
+let ledgerWritable = false;
+setTimeout(() => {
+  if (!ledgerWritable) { ledgerWritable = true; console.log('[sessions] 復元完了の合図が来ないまま60秒経ったので保存を解禁'); }
+}, 60000);
+
 function saveSessionsSync() {
+  if (!ledgerWritable) return;   // 復元前の上書きを防ぐ
   try {
     fs.mkdirSync(SESSIONS_DIR, { recursive: true });
     fs.mkdirSync(BUFFERS_DIR, { recursive: true });
@@ -1158,7 +1173,11 @@ function pruneOrphanBuffers() {
     if (n) console.log(`[buffers] 孤児 ${n} 件 (${(bytes / 1048576).toFixed(1)}MB) を削除`);
   } catch (_) {}
 }
-ipcMain.handle('save-sessions', async () => saveSessionsSync());
+ipcMain.handle('save-sessions', async () => {
+  // renderer が復元を終えて最初に呼ぶのがここ。以降は通常どおり保存してよい。
+  ledgerWritable = true;
+  saveSessionsSync();
+});
 ipcMain.handle('load-sessions', async () => {
   const { sessions: saved, from } = loadLedger(SESSIONS_DIR);
   // 本体が壊れていて退避分から戻したときは、黙って全滅させずに残す。

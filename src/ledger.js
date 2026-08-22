@@ -22,8 +22,15 @@ function saveLedger(dir, data) {
   const tmp = path.join(dir, `${MAIN}.tmp`);
   const text = JSON.stringify(data, null, 2);
 
-  // 直前の完全な内容を退避してから差し替える。
-  try { if (fs.existsSync(main)) fs.copyFileSync(main, path.join(dir, PREV)); } catch (_) {}
+  // 直前の内容を退避してから差し替える。ただし **中身が正しいと確認できたときだけ**。
+  // 無条件にコピーすると、壊れた本体で正常な退避を上書きしてしまう。起動直後に保存が
+  // 1回走るだけでこれが起き、せっかくの復帰経路が消える(実機で踏んだ)。
+  try {
+    if (fs.existsSync(main)) {
+      const cur = JSON.parse(fs.readFileSync(main, 'utf-8'));
+      if (Array.isArray(cur)) fs.copyFileSync(main, path.join(dir, PREV));
+    }
+  } catch (_) { /* 本体が壊れている → 退避はそのまま残す */ }
 
   fs.writeFileSync(tmp, text);
   fs.renameSync(tmp, main);   // ここがアトミック
