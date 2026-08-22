@@ -218,6 +218,7 @@ function readSecretKey(name) {
 // ここが外れると再起動時に --resume が付かず会話が失われる。過去2度踏んだ穴
 // (スラッグの作り方 / mtime での絞り込み)は test/conversation-id.test.js で固定した。
 const { claudeProjectSlug, findConversationId: findConvIdIn } = require('./src/conversation-id');
+const { saveLedger, loadLedger, dedupeConversationIds } = require('./src/ledger');
 
 // 生きているタブが使用中の ID を除外したうえで検索する。
 function findConversationId(cwd, sinceMs) {
@@ -1122,7 +1123,7 @@ function saveSessionsSync() {
     for (const [id, s] of sessions) {
       data.push({ id, name: s.name, cwd: s.cwd, mode: s.mode, conversationId: s.conversationId || null, createdAt: s.createdAt, savedAt: new Date().toISOString() });
     }
-    fs.writeFileSync(path.join(SESSIONS_DIR, 'sessions.json'), JSON.stringify(data, null, 2));
+    saveLedger(SESSIONS_DIR, data);
     // 出力バッファは「前回保存から中身が変わったタブ」だけ書く。
     // 以前は 10 秒ごと + ウインドウが非アクティブになるたびに、全タブ分(1タブ最大1MB)を
     // 同期書き込みしていた。タブが多いと毎回数MBをメインスレッドで書くことになり、
@@ -1159,11 +1160,14 @@ function pruneOrphanBuffers() {
 }
 ipcMain.handle('save-sessions', async () => saveSessionsSync());
 ipcMain.handle('load-sessions', async () => {
-  try {
-    const f = path.join(SESSIONS_DIR, 'sessions.json');
-    if (!fs.existsSync(f)) return [];
-    return JSON.parse(fs.readFileSync(f, 'utf-8'));
-  } catch { return []; }
+  const { sessions: saved, from } = loadLedger(SESSIONS_DIR);
+  // 本体が壊れていて退避分から戻したときは、黙って全滅させずに残す。
+  if (from === 'prev') console.log(`[sessions] 台帳が壊れていたので前回分から復帰 (${saved.length} タブ)`);
+  // 古い台帳には同じ会話を掴んだタブが複数入っていることがある(v1.5.3 以前の検出ミス)。
+  // そのまま復元すると同じ会話に claude が多重に --resume される。
+  const { sessions: fixed, stripped } = dedupeConversationIds(saved);
+  for (const s of stripped) console.log(`[sessions] 会話の重複を解除: ${s.tab} → 新規で開く (${s.conversationId.slice(0, 8)} は先頭のタブが継承)`);
+  return fixed;
 });
 
 // ── Crash detection ──
