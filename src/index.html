@@ -368,6 +368,15 @@
     </div>
 
     <!-- Work Log Panel -->
+    <div id="board-panel" class="hidden">
+      <div id="board-header">
+        <h3>案件ボード</h3>
+        <span id="board-meta"></span>
+        <button id="board-close">&times;</button>
+      </div>
+      <div id="board-body"></div>
+    </div>
+
     <div id="worklog-panel" class="hidden">
       <div id="worklog-header">
         <h3>作業ログ</h3>
@@ -385,6 +394,7 @@
         <button class="qbtn escape" data-input="\x1b" title="Escape">Esc</button>
         <div id="quick-spacer"></div>
         <button class="qbtn worklog-btn" id="worklog-toggle" title="作業ログ">&#128203; ログ</button>
+        <button class="qbtn worklog-btn" id="board-toggle" title="案件ボード (Cmd+Shift+B)">&#128202; ボード</button>
       </div>
       <!-- Builder Prompt (shown only in Builder mode) -->
       <div id="builder-input-row">

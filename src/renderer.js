@@ -184,6 +184,8 @@ function setupListeners() {
 
   // Work log
   document.getElementById('worklog-toggle').addEventListener('click', toggleWorkLog);
+  document.getElementById('board-toggle').addEventListener('click', toggleBoard);
+  document.getElementById('board-close').addEventListener('click', closeBoard);
   document.getElementById('worklog-close').addEventListener('click', () => {
     document.getElementById('worklog-panel').classList.add('hidden');
   });
@@ -352,6 +354,11 @@ function setupListeners() {
       setTimeout(() => setStatus('ready', '準備完了'), 2000);
     }
     if ((e.metaKey || e.ctrlKey) && e.key === ',') { e.preventDefault(); openSettings(); }
+    // Cmd+Shift+B: 案件ボード（どのタブが動いていて、どれが自分待ちか）
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'b' || e.key === 'B')) {
+      e.preventDefault();
+      toggleBoard();
+    }
     // Cmd+Shift+E: エンジン判定（どのレーンで着手するか迷ったとき）
     if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'e' || e.key === 'E')) {
       e.preventDefault();
@@ -1100,6 +1107,71 @@ function showSetupDialog() {
     currentMode = 'shell';
     await newTab('shell');
     startAutoSave();
+  });
+}
+
+// ── 案件ボード (#10 Phase2) ──────────────────────────────────
+// タブを1案件のチームとして束ね、いま誰が動いていて誰が自分待ちかを俯瞰する。
+// 状態の判定は main 側 (src/board.js)。ここは描画と、クリックでそのタブへ飛ぶだけ。
+let boardTimer = null;
+
+function closeBoard() {
+  document.getElementById('board-panel').classList.add('hidden');
+  if (boardTimer) { clearInterval(boardTimer); boardTimer = null; }
+}
+
+function toggleBoard() {
+  const panel = document.getElementById('board-panel');
+  if (!panel.classList.contains('hidden')) { closeBoard(); return; }
+  panel.classList.remove('hidden');
+  renderBoard();
+  // 開いている間だけ更新する。閉じたら止める(常時ポーリングしない)。
+  boardTimer = setInterval(renderBoard, 3000);
+}
+
+const BOARD_STATE_LABELS = { working: '作業中', asking: '承認待ち', idle: '待機', exited: '終了' };
+
+async function renderBoard() {
+  const body = document.getElementById('board-body');
+  const meta = document.getElementById('board-meta');
+  let snap;
+  try {
+    snap = await window.api.boardSnapshot();
+  } catch (err) {
+    body.innerHTML = '<div class="board-empty">ボードを取得できませんでした</div>';
+    return;
+  }
+  const teams = snap.teams || [];
+  const total = teams.reduce((n, t) => n + t.tabs.length, 0);
+  const working = teams.reduce((n, t) => n + t.counts.working, 0);
+  const asking = teams.reduce((n, t) => n + t.counts.asking, 0);
+  meta.textContent = `${teams.length}案件 / ${total}タブ · 作業中 ${working} · 承認待ち ${asking}`;
+
+  if (!teams.length) {
+    body.innerHTML = '<div class="board-empty">タブがありません</div>';
+    return;
+  }
+  body.innerHTML = teams.map((team) => `
+    <div class="board-team${team.active ? ' active' : ''}">
+      <div class="board-team-head">
+        <span class="board-team-name">${esc(team.project)}</span>
+        <span class="board-team-count">${team.tabs.length}タブ</span>
+      </div>
+      <div class="board-tabs">
+        ${team.tabs.map((t) => `
+          <div class="board-tab" data-tab-id="${esc(t.id)}" title="${esc(t.cwd || '')}">
+            <span class="board-dot ${t.state}"></span>
+            <span>${esc(t.name || t.mode)}</span>
+            <span class="board-state">${BOARD_STATE_LABELS[t.state] || t.state}</span>
+          </div>`).join('')}
+      </div>
+    </div>`).join('');
+
+  body.querySelectorAll('.board-tab').forEach((el) => {
+    el.addEventListener('click', () => {
+      const id = el.dataset.tabId;
+      if (tabs.has(id)) { switchTab(id); closeBoard(); }
+    });
   });
 }
 

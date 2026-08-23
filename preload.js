@@ -34,6 +34,7 @@ contextBridge.exposeInMainWorld('api', {
   hubTranscribe: (opts) => ipcRenderer.invoke('hub-transcribe', opts),
   hubSuggestRoute: (text) => ipcRenderer.invoke('hub-suggest-route', { text }),
   suggestEngine: (task) => ipcRenderer.invoke('suggest-engine', { task }),
+  boardSnapshot: () => ipcRenderer.invoke('board-snapshot'),
   generateReleasePlan: (cwd) => ipcRenderer.invoke('generate-release-plan', { cwd }),
   openPath: (p) => ipcRenderer.invoke('open-path', { p }),
   hubProviders: () => ipcRenderer.invoke('hub-providers'),

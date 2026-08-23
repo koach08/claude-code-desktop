@@ -235,6 +235,7 @@ function readSecretKey(name) {
 // (スラッグの作り方 / mtime での絞り込み)は test/conversation-id.test.js で固定した。
 const { claudeProjectSlug, findConversationId: findConvIdIn } = require('./src/conversation-id');
 const { saveLedger, loadLedger, dedupeConversationIds } = require('./src/ledger');
+const { inferProject, groupIntoTeams } = require('./src/board');
 
 // 生きているタブが使用中の ID を除外したうえで検索する。
 function findConversationId(cwd, sinceMs) {
@@ -345,6 +346,10 @@ ipcMain.handle('create-session', async (_event, { cwd, name, mode, restoreFromId
     mode: sessionMode,
     conversationId: conversationId || null,
     createdAt: new Date().toISOString(),
+    // ボード表示(#10)用。作業中かどうかは「直近に出力があったか」で見る。
+    // Claude Code は作業中スピナーを描き続けるので、動いている限り出力が途切れない。
+    lastOutputAt: Date.now(),
+    exited: false,
   };
   sessions.set(id, sessionData);
 
@@ -365,12 +370,14 @@ ipcMain.handle('create-session', async (_event, { cwd, name, mode, restoreFromId
     let buf = (sessionBuffers.get(id) || '') + data;
     if (buf.length > MAX_BUFFER) buf = buf.slice(-MAX_BUFFER);
     sessionBuffers.set(id, buf);
+    { const s = sessions.get(id); if (s) s.lastOutputAt = Date.now(); }
 
     // Detect conversation ID from Claude's project directory (throttled to ~1.5s).
     detectConvId();
   });
 
   ptyProcess.onExit(({ exitCode, signal }) => {
+    { const s = sessions.get(id); if (s) s.exited = true; }
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send(`session-exit-${id}`, { exitCode, signal });
     }
@@ -440,6 +447,8 @@ ipcMain.handle('switch-mode', async (_event, { sessionId, newMode }) => {
     name: modeName,
     mode: newMode,
     conversationId: null,
+    lastOutputAt: Date.now(),
+    exited: false,
     createdAt: new Date().toISOString(),
   });
   sessionBuffers.set(newId, '');
@@ -454,6 +463,7 @@ ipcMain.handle('switch-mode', async (_event, { sessionId, newMode }) => {
     let buf = (sessionBuffers.get(newId) || '') + data;
     if (buf.length > MAX_BUFFER) buf = buf.slice(-MAX_BUFFER);
     sessionBuffers.set(newId, buf);
+    { const s2 = sessions.get(newId); if (s2) s2.lastOutputAt = Date.now(); }
     detectConvId();
   });
   ptyProcess.onExit(({ exitCode }) => {
@@ -822,6 +832,67 @@ ipcMain.handle('hub-suggest-route', async (_e, { text }) => {
 const { judgeEngine } = require('./src/engine-judge');
 
 ipcMain.handle('suggest-engine', async (_e, { task }) => judgeEngine(task));
+
+// ── ボード表示 (#10 Phase2): タブを1案件のチームとして俯瞰する ──
+//
+// 案件は cwd では分けられない(本人は全タブを ~ から起動している)。
+// 会話ファイルの末尾に出てくるリポジトリ名の最頻値を案件として使う。
+// 会話ファイルは大きい(実測で最大130MB)ので末尾だけ読み、
+// サイズと更新時刻が変わらない限り読み直さない。
+const projectCache = new Map();   // conversationId -> { size, mtimeMs, project }
+const PROJECT_TAIL_BYTES = 400 * 1024;
+
+function projectForConversation(conversationId, cwd) {
+  if (!conversationId) return null;
+  try {
+    const dir = path.join(os.homedir(), '.claude', 'projects', claudeProjectSlug(cwd || os.homedir()));
+    const file = path.join(dir, `${conversationId}.jsonl`);
+    const st = fs.statSync(file);
+    const hit = projectCache.get(conversationId);
+    if (hit && hit.size === st.size && hit.mtimeMs === st.mtimeMs) return hit.project;
+
+    const len = Math.min(st.size, PROJECT_TAIL_BYTES);
+    const buf = Buffer.alloc(len);
+    const fd = fs.openSync(file, 'r');
+    try { fs.readSync(fd, buf, 0, len, Math.max(0, st.size - len)); } finally { fs.closeSync(fd); }
+
+    const project = inferProject(buf.toString('utf8'));
+    projectCache.set(conversationId, { size: st.size, mtimeMs: st.mtimeMs, project });
+    return project;
+  } catch (_) { return null; }
+}
+
+// 承認待ちの判定に使う、出力の末尾。制御文字を落としてから渡す。
+function tailFor(id) {
+  const buf = sessionBuffers.get(id) || '';
+  return buf.slice(-2000)
+    .replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '')
+    .replace(/\x1b\][^\x07]*\x07/g, '')
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '');
+}
+
+ipcMain.handle('board-snapshot', async () => {
+  const tabs = [];
+  for (const [id, s] of sessions) {
+    tabs.push({
+      id,
+      name: s.name,
+      mode: s.mode,
+      cwd: s.cwd,
+      conversationId: s.conversationId || null,
+      lastOutputAt: s.lastOutputAt || 0,
+      exited: !!s.exited,
+      tail: tailFor(id),
+      project: projectForConversation(s.conversationId, s.cwd),
+    });
+  }
+  // tail は判定に使うだけで、画面には出さない(会話の中身が漏れるため)
+  const teams = groupIntoTeams(tabs).map((t) => ({
+    ...t,
+    tabs: t.tabs.map(({ tail, ...rest }) => rest),
+  }));
+  return { teams, at: Date.now() };
+});
 
 // ── 出荷プラン生成 (#8): 配布先を自動判定し RELEASE.md を書き出す ──
 ipcMain.handle('generate-release-plan', async (_e, { cwd }) => {
