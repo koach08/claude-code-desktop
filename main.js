@@ -235,7 +235,7 @@ function readSecretKey(name) {
 // (スラッグの作り方 / mtime での絞り込み)は test/conversation-id.test.js で固定した。
 const { claudeProjectSlug, findConversationId: findConvIdIn } = require('./src/conversation-id');
 const { saveLedger, loadLedger, dedupeConversationIds } = require('./src/ledger');
-const { inferProject, groupIntoTeams } = require('./src/board');
+const { inferProject, groupIntoTeams, cleanTail } = require('./src/board');
 
 // 生きているタブが使用中の ID を除外したうえで検索する。
 function findConversationId(cwd, sinceMs) {
@@ -862,13 +862,10 @@ function projectForConversation(conversationId, cwd) {
   } catch (_) { return null; }
 }
 
-// 承認待ちの判定に使う、出力の末尾。制御文字を落としてから渡す。
+// 承認待ちの判定に使う、出力の末尾。ANSI の除去は src/board.js に寄せてある
+// (実バッファで取りこぼしを潰した正規表現をここで二重管理しないため)。
 function tailFor(id) {
-  const buf = sessionBuffers.get(id) || '';
-  return buf.slice(-2000)
-    .replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '')
-    .replace(/\x1b\][^\x07]*\x07/g, '')
-    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '');
+  return cleanTail(sessionBuffers.get(id) || '');
 }
 
 ipcMain.handle('board-snapshot', async () => {

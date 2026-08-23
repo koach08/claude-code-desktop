@@ -95,4 +95,22 @@ function groupIntoTeams(tabs, now = Date.now()) {
   return list;
 }
 
-module.exports = { inferProject, deriveState, groupIntoTeams, STATE_LABELS, WORKING_MS };
+
+// PTY の生出力から、判定に使える見える文字だけを取り出す。
+// 実際のバッファは ANSI のカーソル移動・色指定・OSC(タイトル設定)が大量に混ざっており、
+// 素で正規表現を当てると「1. Yes」のような並びが色コードで分断されて拾えない。
+function cleanTail(raw, chars = 2000) {
+  return String(raw || '')
+    .slice(-chars * 4)                                   // 制御文字ぶん多めに取る
+    // CSI。パラメータに < > = が入る種類(キーボードプロトコルの \x1b[>4m, \x1b[<u 等)が
+    // 実バッファに大量に出るので、それらも含めて落とす。
+    .replace(/\x1b\[[0-9;?<>=!]*[ -\/]*[a-zA-Z~]/g, '')
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')   // OSC (タイトル等)
+    .replace(/\x1b[()][AB0]/g, '')                       // 文字集合切替
+    .replace(/\x1b[=>78]/g, '')                           // カーソル保存/復帰など
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '')
+    .slice(-chars);
+}
+
+module.exports = {
+  cleanTail, inferProject, deriveState, groupIntoTeams, STATE_LABELS, WORKING_MS };

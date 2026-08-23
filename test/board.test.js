@@ -2,7 +2,7 @@
 //   実行: npm test
 const test = require('node:test');
 const assert = require('node:assert');
-const { inferProject, deriveState, groupIntoTeams, WORKING_MS } = require('../src/board');
+const { inferProject, deriveState, groupIntoTeams, cleanTail, WORKING_MS } = require('../src/board');
 
 // ── 案件の推定 ────────────────────────────────────────────────
 // 本人は全タブを ~ から起動するので cwd では分けられない。
@@ -108,4 +108,35 @@ test('承認待ちを含むチームも上に来る(自分待ちを見落とさ�
 
 test('タブが無くても落ちない', () => {
   assert.deepStrictEqual(groupIntoTeams([], now), []);
+});
+
+// ── 端末出力の掃除 ────────────────────────────────────────────
+// 実バッファ(~/.claude-code-app/buffers/*.buf)に実際に入っていた種類を並べてある。
+// 素朴な /\x1b\[[0-9;?]*[a-zA-Z]/ だけだと [>4m や [<u が残り、残骸が判定に混ざる。
+test('実際に出てくる制御シーケンスを取りこぼさない', () => {
+  const raw = [
+    '\x1b[38;5;180m色つき\x1b[0m',
+    '\x1b[>4m\x1b[<u',              // キーボードプロトコル
+    '\x1b7保存\x1b8復帰',            // カーソル保存/復帰
+    '\x1b]0;タイトル\x07',           // OSC
+    '\x1b(B',                       // 文字集合切替
+    '\x1b[2K\x1b[1A',               // 消去・カーソル移動
+    'のこるテキスト',
+  ].join('');
+  const out = cleanTail(raw);
+  assert.ok(!/\x1b/.test(out), 'ESC が残っている: ' + JSON.stringify(out));
+  assert.ok(!/\[[<>0-9;?]*[a-zA-Z]/.test(out), '残骸がある: ' + JSON.stringify(out));
+  assert.ok(out.includes('のこるテキスト'), '本文が消えた: ' + JSON.stringify(out));
+  assert.ok(out.includes('色つき') && out.includes('保存') && out.includes('復帰'));
+});
+
+test('色コードで分断された選択肢を判定できる形に戻す', () => {
+  // 許可プロンプトは色コードが挟まるので、掃除しないと文面照合が効かない
+  const raw = '\x1b[1mDo you want\x1b[0m to proceed?\r\n\x1b[32m 1. Yes\x1b[0m\r\n 2. No';
+  const tail = cleanTail(raw);
+  assert.strictEqual(deriveState({ lastOutputAt: 0, tail }, 999_999), 'asking');
+});
+
+test('長さを指定ぶんに収める', () => {
+  assert.ok(cleanTail('あ'.repeat(5000), 100).length <= 100);
 });
