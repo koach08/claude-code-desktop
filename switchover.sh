@@ -6,6 +6,12 @@
 #    conversationId のあるタブは再起動後 `claude --resume` で自動的に戻ります。
 set -e
 
+# 自分の在り処。zsh の ${0:A:h} は bash だと黙って空文字になり、SRC が
+# /dist/... という有り得ないパスになる(2026-08-25 に `bash switchover.sh` で踏んだ)。
+# どちらのシェルで呼ばれても同じ場所を指すよう、素の書き方で求める。
+SELF="$(cd -- "$(dirname -- "$0")" && pwd)/$(basename -- "$0")"
+HERE="$(dirname -- "$SELF")"
+
 # --- 実行元ガード ---------------------------------------------------------
 # 2026-08-23 20:06、このスクリプトを Ariya Bridge のタブ(=アプリの子プロセス)から
 # 実行し、手順1でアプリを終了させた瞬間に自分ごと道連れで死んだ。ditto が途中で
@@ -27,13 +33,13 @@ if [ "${SWITCHOVER_DETACHED:-0}" != "1" ] && ariya_ancestor; then
   echo "⚠ Ariya Bridge の中から実行されています。差し替えは行わず中止しました。" >&2
   echo "  手順1のアプリ終了でこのスクリプト自身が死に、バンドルが壊れます(2026-08-23 に発生)。" >&2
   echo "" >&2
-  echo "  Terminal.app / iTerm から:  zsh \"${0:A}\"" >&2
-  echo "  タブから走らせたいときは:    nohup zsh \"${0:A:h}/wait-and-switchover.sh\" >/dev/null 2>&1 &" >&2
+  echo "  Terminal.app / iTerm から:  zsh \"$SELF\"" >&2
+  echo "  タブから走らせたいときは:    nohup zsh \"$HERE/wait-and-switchover.sh\" >/dev/null 2>&1 &" >&2
   echo "    (wait-and-switchover.sh は自分を親から切り離してから差し替えます)" >&2
   exit 4
 fi
 
-SRC="${0:A:h}/dist/mac-arm64/Ariya Bridge.app"   # このスクリプトと同じ場所の dist を見る
+SRC="$HERE/dist/mac-arm64/Ariya Bridge.app"   # このスクリプトと同じ場所の dist を見る
 DST="/Applications/Ariya Bridge.app"
 LSREG="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 
