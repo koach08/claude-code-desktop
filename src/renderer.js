@@ -629,6 +629,7 @@ async function switchSessionMode(newMode) {
 
   // Update Map key
   tabs.delete(activeId);
+  forgetTail(activeId);
   activeId = result.newId;
   tabs.set(result.newId, tab);
 
@@ -885,6 +886,7 @@ async function closeTab(id) {
   t.tabEl.remove();
   t.pane.remove();
   tabs.delete(id);
+  forgetTail(id);
   if (tabs.size > 0) {
     switchTab(tabs.keys().next().value);
   } else {
@@ -984,16 +986,40 @@ function updateAgentCount() {
 // ── Activity Detection ──
 let activityTimer = null;
 
+// 判定に使う、タブごとの直近の出力。PTY は数百バイト刻みで届くので、届いた欠片
+// だけを見ると選択肢の枠が途中で切れて判定できない。少しだけ溜めてから当てる。
+const outputTails = new Map();      // sessionId -> 直近の出力(掃除前)
+const awaitingUser = new Map();     // sessionId -> 前回「あなた待ち」だったか
+const TAIL_KEEP = 8000;
+
+function rememberTail(sessionId, output) {
+  if (!sessionId) return String(output || '');
+  const prev = outputTails.get(sessionId) || '';
+  const next = (prev + String(output || '')).slice(-TAIL_KEEP);
+  outputTails.set(sessionId, next);
+  return next;
+}
+
+// タブを閉じたら溜めた出力も捨てる。残すと閉じたタブぶんだけメモリを持ち続ける。
+function forgetTail(sessionId) {
+  outputTails.delete(sessionId);
+  awaitingUser.delete(sessionId);
+}
+
 function detectActivity(output, sessionId) {
-  const isApproval = /\? ?\(y\/n\)|Allow|approve|permission/i.test(output);
+  const tail = rememberTail(sessionId, output);
+  // 判定規則は src/prompt-detect.js に一本化してある(ボード表示と共通)。
+  // 読み込みに失敗したときは黙って「待ちではない」に倒す。ここは PTY の出力ごとに
+  // 通るので、例外を投げると画面が出力のたびに壊れる。
+  const isApproval = !!(window.AriyaPrompt && window.AriyaPrompt.isAwaitingUser(tail));
 
   const patterns = [
+    { re: { test: () => isApproval }, msg: 'あなたの返事待ち — ターミナルで番号を選ぶ' },
     { re: /Reading|Read\s/i, msg: 'ファイル読込中...' },
     { re: /Writing|Write\s|Edit\s/i, msg: 'ファイル編集中...' },
     { re: /Running|Bash\s/i, msg: 'コマンド実行中...' },
     { re: /Searching|Grep|Glob/i, msg: '検索中...' },
     { re: /Agent/i, msg: 'エージェント作業中...' },
-    { re: /\? ?\(y\/n\)|Allow|approve|permission/i, msg: '承認待ち — Yes/No ボタンまたはターミナルで y/n' },
     { re: /Thinking|thinking/i, msg: '思考中...' },
     { re: /\$\s*$|❯|>\s*$/m, msg: '入力待ち' },
   ];
@@ -1043,16 +1069,21 @@ function detectActivity(output, sessionId) {
     }
   }
 
-  // macOS notification for approval requests (works even when app is not focused)
-  if (isApproval) {
-    const tab = sessionId ? tabs.get(sessionId) : null;
-    const tabName = tab ? (tab.session.name || 'Claude Code') : 'Claude Code';
-    try {
-      new Notification('Claude Code — 承認待ち', {
-        body: `「${tabName}」で承認が必要です (Yes/No)`,
-        silent: false,
-      });
-    } catch (_) {}
+  // macOS 通知。**待ちに入った瞬間だけ** 出す。
+  // 以前は出力チャンクごとに出していたので、同じ1回の待ちで何十通も飛んでいた。
+  if (sessionId) {
+    const was = awaitingUser.get(sessionId) || false;
+    if (isApproval && !was) {
+      const tab = tabs.get(sessionId);
+      const tabName = tab ? (tab.session.name || 'Claude Code') : 'Claude Code';
+      try {
+        new Notification('Ariya Bridge — あなた待ち', {
+          body: `「${tabName}」が返事を待って止まっています`,
+          silent: false,
+        });
+      } catch (_) {}
+    }
+    awaitingUser.set(sessionId, isApproval);
   }
 
   clearTimeout(activityTimer);
@@ -1129,7 +1160,7 @@ function toggleBoard() {
   boardTimer = setInterval(renderBoard, 3000);
 }
 
-const BOARD_STATE_LABELS = { working: '作業中', asking: '承認待ち', idle: '待機', exited: '終了' };
+const BOARD_STATE_LABELS = { working: '作業中', asking: 'あなた待ち', idle: '待機', exited: '終了' };
 
 async function renderBoard() {
   const body = document.getElementById('board-body');
@@ -1145,7 +1176,7 @@ async function renderBoard() {
   const total = teams.reduce((n, t) => n + t.tabs.length, 0);
   const working = teams.reduce((n, t) => n + t.counts.working, 0);
   const asking = teams.reduce((n, t) => n + t.counts.asking, 0);
-  meta.textContent = `${teams.length}案件 / ${total}タブ · 作業中 ${working} · 承認待ち ${asking}`;
+  meta.textContent = `${teams.length}案件 / ${total}タブ · 作業中 ${working} · あなた待ち ${asking}`;
 
   if (!teams.length) {
     body.innerHTML = '<div class="board-empty">タブがありません</div>';
