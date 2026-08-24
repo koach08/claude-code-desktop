@@ -6,7 +6,34 @@
 #    conversationId のあるタブは再起動後 `claude --resume` で自動的に戻ります。
 set -e
 
-SRC="/Users/koachmedia/Desktop/アプリ開発プロジェクト/claude-code-desktop/dist/mac-arm64/Ariya Bridge.app"
+# --- 実行元ガード ---------------------------------------------------------
+# 2026-08-23 20:06、このスクリプトを Ariya Bridge のタブ(=アプリの子プロセス)から
+# 実行し、手順1でアプリを終了させた瞬間に自分ごと道連れで死んだ。ditto が途中で
+# 止まり、Info.plist を欠いたバンドルが /Applications に残って起動不能になった。
+# 警告コメントだけが頼りだったので、実行元を見て止める番人を置く。
+ariya_ancestor() {
+  local pid=$$ cmd i=0
+  while [ "${pid:-0}" -gt 1 ] && [ $i -lt 60 ]; do
+    cmd=$(ps -o command= -p "$pid" 2>/dev/null)
+    case "$cmd" in
+      *"Ariya Bridge.app/Contents/MacOS/Ariya Bridge"*) return 0 ;;
+    esac
+    pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
+    i=$((i+1))
+  done
+  return 1
+}
+if [ "${SWITCHOVER_DETACHED:-0}" != "1" ] && ariya_ancestor; then
+  echo "⚠ Ariya Bridge の中から実行されています。差し替えは行わず中止しました。" >&2
+  echo "  手順1のアプリ終了でこのスクリプト自身が死に、バンドルが壊れます(2026-08-23 に発生)。" >&2
+  echo "" >&2
+  echo "  Terminal.app / iTerm から:  zsh \"${0:A}\"" >&2
+  echo "  タブから走らせたいときは:    nohup zsh \"${0:A:h}/wait-and-switchover.sh\" >/dev/null 2>&1 &" >&2
+  echo "    (wait-and-switchover.sh は自分を親から切り離してから差し替えます)" >&2
+  exit 4
+fi
+
+SRC="${0:A:h}/dist/mac-arm64/Ariya Bridge.app"   # このスクリプトと同じ場所の dist を見る
 DST="/Applications/Ariya Bridge.app"
 LSREG="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 
@@ -50,15 +77,32 @@ if running >/dev/null; then
 fi
 echo "   終了を確認"
 
-echo "2) 旧バンドルを差し替え..."
-# rm ではなく退避。ditto が途中で failed しても「アプリが消えた」状態を作らない。
+echo "2) 新バンドルを展開してから差し替え..."
+# 先に /Applications 内のステージングへ丸ごと展開し、出来上がりを検めてから mv で
+# 入れ替える。展開の途中で落ちても現物には手を付けていないので、「起動できない
+# バンドルだけが残る」状態にならない。同じボリューム内なので mv は一瞬で終わる。
+STAGE="/Applications/.AriyaBridge.staging.$$"
 OLD="/tmp/AriyaBridge.old.$$"
+rm -rf "$STAGE"
+trap 'rm -rf "$STAGE" 2>/dev/null || true' EXIT
+
+if ! ditto "$SRC" "$STAGE"; then
+  echo "   ⚠ 展開に失敗。/Applications には触れていません"
+  rm -rf "$STAGE"; open "$DST" 2>/dev/null || true; exit 1
+fi
+if [ ! -x "$STAGE/Contents/MacOS/Ariya Bridge" ] || [ ! -f "$STAGE/Contents/Info.plist" ]; then
+  echo "   ⚠ 展開結果が不完全。/Applications には触れていません"
+  rm -rf "$STAGE"; open "$DST" 2>/dev/null || true; exit 1
+fi
+
 if [ -d "$DST" ]; then mv "$DST" "$OLD"; fi
-if ditto "$SRC" "$DST" && [ -x "$DST/Contents/MacOS/Ariya Bridge" ]; then
+if mv "$STAGE" "$DST" && [ -x "$DST/Contents/MacOS/Ariya Bridge" ]; then
+  trap - EXIT
   rm -rf "$OLD"
   echo "   installed: $DST"
 else
-  echo "   ⚠ コピーに失敗。旧バンドルを戻します"
+  echo "   ⚠ 差し替えに失敗。旧バンドルを戻します"
+  trap - EXIT
   rm -rf "$DST"
   [ -d "$OLD" ] && mv "$OLD" "$DST"
   open "$DST"; exit 1

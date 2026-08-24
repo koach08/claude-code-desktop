@@ -9,32 +9,32 @@ const { inferProject, deriveState, groupIntoTeams, cleanTail, WORKING_MS } = req
 // 会話に出てくるリポジトリ名の最頻値を使う。
 test('会話に頻出するリポジトリ名を案件として拾う', () => {
   const text = `
-    /Users/koachmedia/Desktop/アプリ開発プロジェクト/crypto-trader/bot.py を直す
-    /Users/koachmedia/Desktop/アプリ開発プロジェクト/crypto-trader/README.md
-    /Users/koachmedia/Desktop/アプリ開発プロジェクト/crypto-trader/test/x.py
-    /Users/koachmedia/Desktop/アプリ開発プロジェクト/ai-studio/app.tsx
+    /Users/dev/Desktop/アプリ開発プロジェクト/trading-bot/bot.py を直す
+    /Users/dev/Desktop/アプリ開発プロジェクト/trading-bot/README.md
+    /Users/dev/Desktop/アプリ開発プロジェクト/trading-bot/test/x.py
+    /Users/dev/Desktop/アプリ開発プロジェクト/image-studio/app.tsx
   `;
-  assert.strictEqual(inferProject(text), 'crypto-trader');
+  assert.strictEqual(inferProject(text), 'trading-bot');
 });
 
 test('ホーム直下のリポジトリも拾う', () => {
-  const t = '/Users/koachmedia/investment-app/a /Users/koachmedia/investment-app/b /Users/koachmedia/investment-app/c';
-  assert.strictEqual(inferProject(t), 'investment-app');
+  const t = '/Users/dev/money-app/a /Users/dev/money-app/b /Users/dev/money-app/c';
+  assert.strictEqual(inferProject(t), 'money-app');
 });
 
 test('設定ディレクトリは案件として扱わない', () => {
-  const t = Array(10).fill('/Users/koachmedia/.claude/projects/x.jsonl').join(' ');
+  const t = Array(10).fill('/Users/dev/.claude/projects/x.jsonl').join(' ');
   assert.strictEqual(inferProject(t), null);
 });
 
 test('たまたま2回出ただけのものは案件にしない', () => {
-  const t = '/Users/koachmedia/Desktop/アプリ開発プロジェクト/whatever/a /Users/koachmedia/Desktop/アプリ開発プロジェクト/whatever/b';
+  const t = '/Users/dev/Desktop/アプリ開発プロジェクト/whatever/a /Users/dev/Desktop/アプリ開発プロジェクト/whatever/b';
   assert.strictEqual(inferProject(t), null);
 });
 
 test('行末の記号を巻き込まない', () => {
-  const t = Array(4).fill('`/Users/koachmedia/Desktop/アプリ開発プロジェクト/ichimai`; ').join('');
-  assert.strictEqual(inferProject(t), 'ichimai');
+  const t = Array(4).fill('`/Users/dev/Desktop/アプリ開発プロジェクト/photo-app`; ').join('');
+  assert.strictEqual(inferProject(t), 'photo-app');
 });
 
 test('パスが無ければ null(埋めない)', () => {
@@ -71,12 +71,12 @@ test('終了したタブは終了', () => {
 // ── チーム分け ────────────────────────────────────────────────
 test('同じ案件のタブが1チームに束ねられる', () => {
   const teams = groupIntoTeams([
-    { id: '1', project: 'ichimai', lastOutputAt: 0, tail: '' },
-    { id: '2', project: 'ichimai', lastOutputAt: 0, tail: '' },
-    { id: '3', project: 'crypto-trader', lastOutputAt: 0, tail: '' },
+    { id: '1', project: 'photo-app', lastOutputAt: 0, tail: '' },
+    { id: '2', project: 'photo-app', lastOutputAt: 0, tail: '' },
+    { id: '3', project: 'trading-bot', lastOutputAt: 0, tail: '' },
   ], now);
   assert.strictEqual(teams.length, 2);
-  assert.strictEqual(teams.find((t) => t.project === 'ichimai').tabs.length, 2);
+  assert.strictEqual(teams.find((t) => t.project === 'photo-app').tabs.length, 2);
 });
 
 test('案件が取れなかったタブは未分類に入る(捨てない)', () => {

@@ -262,21 +262,28 @@ function makeConvIdDetector(id, mode, cwd, startMs, preset) {
   };
 }
 
+// フォルダ名 → タブに出す名前 の対応表。
+// 個人のプロジェクト名をソースに埋めないよう、~/.claude-code-app/project-labels.json
+// に置く。無ければフォルダ名をそのまま使う。書き換えても再ビルドは要らない。
+let projectLabelCache = null;
+function loadProjectLabels() {
+  if (projectLabelCache) return projectLabelCache;
+  try {
+    const raw = fs.readFileSync(path.join(SESSIONS_DIR, 'project-labels.json'), 'utf-8');
+    const parsed = JSON.parse(raw);
+    projectLabelCache = (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
+  } catch (_) {
+    projectLabelCache = {};
+  }
+  return projectLabelCache;
+}
+
 // Derive a friendly, project-aware tab name from the working directory.
 // Known project folders map to readable labels; otherwise the folder basename is used.
 function deriveSessionName(cwd, mode) {
   const norm = String(cwd || '').replace(/\/+$/, '');
   const base = (norm === os.homedir() || !norm) ? '' : norm.split('/').pop();
-  const MAP = {
-    'ai-studio': 'EGAKU', 'egaku-ai': 'EGAKU', 'egaku-diffusion': 'EGAKU Diffusion',
-    'crypto-trader': '仮想通貨AI', 'code-harness': 'Code Harness',
-    'claude-code-desktop': 'CC Desktop', 'koach-voice': 'koach-voice',
-    'english-platform-commercial': 'SpeakSmart', 'english-platform-next': '英語大学版',
-    'spanish-platform': 'スペイン語', 'persian-learning': 'ペルシア語',
-    'english_assessment_v2': '英語評価', 'koach-os-app-live': 'Koach OS',
-    'uni-agent-app': 'UniAgent', 'eduplanner': 'EduPlanner', 'souji': 'Souji',
-    'investment-app': '投資分析', 'RIPE2026-paper': 'RIPE論文',
-  };
+  const MAP = loadProjectLabels();
   const project = MAP[base] || base;
   if (!project) {
     return mode === 'claude' ? 'Claude Code' : mode === 'codex' ? 'Codex' : mode === 'gemini' ? 'Gemini' : mode === 'grok' ? 'Grok' : 'Terminal';
@@ -913,14 +920,14 @@ ipcMain.handle('generate-release-plan', async (_e, { cwd }) => {
         : `1. [自動] electron-builder --mac (Developer ID Application 署名)\n2. [自動] notarize: xcrun notarytool submit <dmg> --keychain-profile "notarytool-profile" --wait\n3. [自動] staple: xcrun stapler staple <dmg> && spctl -a -vvv -t install <dmg>\n4. [自動] 販売文(EN/JP)生成\n5. [要本人] gumroad.com で商品作成→DMGアップロード→価格→公開`;
     } else if (exists('next.config.js') || exists('next.config.ts') || exists('vercel.json') || has('next')) {
       channel = 'Web SaaS (Vercel)';
-      steps = `1. [自動] ship-check(SEO/OG/決済/本番設定)\n2. [自動] vercel --prod (EGAKU系はwebhook故障のためcommit後に必須)\n3. [要本人] Stripe本番キー・Webエンドポイント確認、テストキー残留チェック\n4. [自動] Search Console/sitemap/OG 最終確認`;
+      steps = `1. [自動] ship-check(SEO/OG/決済/本番設定)\n2. [自動] vercel --prod (webhook が不調なプロジェクトは commit 後に必須)\n3. [要本人] Stripe本番キー・Webエンドポイント確認、テストキー残留チェック\n4. [自動] Search Console/sitemap/OG 最終確認`;
     } else {
       channel = '汎用 / Gumroad(デジタル)';
-      steps = `1. [自動] 成果物パッケージング(zip/pdf等)\n2. [自動] 販売文(志柿スタイル)生成\n3. [要本人] gumroad.com で商品作成→アップロード→公開`;
+      steps = `1. [自動] 成果物パッケージング(zip/pdf等)\n2. [自動] 販売文の下書き生成\n3. [要本人] gumroad.com で商品作成→アップロード→公開`;
     }
 
     const name = pkg.name || path.basename(dir);
-    const md = `# RELEASE — ${name}\n\n配布先(自動判定): **${channel}**\n\n> GitHub push はゴールではなく途中の1ステップ。全項目 ✅ になるまで「完成」と言わない。\n> [自動]=アプリ/AIが実行 / [要本人]=Apple・Gumroad等の対話操作。\n\n## 手順\n${steps}\n\n---\n- Apple Team ID: HDSYA72T8Z / notarytool profile: notarytool-profile\n- プライバシーポリシー: https://gist.github.com/koach08/fe3cf9201983f03b64dcad8bce4f74f0\n- 方針: まず Gumroad で最速公開 → 売れたら App Store 追加\n`;
+    const md = `# RELEASE — ${name}\n\n配布先(自動判定): **${channel}**\n\n> GitHub push はゴールではなく途中の1ステップ。全項目 ✅ になるまで「完成」と言わない。\n> [自動]=アプリ/AIが実行 / [要本人]=Apple・Gumroad等の対話操作。\n\n## 手順\n${steps}\n\n---\n${releaseProfileLines()}- 方針: まず Gumroad で最速公開 → 売れたら App Store 追加\n`;
     const outPath = path.join(dir, 'RELEASE.md');
     fs.writeFileSync(outPath, md, 'utf-8');
     return { ok: true, path: outPath, channel };
@@ -928,6 +935,20 @@ ipcMain.handle('generate-release-plan', async (_e, { cwd }) => {
     return { ok: false, error: e.message };
   }
 });
+
+// 署名・配布に使う自分用の値。公開リポジトリに書かないよう
+// ~/.claude-code-app/release-profile.json から読む。無ければその行を出さない。
+function releaseProfileLines() {
+  try {
+    const cfg = JSON.parse(fs.readFileSync(path.join(SESSIONS_DIR, 'release-profile.json'), 'utf-8'));
+    const lines = [];
+    if (cfg.appleTeamId) lines.push(`- Apple Team ID: ${cfg.appleTeamId} / notarytool profile: ${cfg.notaryProfile || '-'}`);
+    if (cfg.privacyPolicyUrl) lines.push(`- プライバシーポリシー: ${cfg.privacyPolicyUrl}`);
+    return lines.length ? lines.join('\n') + '\n' : '';
+  } catch (_) {
+    return '';
+  }
+}
 
 ipcMain.handle('open-path', async (_e, { p }) => { try { shell.openPath(p); } catch (_) {} });
 

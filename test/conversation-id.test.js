@@ -12,10 +12,10 @@ const { claudeProjectSlug, findConversationId } = require('../src/conversation-i
 // 期待値は実際に ~/.claude/projects/ に存在するディレクトリ名から取っている。
 test('英数字以外は全て - になる(日本語パスを含む)', () => {
   const cases = [
-    ['/Users/koachmedia', '-Users-koachmedia'],
-    ['/Users/koachmedia/Desktop/アプリ開発プロジェクト/ai-studio',
-     '-Users-koachmedia-Desktop-------------ai-studio'],
-    ['/Users/koachmedia/investment-app', '-Users-koachmedia-investment-app'],
+    ['/Users/dev', '-Users-dev'],
+    ['/Users/dev/Desktop/アプリ開発プロジェクト/image-studio',
+     '-Users-dev-Desktop-------------image-studio'],
+    ['/Users/dev/money-app', '-Users-dev-money-app'],
     ['/private/tmp', '-private-tmp'],
   ];
   for (const [cwd, expected] of cases) {
@@ -46,7 +46,7 @@ function makeHome(cwd, files) {
   return home;
 }
 
-const CWD = '/Users/koachmedia/Desktop/アプリ開発プロジェクト/dummy';
+const CWD = '/Users/dev/Desktop/アプリ開発プロジェクト/dummy';
 
 test('セッション開始以降に作られた会話を拾う', () => {
   const home = makeHome(CWD, ['aaa.jsonl']);

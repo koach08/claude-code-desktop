@@ -13,7 +13,16 @@
 #   固定されるので、入れ替えても許可が残る。
 set -e
 
-IDENTITY="33EB49F9A79CC2C3E329A3E06ACD6D909C4C8EB5"   # Developer ID Application: Koichiro Shigaki (HDSYA72T8Z) G2 / 2031-04 まで
+# 署名に使う証明書のハッシュ。公開リポジトリに自分の名前と証明書を書かないよう、
+# ~/.claude-code-app/signing-identity(1行) か環境変数 SIGN_IDENTITY から読む。
+#   security find-identity -v -p codesigning   で確認できる。
+IDENTITY="${SIGN_IDENTITY:-$(cat "$HOME/.claude-code-app/signing-identity" 2>/dev/null)}"
+[ -n "$IDENTITY" ] || {
+  echo "署名に使う証明書が指定されていません。"
+  echo "  security find-identity -v -p codesigning   で出たハッシュを"
+  echo "  ~/.claude-code-app/signing-identity に1行で書くか、SIGN_IDENTITY に入れてください。"
+  exit 1
+}
 DIR="${0:A:h:h}"
 APP="${1:-$DIR/dist/mac-arm64/Ariya Bridge.app}"
 ENT="$DIR/build/entitlements.mac.plist"
