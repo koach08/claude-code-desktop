@@ -49,6 +49,22 @@
   // 素の CLI が使う y/n。行末にあることを求めて、文章中の "(y/n)" と分ける。
   const SHELL_YESNO = /\((?:y\/n|Y\/n|y\/N)\)\s*[?:]?\s*$/im;
 
+  // 会話の再開ピッカー (`claude --resume` の一覧)。
+  //
+  // ── 2026-08-29: 実物を pty で捕まえて分かったこと ──
+  // ここは **番号付きの選択肢ではない**。マーカーの直後に会話のタイトルが来る:
+  //   `❯api.ts の detail 削除バグ修正`
+  //   `4 days ago · HEAD · 22.3MB`
+  // したがって SELECT_PROMPT (マーカー+数字.) には一生かからず、
+  // いちばん人間を待たせる画面が「待機」に見えていた。
+  // (コメントに書いてあった `❯1. Resume from summary` は別画面のほう。)
+  //
+  // マーカーだけを条件にすると、実バッファ 24 本中 19 本が該当してしまう
+  // (Claude Code の入力行そのものが ❯ を使うため)。フッターの決まり文句と
+  // 併せて初めて絞れる。実測: フッター単独でも 24 本中 0 本、併用でも 0 本。
+  const PICKER_FOOTER = /Esc to cancel/i;
+  const PICKER_MARKER = /[❯›▶]/;
+
   // 保険。Claude Code の許可プロンプトは実バッファに1件も残っていなかった
   // (全タブが自動承認で走っていたため)。マーカーを描かない版が来ても取り逃さない
   // よう、決まり文句と番号付きの Yes が **両方** 揃ったときだけ通す。
@@ -56,12 +72,26 @@
   const ASK_PHRASE = /Do you want to proceed\?/i;
   const NUMBERED_YES = /\d+\.\s*(?:Yes|はい)\b/;
 
+  // 判定に使うのは掃除後の「末尾」だけ。
+  //
+  // ── なぜ窓を切るか (2026-08-29 実測: buffers 24本) ──
+  // 人間が答え終わったあとも、選択肢の枠はスクロールバックに残り続ける。
+  // 窓を切らないと「回答済みのプロンプトが視界にある」だけで待ち状態と判定され、
+  // タブが永久に「あなた待ち」に貼り付く。
+  // 実バッファのプロンプト痕跡は 36 件あり、その **全部** が末尾から
+  // 24,043 文字以上うしろ(= すでに答えて出力が流れた跡)だった。
+  // 本当に待っている間に描かれるのは選択肢とヒント行くらいなので、
+  // 末尾 1500 字を見れば足りる。この幅なら実データの 36 件は全部落ちる。
+  const TAIL_WINDOW = 1500;
+
   // 掃除済みでも生出力でも受け付ける。
   function isAwaitingUser(text) {
-    const t = cleanTail(text, 4000);
+    const t = cleanTail(text, 4000).slice(-TAIL_WINDOW);
     if (SELECT_PROMPT.test(t) || SHELL_YESNO.test(t)) return true;
+    if (PICKER_MARKER.test(t) && PICKER_FOOTER.test(t)) return true;
     return ASK_PHRASE.test(t) && NUMBERED_YES.test(t);
   }
 
-  return { cleanTail, isAwaitingUser, SELECT_PROMPT, SHELL_YESNO };
+  return { cleanTail, isAwaitingUser, SELECT_PROMPT, SHELL_YESNO,
+           PICKER_FOOTER, PICKER_MARKER, TAIL_WINDOW };
 });

@@ -98,3 +98,60 @@ test('ブラウザ側でも同じ規則が読める形になっている', () =>
     'window.AriyaPrompt が生えていない');
   assert.ok(win.AriyaPrompt.isAwaitingUser(' › 1. Yes, proceed (y)'));
 });
+
+// ── 答え終わったあと: 選択肢の枠が残っていても待ちではない ──────────
+//
+// 2026-08-29 に Gemini が指摘し、実バッファ(24本・痕跡36件)で裏を取った。
+// 痕跡は全部が末尾から 24,043 字以上うしろ = すでに答えて出力が流れた跡。
+// 窓を切らないと、これらが「あなた待ち」として永久に残る。
+
+test('答えたあとに出力が続いたら、待ちではない', () => {
+  const tail = ' › 1. Yes, proceed (y)\n   2. No, and tell Codex what to do differently (esc)\n'
+    + 'Committing changes...\n'
+    + 'Done! Successfully pushed to main.\n'
+    + 'x'.repeat(2000);
+  assert.strictEqual(isAwaitingUser(tail), false);
+});
+
+test('古い選択肢が視界の外にあるだけなら、待ちではない', () => {
+  const tail = '❯1. Resume from summary\n  2. Start fresh\n' + '作業ログ '.repeat(500);
+  assert.strictEqual(isAwaitingUser(tail), false);
+});
+
+test('答えたあとでも直後で静かなら拾う(距離では割り切れない残り)', () => {
+  // 出力がほとんど無いまま止まった場合は区別できない。
+  // board 側で「5秒以上静か」を併用して初めて意味を持つ、という前提を明示しておく。
+  const tail = ' › 1. Yes, proceed (y)\n   2. No (esc)\nok\n';
+  assert.strictEqual(isAwaitingUser(tail), true);
+});
+
+test('待ちの最中は末尾に枠があるので拾える', () => {
+  const noise = '前の作業の出力\n'.repeat(300);
+  const tail = noise + '\n Do you want to proceed?\n › 1. Yes, proceed (y)\n   2. No (esc)\n\n Press enter to confirm';
+  assert.ok(isAwaitingUser(tail));
+});
+
+// ── 会話の再開ピッカー ────────────────────────────────────────
+//
+// 2026-08-29 に `claude --resume` を pty で起こして実物を取った。
+// 番号付き選択肢ではなくマーカー＋会話タイトルなので、SELECT_PROMPT では
+// 一生拾えていなかった。以下は実物の形（会話タイトルだけ差し替え）。
+
+test('会話の再開ピッカーを待ちとして拾う', () => {
+  const tail = '╭──────────────────────────────╮\r│⌕ Search…│\r╰──────────────────────────────╯\r'
+    + '❯ある案件の修正\r4 days ago · HEAD · 22.3MB\r'
+    + '別の案件の実装\r5 days ago · main · 2.3MB\r'
+    + 'Ctrl+A to show all projects · Type to search · Esc to cancel';
+  assert.ok(isAwaitingUser(tail));
+});
+
+test('マーカーだけでは拾わない(入力行の ❯ で誤検出しないため)', () => {
+  // 実バッファ24本中19本が末尾窓に ❯ を持っていた。単独条件にすると全部誤検出になる。
+  const tail = '作業が終わりました。次は何をしますか。\n❯ ';
+  assert.strictEqual(isAwaitingUser(tail), false);
+});
+
+test('フッターの決まり文句だけでも拾わない', () => {
+  const tail = 'ピッカーの操作は Esc to cancel でしたね、と説明している文章です。';
+  assert.strictEqual(isAwaitingUser(tail), false);
+});
