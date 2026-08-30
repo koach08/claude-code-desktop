@@ -473,6 +473,13 @@
       <div id="engine-live" style="font-size:12px;color:var(--fg2);margin-top:6px;min-height:16px;"></div>
       <div style="display:flex;gap:8px;margin-top:8px;">
         <button id="engine-judge-btn" class="setup-btn primary">判定</button>
+        <button id="relay-run-btn" class="setup-btn">リレーで回す</button>
+      </div>
+      <!-- 工程リレー: タブを開かずに 下調べ→本作業→点検 を回す。読み取り専用。 -->
+      <div id="relay-panel" class="hidden" style="margin-top:12px;">
+        <div id="relay-plan" style="font-size:12px;color:var(--fg2);margin-bottom:8px;"></div>
+        <div id="relay-steps"></div>
+        <button id="relay-cancel-btn" class="setup-btn hidden" style="margin-top:8px;">止める</button>
       </div>
       <div id="engine-result" class="hidden" style="margin-top:12px;">
         <div id="engine-result-text" style="font-size:13px;color:var(--fg);margin-bottom:10px;"></div>
@@ -608,6 +615,7 @@
   <script src="../node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
   <script src="prompt-detect.js"></script>
   <script src="nudge.js"></script>
+  <script src="relay.js"></script>
   <script src="renderer.js"></script>
 </body>
 </html>

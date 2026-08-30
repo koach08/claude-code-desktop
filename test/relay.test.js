@@ -121,3 +121,24 @@ test('報告は本人の申告だと明示して渡す', () => {
     [{ stage: 'work', engine: 'codex', out: 'やりました' }], {});
   assert.ok(/そのまま信じない/.test(prompt));
 });
+
+test('renderer は <script> で読むので UMD が window に生える', () => {
+  // 画面側の導線(engine-dialog の「リレーで回す」)がここを直接使う。
+  // UMD の分岐が壊れるとボタンが黙って何もしない、という気付きにくい壊れ方をする。
+  const vm = require('node:vm');
+  const src = require('fs').readFileSync(
+    require('path').join(__dirname, '..', 'src', 'relay.js'), 'utf-8');
+  const win = {};
+  vm.createContext(win);
+  vm.runInContext(src, win);          // module が無い = ブラウザと同じ条件
+  assert.strictEqual(typeof win.AriyaRelay?.planRelay, 'function');
+  assert.strictEqual(typeof win.AriyaRelay?.buildStagePrompt, 'function');
+  const p = win.AriyaRelay.planRelay('x', { engine: 'claude', confidence: 'high' }, ['claude', 'gemini']);
+  assert.strictEqual(p.ok, true);
+});
+
+test('relay.js は Node の組み込みに依存しない(ブラウザで読めること)', () => {
+  const src = require('fs').readFileSync(
+    require('path').join(__dirname, '..', 'src', 'relay.js'), 'utf-8');
+  assert.ok(!/\brequire\s*\(/.test(src), 'require が入るとブラウザで読めない');
+});

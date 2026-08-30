@@ -900,6 +900,20 @@ ipcMain.handle('worker-cancel', async (_e, { jobId }) => {
   return { ok: job.cancel() };
 });
 
+// どのエンジンが手元に入っているか。実際に叩けるか(認証切れ・課金停止)までは
+// ここで健診しない。時間がかかるうえ、結果は走らせれば分かる。
+const WORKER_BINS = { claude: 'claude', codex: 'codex', gemini: 'gemini', grok: 'opencode' };
+ipcMain.handle('worker-engines', async () => {
+  const out = {};
+  for (const [engine, bin] of Object.entries(WORKER_BINS)) {
+    try {
+      execSync(IS_WIN ? `where ${bin}` : `command -v ${bin}`, { stdio: 'ignore', env: shellEnv });
+      out[engine] = true;
+    } catch (_) { out[engine] = false; }
+  }
+  return out;
+});
+
 ipcMain.handle('worker-list', async () => [...workerJobs.entries()].map(([jobId, j]) => ({
   jobId, engine: j.engine, cwd: j.cwd, write: j.write,
   task: j.task.slice(0, 120), ms: Date.now() - j.startedAt,

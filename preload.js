@@ -40,6 +40,7 @@ contextBridge.exposeInMainWorld('api', {
   workerStart: (opts) => ipcRenderer.invoke('worker-start', opts),
   workerCancel: (jobId) => ipcRenderer.invoke('worker-cancel', { jobId }),
   workerList: () => ipcRenderer.invoke('worker-list'),
+  workerEngines: () => ipcRenderer.invoke('worker-engines'),
   onWorkerOutput: (jobId, cb) => {
     const h = (_e, d) => cb(d);
     ipcRenderer.on(`worker-output-${jobId}`, h);

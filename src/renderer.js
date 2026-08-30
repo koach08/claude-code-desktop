@@ -156,6 +156,10 @@ function setupListeners() {
           + (r.hits && r.hits.length ? `<span style="color:var(--fg2)">（${esc(r.hits.join('・'))}）</span>` : '');
       }, 250);
     });
+    const relayBtn = document.getElementById('relay-run-btn');
+    if (relayBtn) relayBtn.addEventListener('click', runRelayFromDialog);
+    const relayCancelBtn = document.getElementById('relay-cancel-btn');
+    if (relayCancelBtn) relayCancelBtn.addEventListener('click', cancelRelay);
     document.querySelectorAll('#engine-dialog .engine-open').forEach(b => {
       b.addEventListener('click', () => {
         engineDialog.classList.add('hidden');
@@ -1026,6 +1030,126 @@ function waitUntilQuiet(sessionId, quietMs, timeoutMs, cb) {
     if (typeof off === 'function') off();
     cb();
   }
+}
+
+// ── 工程リレー (#10 Phase2) ─────────────────────────────────
+//
+// 下調べ → 本作業 → 点検 を、タブを開かずに裏で回す。実行は main の
+// worker-start(子プロセス)、工程の組み立ては src/relay.js。
+// ここは画面の担当だけ。読み取り専用でしか回さない(書き込みは worktree
+// 隔離が入るまで開けない)。
+
+let relayRun = null;   // { cancelled, jobId } 走っている間だけ入る
+
+function relayPanelEls() {
+  return {
+    panel: document.getElementById('relay-panel'),
+    plan: document.getElementById('relay-plan'),
+    steps: document.getElementById('relay-steps'),
+    cancel: document.getElementById('relay-cancel-btn'),
+  };
+}
+
+// 工程1つぶんの行。走っている間は経過を出し、終わったら結果に差し替える。
+function relayStepRow(step) {
+  const row = document.createElement('div');
+  row.style.cssText = 'margin-bottom:10px;padding:8px;background:var(--bg1);border-radius:6px;';
+  row.innerHTML = `<div style="font-size:12px;color:var(--fg2);margin-bottom:4px;">`
+    + `<b style="color:var(--accent)">${esc(step.label)}</b> / ${esc(step.engine)}`
+    + ` <span class="relay-state">走っています…</span></div>`
+    + `<div class="relay-out" style="font-size:12px;color:var(--fg);white-space:pre-wrap;`
+    + `max-height:220px;overflow:auto;"></div>`;
+  return row;
+}
+
+function runRelayStep(step, prompt, cwd, row) {
+  return new Promise(async (resolve) => {
+    let started;
+    try {
+      started = await window.api.workerStart({
+        engine: step.engine, task: prompt, cwd, write: !step.read,
+      });
+    } catch (err) {
+      return resolve({ ok: false, err: String(err && err.message || err) });
+    }
+    if (!started || !started.ok) return resolve({ ok: false, err: (started && started.error) || '起動できなかった' });
+    if (relayRun) relayRun.jobId = started.jobId;
+
+    const outEl = row.querySelector('.relay-out');
+    let acc = '';
+    const offOut = window.api.onWorkerOutput(started.jobId, (d) => {
+      if (d.which !== 'out') return;
+      acc += d.text;
+      // 出力は流れてくるそばから見せる。待っている間に何も出ないのがいちばん不安。
+      outEl.textContent = acc.slice(-4000);
+      outEl.scrollTop = outEl.scrollHeight;
+    });
+    window.api.onWorkerDone(started.jobId, (r) => {
+      if (typeof offOut === 'function') offOut();
+      if (relayRun) relayRun.jobId = null;
+      resolve(r);
+    });
+  });
+}
+
+async function runRelayFromDialog() {
+  if (relayRun) return;    // 二重起動を防ぐ
+  const task = document.getElementById('engine-task-input').value.trim();
+  if (!task) return;
+  const els = relayPanelEls();
+  if (!els.panel || !window.AriyaRelay) return;
+
+  els.panel.classList.remove('hidden');
+  els.steps.innerHTML = '';
+  els.plan.textContent = '使えるエンジンを調べています…';
+  els.cancel.classList.remove('hidden');
+  relayRun = { cancelled: false, jobId: null };
+
+  try {
+    const avail = await window.api.workerEngines();
+    const available = Object.keys(avail).filter((e) => avail[e]);
+    const judge = await window.api.suggestEngine(task);
+    const plan = window.AriyaRelay.planRelay(task, judge, available);
+    if (!plan.ok) { els.plan.textContent = `計画を立てられません: ${plan.error}`; return; }
+
+    // cwd はいまのタブに合わせる。案件が変わると調べる先が変わってしまう。
+    const cur = activeId && tabs.get(activeId);
+    const cwd = (cur && cur.session && cur.session.cwd) || '';
+
+    els.plan.innerHTML = plan.steps.map((s) => `${esc(s.label)}=<b>${esc(s.engine)}</b>`).join(' → ')
+      + '（読み取り専用）'
+      + (plan.unreviewed ? '<br><span style="color:var(--yellow)">別会社の点検役がいません。点検なしで進みます。</span>' : '');
+
+    const prior = [];
+    for (const step of plan.steps) {
+      if (relayRun.cancelled) break;
+      const row = relayStepRow(step);
+      els.steps.appendChild(row);
+      const prompt = window.AriyaRelay.buildStagePrompt(step, task, prior);
+      const r = await runRelayStep(step, prompt, cwd, row);
+      const state = row.querySelector('.relay-state');
+      const out = (r.out || '').trim();
+      if (r.ok) {
+        state.textContent = `${Math.round((r.ms || 0) / 1000)}秒`;
+        row.querySelector('.relay-out').textContent = out;
+        prior.push({ stage: step.stage, engine: step.engine, out });
+      } else {
+        state.innerHTML = '<span style="color:var(--red)">失敗</span>';
+        row.querySelector('.relay-out').textContent = (r.err || '').trim().slice(0, 600);
+        // 下調べや点検が落ちても本作業は続ける。本作業が落ちたら止める。
+        if (step.stage === 'work') break;
+      }
+    }
+  } finally {
+    relayRun = null;
+    els.cancel.classList.add('hidden');
+  }
+}
+
+function cancelRelay() {
+  if (!relayRun) return;
+  relayRun.cancelled = true;
+  if (relayRun.jobId) window.api.workerCancel(relayRun.jobId);
 }
 
 // ── Input ──
