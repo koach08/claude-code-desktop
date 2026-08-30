@@ -894,6 +894,10 @@ async function closeTab(id) {
   const t = tabs.get(id);
   if (!t) return;
   if (t.ro) t.ro.disconnect();
+  // 渡し待ちがあれば先に止める。removeListeners のあとでは exit が届かず、
+  // 消えたタブに向けてタイマーだけが残る。
+  const waiter = handoffWaiters.get(id);
+  if (waiter) waiter();
   window.api.removeListeners(id);
   await window.api.closeSession(id);
   t.term.dispose();
@@ -1027,8 +1031,14 @@ async function handoffToEngine() {
   });
 }
 
-// 出力が quietMs 途切れたら呼ぶ。何も出てこないまま timeoutMs 過ぎたときも呼ぶ
-// (起動に失敗していても、指示が入力欄に残るほうが人間には分かりやすい)。
+// 渡し待ちのタブ。閉じられたら待つのをやめる。
+// onSessionExit だけでは足りない: closeTab は removeListeners を先に呼ぶので、
+// exit が renderer に届かないまま消える(点検で指摘された)。
+const handoffWaiters = new Map();   // sessionId -> stop()
+
+// 出力が quietMs 途切れたら cb を呼ぶ。何も出てこないまま timeoutMs 過ぎたときも呼ぶ
+// (立ち上がりに失敗していても、cb 側でタブの生存を見て書いたものを入力欄に戻す)。
+// 戻り値の stop() を呼ぶと、cb を呼ばずに片付ける。
 function waitUntilQuiet(sessionId, quietMs, timeoutMs, cb) {
   let timer = null, done = false;
   const off = window.api.onSessionOutput(sessionId, () => {
@@ -1050,13 +1060,17 @@ function waitUntilQuiet(sessionId, quietMs, timeoutMs, cb) {
     if (done) return;
     done = true;
     cleanup();
+    handoffWaiters.delete(sessionId);
   }
   function finish() {
     if (done) return;
     done = true;
     cleanup();
+    handoffWaiters.delete(sessionId);
     cb();
   }
+  handoffWaiters.set(sessionId, stop);
+  return { stop };
 }
 
 // ── 工程リレー (#10 Phase2) ─────────────────────────────────
