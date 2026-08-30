@@ -35,6 +35,21 @@ contextBridge.exposeInMainWorld('api', {
   hubSuggestRoute: (text) => ipcRenderer.invoke('hub-suggest-route', { text }),
   suggestEngine: (task) => ipcRenderer.invoke('suggest-engine', { task }),
   boardSnapshot: () => ipcRenderer.invoke('board-snapshot'),
+
+  // 裏方ワーカー(タブを開かずにエンジンを走らせる)
+  workerStart: (opts) => ipcRenderer.invoke('worker-start', opts),
+  workerCancel: (jobId) => ipcRenderer.invoke('worker-cancel', { jobId }),
+  workerList: () => ipcRenderer.invoke('worker-list'),
+  onWorkerOutput: (jobId, cb) => {
+    const h = (_e, d) => cb(d);
+    ipcRenderer.on(`worker-output-${jobId}`, h);
+    return () => ipcRenderer.removeListener(`worker-output-${jobId}`, h);
+  },
+  onWorkerDone: (jobId, cb) => {
+    const h = (_e, d) => cb(d);
+    ipcRenderer.once(`worker-done-${jobId}`, h);
+    return () => ipcRenderer.removeListener(`worker-done-${jobId}`, h);
+  },
   generateReleasePlan: (cwd) => ipcRenderer.invoke('generate-release-plan', { cwd }),
   openPath: (p) => ipcRenderer.invoke('open-path', { p }),
   hubProviders: () => ipcRenderer.invoke('hub-providers'),

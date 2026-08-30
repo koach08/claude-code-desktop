@@ -840,40 +840,70 @@ const { judgeEngine } = require('./src/engine-judge');
 
 ipcMain.handle('suggest-engine', async (_e, { task }) => judgeEngine(task));
 
-// ── ボード表示 (#10 Phase2): タブを1案件のチームとして俯瞰する ──
+// ── 裏方ワーカー: タブを開かずにエンジンを走らせる (#10 Phase2) ──────────
 //
-// 案件は cwd では分けられない(本人は全タブを ~ から起動している)。
-// 会話ファイルの末尾に出てくるリポジトリ名の最頻値を案件として使う。
-// 会話ファイルは大きい(実測で最大130MB)ので末尾だけ読み、
-// サイズと更新時刻が変わらない限り読み直さない。
-const projectCache = new Map();   // conversationId -> { size, mtimeMs, project }
-const PROJECT_TAIL_BYTES = 400 * 1024;
+// これまで、このアプリがエンジンを動かす手段は nodePty.spawn だけだった。
+// つまり仕事を出すには人間がタブを開くしかなく、せっかくの判定 (suggest-engine)
+// が判定して終わっていた。ここで各 CLI の非対話モードを子プロセスで回し、
+// 出力を renderer へ流す。組み立ては src/worker-cmd.js (electron 非依存)。
+//
+// 既定は読み取り専用。書き込みは write:true を明示したときだけ。
+// 同じリポジトリを2つのエンジンが同時に編集して壊した事故が過去にあるため、
+// 隔離(worktree)が入るまで書き込みは開けない。
+const { buildCommand } = require('./src/worker-cmd');
+const { runProcess } = require('./src/worker-run');
+const workerJobs = new Map();   // jobId -> { cancel, engine, task, cwd, write, startedAt }
 
-function projectForConversation(conversationId, cwd) {
-  if (!conversationId) return null;
+ipcMain.handle('worker-start', async (event, { engine, task, cwd, write, model, timeoutMs, allowUnsandboxed }) => {
+  let spec;
   try {
-    const dir = path.join(os.homedir(), '.claude', 'projects', claudeProjectSlug(cwd || os.homedir()));
-    const file = path.join(dir, `${conversationId}.jsonl`);
-    const st = fs.statSync(file);
-    const hit = projectCache.get(conversationId);
-    if (hit && hit.size === st.size && hit.mtimeMs === st.mtimeMs) return hit.project;
+    spec = buildCommand(engine, task, {
+      cwd: cwd || os.homedir(), write: !!write, model, allowUnsandboxed: !!allowUnsandboxed,
+    });
+  } catch (err) {
+    return { ok: false, error: String(err.message || err) };
+  }
+  const env = { ...shellEnv };
+  if (spec.needsKey && !env[spec.needsKey]) {
+    const k = readSecretKey(spec.needsKey);
+    if (k) {
+      env[spec.needsKey] = k;
+      if (spec.needsKey === 'XAI_API_KEY') env.GROK_API_KEY = k;   // opencode は両方見る
+    }
+  }
 
-    const len = Math.min(st.size, PROJECT_TAIL_BYTES);
-    const buf = Buffer.alloc(len);
-    const fd = fs.openSync(file, 'r');
-    try { fs.readSync(fd, buf, 0, len, Math.max(0, st.size - len)); } finally { fs.closeSync(fd); }
+  const jobId = `w_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+  const wc = event.sender;
+  const push = (channel, payload) => { try { if (!wc.isDestroyed()) wc.send(channel, payload); } catch (_) {} };
 
-    const project = inferProject(buf.toString('utf8'));
-    projectCache.set(conversationId, { size: st.size, mtimeMs: st.mtimeMs, project });
-    return project;
-  } catch (_) { return null; }
-}
+  const handle = runProcess(
+    { bin: spec.bin, args: spec.args, cwd: spec.cwd, env, timeoutMs: Number(timeoutMs) > 0 ? Number(timeoutMs) : undefined },
+    {
+      onOutput: (d) => push(`worker-output-${jobId}`, d),
+      onDone: (r) => {
+        workerJobs.delete(jobId);
+        push(`worker-done-${jobId}`, { jobId, engine, ...r });
+      },
+    },
+  );
+  if (handle.failed) return { ok: false, error: '起動できなかった' };
 
-// 承認待ちの判定に使う、出力の末尾。ANSI の除去は src/board.js に寄せてある
-// (実バッファで取りこぼしを潰した正規表現をここで二重管理しないため)。
-function tailFor(id) {
-  return cleanTail(sessionBuffers.get(id) || '');
-}
+  workerJobs.set(jobId, {
+    cancel: handle.cancel, engine, task, cwd: spec.cwd, write: spec.write, startedAt: Date.now(),
+  });
+  return { ok: true, jobId, engine, bin: spec.bin, write: spec.write, cwd: spec.cwd };
+});
+
+ipcMain.handle('worker-cancel', async (_e, { jobId }) => {
+  const job = workerJobs.get(jobId);
+  if (!job) return { ok: false, error: 'そのジョブは走っていない' };
+  return { ok: job.cancel() };
+});
+
+ipcMain.handle('worker-list', async () => [...workerJobs.entries()].map(([jobId, j]) => ({
+  jobId, engine: j.engine, cwd: j.cwd, write: j.write,
+  task: j.task.slice(0, 120), ms: Date.now() - j.startedAt,
+})));
 
 ipcMain.handle('board-snapshot', async () => {
   const tabs = [];
