@@ -412,6 +412,12 @@
         <button id="send-btn">送信</button>
       </div>
       <div id="enter-hint" class="hidden"></div>
+      <!-- 打っている最中に「別のエンジン向きでは」と出す。確信が高いときだけ。 -->
+      <div id="engine-nudge" class="hidden">
+        <span id="engine-nudge-text"></span>
+        <button id="engine-nudge-go" class="nudge-btn"></button>
+        <button id="engine-nudge-dismiss" class="nudge-btn nudge-btn-quiet">このまま</button>
+      </div>
       <div id="hint">Enter 送信 &#183; Shift+Enter 改行 &#183; Cmd+T 新規タブ</div>
     </div>
   </div>
@@ -601,6 +607,7 @@
   <script src="../node_modules/@xterm/xterm/lib/xterm.js"></script>
   <script src="../node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
   <script src="prompt-detect.js"></script>
+  <script src="nudge.js"></script>
   <script src="renderer.js"></script>
 </body>
 </html>

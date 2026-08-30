@@ -303,6 +303,16 @@ function setupListeners() {
   ta.addEventListener('input', () => {
     ta.style.height = 'auto';
     ta.style.height = Math.min(ta.scrollHeight, 200) + 'px';
+    scheduleEngineNudge(ta.value);
+  });
+
+  // 示唆のボタン。渡す / このまま。
+  const nudgeGo = document.getElementById('engine-nudge-go');
+  const nudgeDismiss = document.getElementById('engine-nudge-dismiss');
+  if (nudgeGo) nudgeGo.addEventListener('click', handoffToEngine);
+  if (nudgeDismiss) nudgeDismiss.addEventListener('click', () => {
+    nudgeMuted = true;
+    hideEngineNudge();
   });
 
   // Quick buttons (Y/N/interrupt/escape)
@@ -901,6 +911,123 @@ async function closeTab(id) {
   saveTabState();
 }
 
+// ── エンジンの示唆 ─────────────────────────────────────────────
+//
+// 判定 (main の suggest-engine → src/engine-judge.js) は前からあったのに、
+// 呼び口が Cmd+Shift+E の専用ダイアログだけだった。つまりダイアログを開いて
+// タスク文を打ち直した人にしか動かない機能で、普段の入力欄には一度も
+// 出ていなかった。ここで普段の導線に載せる。
+//
+// 出す条件は src/nudge.js に切り出してある(確信 high・別エンジン・10文字以上)。
+
+let nudgeTimer = null;
+let nudgeState = null;    // いま出している示唆
+// 「このまま」を押したあと黙る。最初は却下した文面を覚えて完全一致で照合していたが、
+// それだと 1 文字足しただけで照合が外れて即また出てくる(リレーの点検で見つかった)。
+// 入力を空にする(送信 or 消す)まで黙る、に変えてある。
+let nudgeMuted = false;
+
+// いま開いているタブが何のエンジンか。currentMode は「次に開くタブ」の既定なので、
+// 判定にはタブ自身の mode を使う。
+function currentTabEngine() {
+  const tab = activeId && tabs.get(activeId);
+  return (tab && tab.session && tab.session.mode) || currentMode;
+}
+
+function hideEngineNudge() {
+  const box = document.getElementById('engine-nudge');
+  if (box) box.classList.add('hidden');
+  nudgeState = null;
+}
+
+// 打つたびに IPC を叩かないよう間引く。
+function scheduleEngineNudge(text) {
+  clearTimeout(nudgeTimer);
+  nudgeTimer = setTimeout(() => { updateEngineNudge(text); }, 300);
+}
+
+async function updateEngineNudge(text) {
+  const box = document.getElementById('engine-nudge');
+  if (!box || !window.AriyaNudge) return;
+  const t = String(text || '').trim();
+  // 黙らせている間は判定も呼ばない。入力を空にしたら解除する。
+  if (nudgeMuted) {
+    if (!t) nudgeMuted = false;
+    hideEngineNudge();
+    return;
+  }
+  let judge = null;
+  if (t.length >= window.AriyaNudge.MIN_CHARS) {
+    try { judge = await window.api.suggestEngine(t); } catch (_) { return; }
+  }
+  // 判定を待っている間に打ち替えられていたら捨てる。
+  if (document.getElementById('prompt-input').value.trim() !== t) return;
+  const d = window.AriyaNudge.shouldNudge(judge, currentTabEngine(), t);
+  if (!d.show) { hideEngineNudge(); return; }
+  nudgeState = d;
+  document.getElementById('engine-nudge-text').textContent =
+    `${d.label} 向きです` + (d.hits.length ? `（${d.hits.join('・')}）` : '');
+  document.getElementById('engine-nudge-go').textContent =
+    d.autoSend ? `${d.label} に渡す` : `${d.label} で開く`;
+  box.classList.remove('hidden');
+}
+
+// 新しいタブをそのエンジンで開き、いま書いている指示をそのまま渡す。
+// ここが「タブを開かずに済ませる」の第一段。まだタブは開くが、
+// 開いて・選んで・打ち直す の3手が1クリックになる。
+async function handoffToEngine() {
+  const st = nudgeState;
+  const ta = document.getElementById('prompt-input');
+  const text = ta.value.trim();
+  if (!st || !text) return;
+  hideEngineNudge();
+
+  // cwd はいまのタブに合わせる。案件が変わってしまうと渡す意味がない。
+  const cur = activeId && tabs.get(activeId);
+  const cwd = (cur && cur.session && cur.session.cwd) || undefined;
+
+  let session;
+  try {
+    session = await window.api.createSession({ mode: st.engine, cwd });
+  } catch (err) {
+    console.error('handoff: createSession failed', err);
+    return;   // 入力は消さない。人間がそのまま送れる状態で残す。
+  }
+  addTab(session);
+  ta.value = '';
+  ta.style.height = 'auto';
+
+  // 起動を待つ。CLI が立ち上がるまでの時間はエンジンごとに違うので、
+  // 固定待ちにせず「出力が来て、そのあと静かになったら」で見る。
+  waitUntilQuiet(session.id, 900, 20000, async () => {
+    const payload = text + (st.autoSend ? '\r' : '');
+    for (let i = 0; i < 3; i++) {
+      const r = await window.api.sendInput(session.id, payload);
+      if (r && r.ok) break;
+      await new Promise(res => setTimeout(res, 200));
+    }
+  });
+}
+
+// 出力が quietMs 途切れたら呼ぶ。何も出てこないまま timeoutMs 過ぎたときも呼ぶ
+// (起動に失敗していても、指示が入力欄に残るほうが人間には分かりやすい)。
+function waitUntilQuiet(sessionId, quietMs, timeoutMs, cb) {
+  let timer = null, done = false;
+  const off = window.api.onSessionOutput(sessionId, () => {
+    if (done) return;
+    clearTimeout(timer);
+    timer = setTimeout(finish, quietMs);
+  });
+  const hard = setTimeout(finish, timeoutMs);
+  function finish() {
+    if (done) return;
+    done = true;
+    clearTimeout(timer); clearTimeout(hard);
+    if (typeof off === 'function') off();
+    cb();
+  }
+}
+
 // ── Input ──
 async function send() {
   const ta = document.getElementById('prompt-input');
@@ -950,6 +1077,8 @@ async function send() {
 
   ta.value = '';
   ta.style.height = 'auto';
+  nudgeMuted = false;
+  hideEngineNudge();
 }
 
 function navHist(dir) {
