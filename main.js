@@ -919,6 +919,41 @@ ipcMain.handle('worker-list', async () => [...workerJobs.entries()].map(([jobId,
   task: j.task.slice(0, 120), ms: Date.now() - j.startedAt,
 })));
 
+// ── ボード表示 (#10 Phase2): タブを1案件のチームとして俯瞰する ──
+//
+// 案件は cwd では分けられない(本人は全タブを ~ から起動している)。
+// 会話ファイルの末尾に出てくるリポジトリ名の最頻値を案件として使う。
+// 会話ファイルは大きい(実測で最大130MB)ので末尾だけ読み、
+// サイズと更新時刻が変わらない限り読み直さない。
+const projectCache = new Map();   // conversationId -> { size, mtimeMs, project }
+const PROJECT_TAIL_BYTES = 400 * 1024;
+
+function projectForConversation(conversationId, cwd) {
+  if (!conversationId) return null;
+  try {
+    const dir = path.join(os.homedir(), '.claude', 'projects', claudeProjectSlug(cwd || os.homedir()));
+    const file = path.join(dir, `${conversationId}.jsonl`);
+    const st = fs.statSync(file);
+    const hit = projectCache.get(conversationId);
+    if (hit && hit.size === st.size && hit.mtimeMs === st.mtimeMs) return hit.project;
+
+    const len = Math.min(st.size, PROJECT_TAIL_BYTES);
+    const buf = Buffer.alloc(len);
+    const fd = fs.openSync(file, 'r');
+    try { fs.readSync(fd, buf, 0, len, Math.max(0, st.size - len)); } finally { fs.closeSync(fd); }
+
+    const project = inferProject(buf.toString('utf8'));
+    projectCache.set(conversationId, { size: st.size, mtimeMs: st.mtimeMs, project });
+    return project;
+  } catch (_) { return null; }
+}
+
+// 承認待ちの判定に使う、出力の末尾。ANSI の除去は src/board.js に寄せてある
+// (実バッファで取りこぼしを潰した正規表現をここで二重管理しないため)。
+function tailFor(id) {
+  return cleanTail(sessionBuffers.get(id) || '');
+}
+
 ipcMain.handle('board-snapshot', async () => {
   const tabs = [];
   for (const [id, s] of sessions) {
