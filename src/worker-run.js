@@ -57,10 +57,15 @@ function runProcess(opts, handlers = {}) {
     return { cancel: () => {}, failed: true };
   }
 
+  // 上限は「足す前に見る」だけでは守れない。1回のチャンクが上限より大きいと、
+  // 空の状態から一気に超えて溜まる(テストが先に見つけた)。入る分だけ足して、
+  // あふれた時点で truncated を立てる。画面に流すぶんは切らない。
   const collect = (which, buf) => {
     const text = buf.toString();
-    if (state[which].length < maxOutput) state[which] += text;
-    else state.truncated = true;
+    const room = maxOutput - state[which].length;
+    if (room <= 0) state.truncated = true;
+    else if (text.length <= room) state[which] += text;
+    else { state[which] += text.slice(0, room); state.truncated = true; }
     onOutput({ which, text });
   };
   if (proc.stdout) proc.stdout.on('data', (b) => collect('out', b));

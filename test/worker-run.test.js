@@ -88,3 +88,19 @@ test('cwd がそのまま子プロセスに渡る', async () => {
   const r = await done({ bin: '/bin/pwd', args: [], cwd: '/tmp' });
   assert.ok(r.out.trim().endsWith('/tmp'));
 });
+
+test('1回のチャンクが上限より大きくても、上限を超えて溜めない', () => {
+  // 「足す前に長さを見る」だけだと、空の状態から一気に超える。
+  const chunks = [];
+  return new Promise((res) => {
+    runProcess({
+      bin: '/bin/sh', args: ['-c', 'printf "%01000d" 0'], cwd: '/tmp', maxOutput: 100,
+    }, { onOutput: (d) => chunks.push(d), onDone: (r) => {
+      assert.strictEqual(r.truncated, true);
+      assert.ok(r.out.length <= 100, `上限を超えて溜まった: ${r.out.length}`);
+      // 画面に流すぶんは切らない(見えている出力まで欠けると分かりにくい)。
+      assert.ok(chunks.some((c) => c.text.length > 100));
+      res();
+    } });
+  });
+});
