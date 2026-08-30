@@ -966,6 +966,9 @@ async function updateEngineNudge(text) {
   }
   // 判定を待っている間に打ち替えられていたら捨てる。
   if (document.getElementById('prompt-input').value.trim() !== t) return;
+  // IPC を待っている最中に「このまま」を押されていたら、戻ってきてから出さない。
+  // await の前だけ見ていると、押した直後に判定が返ってきて出し直してしまう。
+  if (nudgeMuted) { hideEngineNudge(); return; }
   const d = window.AriyaNudge.shouldNudge(judge, currentTabEngine(), t);
   if (!d.show) { hideEngineNudge(); return; }
   nudgeState = d;
@@ -1003,13 +1006,24 @@ async function handoffToEngine() {
 
   // 起動を待つ。CLI が立ち上がるまでの時間はエンジンごとに違うので、
   // 固定待ちにせず「出力が来て、そのあと静かになったら」で見る。
-  waitUntilQuiet(session.id, 900, 20000, async () => {
-    const payload = text + (st.autoSend ? '\r' : '');
-    for (let i = 0; i < 3; i++) {
-      const r = await window.api.sendInput(session.id, payload);
-      if (r && r.ok) break;
-      await new Promise(res => setTimeout(res, 200));
+  waitUntilQuiet(session.id, 1500, 20000, async () => {
+    // 待っている間にタブを閉じられていたら、送り先がもう無い。
+    // これを見ないと、消えたセッションへ送ろうとして失敗し、しかも入力欄は
+    // 空にしてあるので書いた指示がどこにも残らない。
+    if (!tabs.has(session.id)) {
+      ta.value = text;              // 書いたものは返す
+      ta.style.height = 'auto';
+      ta.style.height = Math.min(ta.scrollHeight, 200) + 'px';
+      return;
     }
+    const payload = text + (st.autoSend ? '\r' : '');
+    for (let i = 0; i < 4; i++) {
+      const r = await window.api.sendInput(session.id, payload);
+      if (r && r.ok) return;
+      await new Promise(res => setTimeout(res, 400));
+    }
+    // 4回試して届かなかった。黙って捨てず、書いたものを戻す。
+    ta.value = text;
   });
 }
 
@@ -1022,12 +1036,25 @@ function waitUntilQuiet(sessionId, quietMs, timeoutMs, cb) {
     clearTimeout(timer);
     timer = setTimeout(finish, quietMs);
   });
+  // セッションが落ちたら待つ意味がない。放っておくと、消えたタブに向けて
+  // 時間切れのタイマーだけが残る。
+  const offExit = window.api.onSessionExit(sessionId, () => stop());
   const hard = setTimeout(finish, timeoutMs);
+
+  function cleanup() {
+    clearTimeout(timer); clearTimeout(hard);
+    if (typeof off === 'function') off();
+    if (typeof offExit === 'function') offExit();
+  }
+  function stop() {          // 呼ばずに終わる
+    if (done) return;
+    done = true;
+    cleanup();
+  }
   function finish() {
     if (done) return;
     done = true;
-    clearTimeout(timer); clearTimeout(hard);
-    if (typeof off === 'function') off();
+    cleanup();
     cb();
   }
 }
