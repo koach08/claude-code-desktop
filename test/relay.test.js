@@ -161,3 +161,12 @@ test('下調べには参照した場所を示させる', () => {
   assert.ok(/行番号/.test(prompt));
   assert.ok(/憶測/.test(prompt));
 });
+
+test('工程ごとに制限時間が付く(調べものは本作業より短く)', () => {
+  const p = planRelay('x', judgeEngine('設計を決めたい'), ALL);
+  const by = Object.fromEntries(p.steps.map((s) => [s.stage, s.timeoutMs]));
+  assert.ok(by.survey > 0 && by.work > 0 && by.review > 0);
+  // 読み取り専用のエージェントは放っておくといくらでも読み続ける(実測10分近く)。
+  assert.ok(by.survey < by.work, '下調べが本作業より長い');
+  assert.ok(by.review < by.work, '点検が本作業より長い');
+});

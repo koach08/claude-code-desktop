@@ -55,7 +55,7 @@ function parseArgs(argv) {
   return out;
 }
 
-function runStage(engine, prompt, cwd, write) {
+function runStage(engine, prompt, cwd, write, timeoutMs) {
   const spec = buildCommand(engine, prompt, { cwd, write });
   const env = { ...process.env };
   if (spec.needsKey && !env[spec.needsKey]) {
@@ -63,7 +63,7 @@ function runStage(engine, prompt, cwd, write) {
     if (k) { env[spec.needsKey] = k; if (spec.needsKey === 'XAI_API_KEY') env.GROK_API_KEY = k; }
   }
   return new Promise((res) => {
-    runProcess({ bin: spec.bin, args: spec.args, cwd: spec.cwd, env }, { onDone: res });
+    runProcess({ bin: spec.bin, args: spec.args, cwd: spec.cwd, env, timeoutMs }, { onDone: res });
   });
 }
 
@@ -114,9 +114,13 @@ function runStage(engine, prompt, cwd, write) {
     }
     const prompt = buildStagePrompt(step, opt.task, prior, extra);
     process.stdout.write(`── ${step.label} / ${step.engine} … `);
-    const r = await runStage(step.engine, prompt, cwd, !step.read);
+    // 何も出ないまま何分も待たされると、動いているのか固まったのか分からない。
+    const t0 = Date.now();
+    const tick = setInterval(() => process.stdout.write(`${Math.round((Date.now() - t0) / 1000)}秒 `), 30000);
+    const r = await runStage(step.engine, prompt, cwd, !step.read, step.timeoutMs);
+    clearInterval(tick);
     const out = (r.out || '').trim();
-    console.log(`${r.ok ? 'ok' : '失敗'} ${Math.round(r.ms / 1000)}秒`);
+    console.log(`${r.ok ? 'ok' : (r.killed ? '時間切れ' : '失敗')} ${Math.round(r.ms / 1000)}秒`);
     if (!r.ok) {
       console.log((r.err || '').trim().slice(0, 600));
       // 下調べや点検が落ちても本作業は続ける。落ちた工程は無かったことにする。

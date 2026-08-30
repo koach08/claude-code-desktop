@@ -1094,7 +1094,7 @@ function runRelayStep(step, prompt, cwd, row) {
     let started;
     try {
       started = await window.api.workerStart({
-        engine: step.engine, task: prompt, cwd, write: !step.read,
+        engine: step.engine, task: prompt, cwd, write: !step.read, timeoutMs: step.timeoutMs,
       });
     } catch (err) {
       return resolve({ ok: false, err: String(err && err.message || err) });

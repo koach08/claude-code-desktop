@@ -34,21 +34,28 @@
   };
 
   // 工程の定義。read=true の工程は読み取り専用で走らせる。
+  //
+  // 制限時間は工程ごとに変える。読み取り専用のエージェントは、放っておくと
+  // いくらでもコードを読み続ける(実測で点検が10分近くかかった)。前後の工程が
+  // 待たされるので、調べものには本作業より短い時間を割り当てる。
   const STAGES = {
     survey: {
       label: '下調べ',
       read: true,
+      timeoutMs: 4 * 60 * 1000,
       // 量を読むのが要る工程。速い側から先に当てる。
       prefer: ['gemini', 'codex', 'claude', 'grok'],
     },
     work: {
       label: '本作業',
       read: false,
+      timeoutMs: 12 * 60 * 1000,
       prefer: null,   // engine-judge の推奨をそのまま使う
     },
     review: {
       label: '点検',
       read: true,
+      timeoutMs: 5 * 60 * 1000,
       prefer: ['codex', 'gemini', 'claude', 'grok'],
     },
   };
@@ -89,12 +96,12 @@
       // 下調べは本作業と別の相手に振る。同じ相手が続くと、下調べの見落としが
       // そのまま本作業に持ち越される。相手がいなければ工程ごと落とす。
       surveyor = pickEngine(STAGES.survey.prefer, avail, [work]);
-      if (surveyor) steps.push({ stage: 'survey', label: STAGES.survey.label, engine: surveyor, read: true });
+      if (surveyor) steps.push({ stage: 'survey', label: STAGES.survey.label, engine: surveyor, read: true, timeoutMs: STAGES.survey.timeoutMs });
     }
-    steps.push({ stage: 'work', label: STAGES.work.label, engine: work, read: !opts.write });
+    steps.push({ stage: 'work', label: STAGES.work.label, engine: work, read: !opts.write, timeoutMs: STAGES.work.timeoutMs });
     if (opts.review !== false) {
       const reviewer = pickReviewer(STAGES.review.prefer, avail, work, surveyor);
-      if (reviewer) steps.push({ stage: 'review', label: STAGES.review.label, engine: reviewer, read: true });
+      if (reviewer) steps.push({ stage: 'review', label: STAGES.review.label, engine: reviewer, read: true, timeoutMs: STAGES.review.timeoutMs });
     }
     return {
       ok: true,
