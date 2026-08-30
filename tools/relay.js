@@ -120,7 +120,16 @@ process.on('SIGINT', () => {
       wt = planWorktree(cwd, opt.task, Date.now());
       fs.mkdirSync(worktreeRoot(), { recursive: true });
       git(wt.addArgs.join(' '), cwd);
-      console.log(`隔離: ${wt.dir}\n枝  : ${wt.branch}\n`);
+      console.log(`隔離: ${wt.dir}\n枝  : ${wt.branch}`);
+      // 作業ツリーは HEAD から作られるので、元の未コミット変更は持ち込まれない。
+      // 黙っていると、下調べが読んだ行番号と本作業が触るコードがずれる。
+      let dirty = '';
+      try { dirty = git('status --porcelain', cwd).trim(); } catch (_) {}
+      if (dirty) {
+        console.log(`※ 元のツリーに未コミットの変更が ${dirty.split('\n').length} 件あります。`);
+        console.log('  隔離は HEAD から作るので、それらは入りません。できた patch も HEAD 基準です。');
+      }
+      console.log('');
     } catch (e) {
       // 隔離できないなら書き込ませない。元のリポジトリで直接書かせるより、
       // 断って人間に判断してもらうほうがよい。
@@ -129,15 +138,20 @@ process.on('SIGINT', () => {
       process.exit(1);
     }
   }
-  // 本作業と点検は隔離側で走らせる。点検は書き換わったファイルも読める。
+  // 全工程を同じツリーで走らせる。下調べだけ元のツリーにすると、未コミット
+  // 変更のぶんだけコードがずれ、下調べが添えた行番号が本作業では別物を指す。
   const workCwd = wt ? wt.dir : cwd;
   const extra = {};
 
   const prior = [];
+  let reviewFailed = null;
   for (const step of plan.steps) {
     if (step.stage === 'review' && wt) {
       let d = '';
-      try { d = git(wt.diffArgs.join(' '), wt.dir) + git(wt.statusArgs.join(' '), wt.dir); } catch (_) {}
+      try {
+        git(wt.stageArgs.join(' '), wt.dir);      // 新規ファイルも見えるように
+        d = git(wt.diffArgs.join(' '), wt.dir);
+      } catch (_) {}
       extra.diff = d.slice(0, 60000);
       extra.expectedWrite = true;
     }
@@ -146,14 +160,16 @@ process.on('SIGINT', () => {
     // 何も出ないまま何分も待たされると、動いているのか固まったのか分からない。
     const t0 = Date.now();
     const tick = setInterval(() => process.stdout.write(`${Math.round((Date.now() - t0) / 1000)}秒 `), 30000);
-    const at = (step.stage === 'survey') ? cwd : workCwd;
-    const r = await runStage(step.engine, prompt, at, !step.read, step.timeoutMs);
+    const r = await runStage(step.engine, prompt, workCwd, !step.read, step.timeoutMs);
     clearInterval(tick);
     const out = (r.out || '').trim();
     console.log(`${r.ok ? 'ok' : (r.killed ? '時間切れ' : '失敗')} ${Math.round(r.ms / 1000)}秒`);
     if (!r.ok) {
       console.log((r.err || '').trim().slice(0, 600));
-      // 下調べや点検が落ちても本作業は続ける。落ちた工程は無かったことにする。
+      // 下調べや点検が落ちても本作業は続ける。ただし点検が落ちたことは覚えておく。
+      // 「通った点検」と「時間切れした点検」が出力上まったく同じになるのが
+      // いちばん危ない(点検していない patch を、点検済みのつもりで当ててしまう)。
+      if (step.stage === 'review') reviewFailed = r.killed ? '時間切れ' : '失敗';
       if (step.stage === 'work') { console.log('\n本作業が落ちたので中止します。'); process.exit(1); }
       continue;
     }
@@ -161,18 +177,25 @@ process.on('SIGINT', () => {
     prior.push({ stage: step.stage, engine: step.engine, out });
   }
 
-  if (plan.unreviewed) console.log('※ 点検を通していません。結果はそのつもりで扱ってください。');
+  // 計画に点検が無かった場合と、点検が走って落ちた場合の両方を言う。
+  // unreviewed は計画時にしか決まらないので、これだけでは足りない。
+  if (plan.unreviewed) console.log('※ 点検役がいませんでした。点検を通していません。');
+  else if (reviewFailed) console.log(`※ 点検が${reviewFailed}しました。点検を通していません。`);
 
   // 隔離の後始末。差分は patch に落としてから畳む。畳むより先に取ること。
   if (wt) {
     let patch = '';
-    try { patch = git(wt.diffArgs.join(' '), wt.dir); } catch (_) {}
+    try {
+      git(wt.stageArgs.join(' '), wt.dir);        // 新規ファイルを取りこぼさない
+      patch = git(wt.diffArgs.join(' '), wt.dir);
+    } catch (_) {}
     if (patch.trim()) {
       const dir = path.join(os.homedir(), '.claude-code-app', 'patches');
       fs.mkdirSync(dir, { recursive: true });
       const file = path.join(dir, `${path.basename(wt.dir)}.patch`);
       fs.writeFileSync(file, patch);
       console.log(`\n書き換えは元のブランチには入っていません。差分はここです:\n  ${file}`);
+      if (plan.unreviewed || reviewFailed) console.log('  ⚠️ この patch は点検を通っていません。');
       console.log(`当てるなら: git apply "${file}"   (中身を読んでから)`);
     } else {
       console.log('\n作業ツリーに差分はありませんでした(何も書き換えていません)。');

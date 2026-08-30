@@ -58,14 +58,22 @@ test('組み立てたコマンドで、実際に隔離して差分が取れる',
     git(plan.addArgs, base);
     assert.ok(fs.existsSync(plan.dir), '作業ツリーができていない');
 
-    // 隔離した側だけを書き換える
+    // 隔離した側だけを書き換える。既存の変更と、新しく足したファイルの両方。
     fs.writeFileSync(path.join(plan.dir, 'a.txt'), '書き換えた\n');
+    fs.writeFileSync(path.join(plan.dir, 'brandnew.js'), 'module.exports = 1;\n');
+    git(plan.stageArgs, plan.dir);
     const diff = git(plan.diffArgs, plan.dir);
-    assert.ok(diff.includes('書き換えた'), '差分が取れていない');
+    assert.ok(diff.includes('書き換えた'), '既存ファイルの差分が取れていない');
+    // `git diff HEAD` だけだと新規ファイルは出ない。それに気づかず作業ツリーを
+    // 畳むと、足したファイルが復元不能に消える。
+    assert.ok(diff.includes('brandnew.js'), '新規ファイルが差分に入っていない');
 
     // 元のリポジトリは無傷であること。ここが隔離の目的。
     assert.strictEqual(fs.readFileSync(path.join(base, 'a.txt'), 'utf-8'), 'もとの中身\n');
     assert.strictEqual(git(['status', '--porcelain'], base).trim(), '');
+
+    // 元は依然として無傷(index に足したのは作業ツリー側)。
+    assert.ok(!fs.existsSync(path.join(base, 'brandnew.js')), '元に新規ファイルが漏れている');
 
     git(plan.removeArgs, base);
     assert.ok(!fs.existsSync(plan.dir), '後片付けができていない');
@@ -73,4 +81,10 @@ test('組み立てたコマンドで、実際に隔離して差分が取れる',
   } finally {
     fs.rmSync(base, { recursive: true, force: true });
   }
+});
+
+test('差分の取り方は index 経由(新規ファイルを取りこぼさないため)', () => {
+  const p = planWorktree('/repo', 'x', 1);
+  assert.deepStrictEqual(p.stageArgs, ['add', '-A']);
+  assert.ok(p.diffArgs.includes('--cached'), 'git diff HEAD だけでは untracked が入らない');
 });

@@ -56,7 +56,14 @@ function planWorktree(repo, label, stamp = Date.now()) {
     // 枝は残しても意味が薄いので消す。差分は patch として別に保存してある。
     deleteBranchArgs: ['branch', '-D', branch],
     // 中で何が起きたかを取る。--no-color は読ませる相手が機械のため。
-    diffArgs: ['diff', '--no-color', 'HEAD'],
+    //
+    // ⚠️ `git diff HEAD` は追跡されていないファイルを含まない。本作業が新しい
+    // ファイルを足しただけ(モジュール追加、テスト追加。ごく普通の作業)のとき、
+    // 差分が空に見え、「何も書き換えていません」と言いながら作業ツリーを畳んで
+    // 成果物を消してしまう。先に add -A して index 経由で取る。
+    // index を汚すが、作業ツリーごと畳むので元のリポジトリには残らない。
+    stageArgs: ['add', '-A'],
+    diffArgs: ['diff', '--no-color', '--cached', 'HEAD'],
     statusArgs: ['status', '--porcelain'],
   };
 }
