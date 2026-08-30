@@ -1117,12 +1117,15 @@ function runRelayStep(step, prompt, cwd, row) {
     if (relayRun) relayRun.jobId = started.jobId;
 
     const outEl = row.querySelector('.relay-out');
+    // 表示は末尾だけあればよい。main 側は 2MB で溜めるのをやめるが、流してくる
+    // ぶんは切らない設計なので、受け側で持たないと画面側だけ青天井に伸びる。
+    const KEEP = 8000;
     let acc = '';
     const offOut = window.api.onWorkerOutput(started.jobId, (d) => {
       if (d.which !== 'out') return;
-      acc += d.text;
+      acc = (acc + d.text).slice(-KEEP);
       // 出力は流れてくるそばから見せる。待っている間に何も出ないのがいちばん不安。
-      outEl.textContent = acc.slice(-4000);
+      outEl.textContent = acc;
       outEl.scrollTop = outEl.scrollHeight;
     });
     window.api.onWorkerDone(started.jobId, (r) => {
@@ -1172,7 +1175,7 @@ async function runRelayFromDialog() {
       const out = (r.out || '').trim();
       if (r.ok) {
         state.textContent = `${Math.round((r.ms || 0) / 1000)}秒`;
-        row.querySelector('.relay-out').textContent = out;
+        row.querySelector('.relay-out').textContent = out.slice(-20000);
         prior.push({ stage: step.stage, engine: step.engine, out });
       } else {
         state.innerHTML = '<span style="color:var(--red)">失敗</span>';

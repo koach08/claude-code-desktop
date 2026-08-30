@@ -170,3 +170,44 @@ test('工程ごとに制限時間が付く(調べものは本作業より短く)
   assert.ok(by.survey < by.work, '下調べが本作業より長い');
   assert.ok(by.review < by.work, '点検が本作業より長い');
 });
+
+// ── 工程間の受け渡しに上限 ─────────────────────────────────
+//
+// 持ち越した文字列はプロンプトになり、argv の一要素として spawn に渡る。
+// このマシンの ARG_MAX は 1,048,576。ワーカーの溜め込み上限が 2MB なので、
+// そのまま渡すと spawn が E2BIG で落ち、画面には「失敗」としか出ない。
+
+test('長すぎる下調べは切って渡す', () => {
+  const huge = 'あ'.repeat(500000);
+  const prompt = buildStagePrompt({ stage: 'work' }, '依頼', [{ stage: 'survey', out: huge }]);
+  assert.ok(prompt.length < 100000, `切られていない: ${prompt.length}`);
+});
+
+test('切ったことを受け手に伝える(途中で終わったと気づけるように)', () => {
+  const prompt = buildStagePrompt({ stage: 'work' }, '依頼',
+    [{ stage: 'survey', out: 'x'.repeat(500000) }]);
+  assert.ok(/ここまで。全体は 500000 字/.test(prompt));
+});
+
+test('点検に渡す報告と差分にも同じ上限がかかる', () => {
+  const prompt = buildStagePrompt({ stage: 'review' }, '依頼',
+    [{ stage: 'work', out: 'x'.repeat(300000) }],
+    { diff: 'y'.repeat(300000), expectedWrite: true });
+  assert.ok(prompt.length < 120000, `切られていない: ${prompt.length}`);
+});
+
+test('組み上がったプロンプトは argv の上限に収まる', () => {
+  // 実測: /usr/bin/true に 2MB の引数を渡すと E2BIG。900KB は通る。
+  const prompt = buildStagePrompt({ stage: 'review' }, 'x'.repeat(1000),
+    [{ stage: 'work', out: 'a'.repeat(2 * 1024 * 1024) }],
+    { diff: 'b'.repeat(2 * 1024 * 1024), expectedWrite: true });
+  const r = require('child_process').spawnSync('/usr/bin/true', [prompt], { stdio: 'ignore' });
+  assert.ok(!r.error, `spawn できない: ${r.error && r.error.code}`);
+});
+
+test('短い出力はそのまま渡す(不要に切らない)', () => {
+  const prompt = buildStagePrompt({ stage: 'work' }, '依頼',
+    [{ stage: 'survey', out: '描画は renderer.js の 700 行目' }]);
+  assert.ok(prompt.includes('描画は renderer.js の 700 行目'));
+  assert.ok(!/ここまで/.test(prompt));
+});

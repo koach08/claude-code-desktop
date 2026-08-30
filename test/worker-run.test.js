@@ -104,3 +104,26 @@ test('1回のチャンクが上限より大きくても、上限を超えて溜�
     } });
   });
 });
+
+// ── 孫プロセスまで落とす ──────────────────────────────────
+//
+// 各エンジンは実行中に MCP サーバや ripgrep や bash を子として起こす。
+// 直下の1本に signal を送っても、孫は親を失って走り続ける(夜間リレーの点検で出た)。
+
+test('止めたとき、孫プロセスも道連れにする', async () => {
+  const marker = `ariya-test-grandchild-${process.pid}`;
+  const alive = () => {
+    try {
+      return require('child_process')
+        .execSync(`pgrep -f ${marker} | wc -l`, { encoding: 'utf-8' }).trim() !== '0';
+    } catch { return false; }
+  };
+  const h = runProcess({
+    // 孫として sleep を起こし、親は待つだけ
+    bin: '/bin/sh', args: ['-c', `sleep 30 & echo ${marker} >/dev/null; wait`], cwd: '/tmp',
+  }, { onDone: () => {} });
+  await new Promise((r) => setTimeout(r, 400));
+  h.cancel();
+  await new Promise((r) => setTimeout(r, 4500));   // SIGKILL の追い討ちを待つ
+  assert.strictEqual(alive(), false, '孫プロセスが残っている');
+});

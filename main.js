@@ -1700,6 +1700,10 @@ app.on('window-all-closed', () => {
     sessionsSavedOnClose = true;
   }
   for (const [, s] of sessions) { try { s.pty.kill(); } catch (_) {} }
+  // pty だけ畳んで裏方ワーカーを素通りしていた。エンジンは MCP サーバなどを
+  // 子として起こすので、放っておくとアプリを閉じたあとも孫が走り続ける。
+  for (const [, j] of workerJobs) { try { j.cancel(); } catch (_) {} }
+  workerJobs.clear();
   sessions.clear();
   sessionBuffers.clear();
   clearCrashFlag();

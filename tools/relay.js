@@ -56,6 +56,9 @@ function parseArgs(argv) {
   return out;
 }
 
+// いま走らせている工程。Ctrl+C で道連れにするために保持する。
+let current = null;
+
 function runStage(engine, prompt, cwd, write, timeoutMs) {
   const spec = buildCommand(engine, prompt, { cwd, write });
   const env = { ...process.env };
@@ -64,9 +67,23 @@ function runStage(engine, prompt, cwd, write, timeoutMs) {
     if (k) { env[spec.needsKey] = k; if (spec.needsKey === 'XAI_API_KEY') env.GROK_API_KEY = k; }
   }
   return new Promise((res) => {
-    runProcess({ bin: spec.bin, args: spec.args, cwd: spec.cwd, env, timeoutMs }, { onDone: res });
+    current = runProcess({ bin: spec.bin, args: spec.args, cwd: spec.cwd, env, timeoutMs },
+      { onDone: (r) => { current = null; res(r); } });
   });
 }
+
+// エンジンは独立したプロセスグループで走らせている(孫まで落とせるように)。
+// その代わり端末の Ctrl+C は届かないので、こちらから明示的に止める。
+// これが無いと、Ctrl+C で抜けたあともエンジンが裏で走り続ける。
+process.on('SIGINT', () => {
+  if (current) {
+    process.stdout.write('\n止めています…\n');
+    current.cancel();
+    setTimeout(() => process.exit(130), 3500);   // SIGKILL の追い討ちを待つ
+  } else {
+    process.exit(130);
+  }
+});
 
 (async () => {
   const opt = parseArgs(process.argv.slice(2));

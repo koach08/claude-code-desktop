@@ -51,7 +51,11 @@ function runProcess(opts, handlers = {}) {
   let proc;
   try {
     // 入力待ちで固まらせない。対話 CLI を非対話で回すときの定番の詰まり方。
-    proc = spawnImpl(bin, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    //
+    // detached: 各エンジンは実行中に MCP サーバや ripgrep や bash を子として
+    // 起こす。直下の1本に signal を送っても孫は親を失って走り続けるので、
+    // 独立したプロセスグループにして群ごと落とせるようにする。
+    proc = spawnImpl(bin, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
   } catch (err) {
     finish({ ok: false, code: -1, err: String(err.message || err) });
     return { cancel: () => {}, failed: true };
@@ -71,14 +75,20 @@ function runProcess(opts, handlers = {}) {
   if (proc.stdout) proc.stdout.on('data', (b) => collect('out', b));
   if (proc.stderr) proc.stderr.on('data', (b) => collect('err', b));
 
+  // グループごと。届かなければ直下だけでも落とす(detached が効かない環境向け)。
+  const signalGroup = (sig) => {
+    if (proc.pid) { try { process.kill(-proc.pid, sig); return; } catch (_) {} }
+    try { proc.kill(sig); } catch (_) {}
+  };
+
   const hardKill = () => {
-    graceTimer = setTimeout(() => { try { proc.kill('SIGKILL'); } catch (_) {} }, KILL_GRACE_MS);
+    graceTimer = setTimeout(() => signalGroup('SIGKILL'), KILL_GRACE_MS);
   };
 
   const cancel = () => {
     if (finished) return false;
     state.killed = true;
-    try { proc.kill('SIGTERM'); } catch (_) {}
+    signalGroup('SIGTERM');
     hardKill();
     return true;
   };

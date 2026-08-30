@@ -112,6 +112,22 @@
     };
   }
 
+  // 次の工程へ持ち越す量の上限。
+  //
+  // 持ち越した文字列はプロンプトになり、プロンプトは argv の一要素として
+  // spawn に渡る。argv の上限(このマシンで ARG_MAX = 1,048,576)を超えると
+  // spawn が E2BIG で落ち、画面には「失敗」としか出ない。原因が出力量だとは
+  // 分からない。しかも落ちたのが本作業ならリレーごと止まる。
+  // ワーカー側の溜め込み上限は 2MB なので、そのまま渡すと普通に超える。
+  const MAX_CARRY = 24000;
+
+  function carry(text) {
+    const t = String(text || '').trim();
+    if (t.length <= MAX_CARRY) return t;
+    // 黙って切ると、受け取った側が「途中で終わっている」ことに気づけない。
+    return t.slice(0, MAX_CARRY) + `\n…(ここまで。全体は ${t.length} 字ありました)`;
+  }
+
   // 前の工程の出力を、次の工程の入力に畳み込む。
   // prior: [{stage, engine, out}]
   // extra.diff: 本作業が実際に書き換えた差分。点検はこれを見る。
@@ -131,15 +147,15 @@
       const survey = prior.find((p) => p.stage === 'survey');
       if (survey) {
         parts.push('別のエンジンによる下調べです。誤りが含まれている前提で、使う前に確かめてください。');
-        parts.push('----\n' + survey.out.trim() + '\n----');
+        parts.push('----\n' + carry(survey.out) + '\n----');
       }
     } else if (step.stage === 'review') {
       parts.push('別のエンジンがやった作業の点検です。あなたが手を入れる必要はありません。');
       parts.push(`元の依頼: ${task}`);
       const work = prior.find((p) => p.stage === 'work');
-      if (work) parts.push('作業の報告(本人の申告なので、そのまま信じないこと):\n----\n' + work.out.trim() + '\n----');
+      if (work) parts.push('作業の報告(本人の申告なので、そのまま信じないこと):\n----\n' + carry(work.out) + '\n----');
       if (extra.diff && extra.diff.trim()) {
-        parts.push('実際に書き換わった差分:\n----\n' + extra.diff.trim() + '\n----');
+        parts.push('実際に書き換わった差分:\n----\n' + carry(extra.diff) + '\n----');
         parts.push('報告と差分が食い違っていたら、差分のほうを本当とみなしてください。');
       } else if (extra.expectedWrite) {
         // 書き込むはずの回で差分が空。報告がどれだけ立派でも、何も起きていない。
@@ -158,5 +174,5 @@
     return parts.join('\n\n');
   }
 
-  return { planRelay, buildStagePrompt, VENDOR, STAGES };
+  return { planRelay, buildStagePrompt, VENDOR, STAGES, MAX_CARRY };
 });
