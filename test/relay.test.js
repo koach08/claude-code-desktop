@@ -142,3 +142,22 @@ test('relay.js は Node の組み込みに依存しない(ブラウザで読め�
     require('path').join(__dirname, '..', 'src', 'relay.js'), 'utf-8');
   assert.ok(!/\brequire\s*\(/.test(src), 'require が入るとブラウザで読めない');
 });
+
+// ── 指摘には確かめ方を添えさせる ─────────────────────────────
+//
+// 2026-08-29 の実測: Gemini と Claude が独立に同じ指摘を出したが、両方とも
+// 外れだった。一致は正しさの証拠にならない。効いたのは、確かめに行く手がかりが
+// 増えたこと。だから多数決ではなく「確かめられる形」を求める。
+
+test('点検には確かめる手順を添えさせる', () => {
+  const prompt = buildStagePrompt({ stage: 'review' }, 'x',
+    [{ stage: 'work', engine: 'codex', out: 'やりました' }], {});
+  assert.ok(/確かめる最短の手順/.test(prompt));
+  assert.ok(/確かめようのない指摘は書かないで/.test(prompt));
+});
+
+test('下調べには参照した場所を示させる', () => {
+  const prompt = buildStagePrompt({ stage: 'survey' }, 'x', []);
+  assert.ok(/行番号/.test(prompt));
+  assert.ok(/憶測/.test(prompt));
+});
