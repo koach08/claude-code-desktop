@@ -62,7 +62,19 @@ const WORKING_MS = 5000;
 // tab: { id, name, mode, lastOutputAt, tail, exited }
 function deriveState(tab, now = Date.now()) {
   if (tab.exited) return 'exited';
+  // ツールが「人間の操作が要る」と名乗っているなら、出力が続いていても待ち。
+  //
+  // 「作業中なら出力が途切れない」は正しいが、その逆(止まっていれば出力も
+  // 止まる)は成り立たない。Codex は待っている間もタイトルを点滅させ続けるので、
+  // 出力の途切れだけを見ていると、いちばん人間を呼ぶべきタブが「作業中」の
+  // まま固定される。判定は main 側で生の出力に当てて渡す(掃除すると OSC が
+  // 落ちるため)。
+  if (tab.titleWaiting === true) return 'asking';
   const since = now - (tab.lastOutputAt || 0);
+  // タイトルを出すツールについては、タイトルのほうを本当とみなす。
+  // 答えたあとも選択肢の枠は画面に残るので、テキストだけ見ていると
+  // 「承認済み・実行中」の画面をいつまでも「あなた待ち」と言い続ける。
+  if (tab.titleWaiting === false) return since < WORKING_MS ? 'working' : 'idle';
   if (since < WORKING_MS) return 'working';
   if (isAwaitingUser(tab.tail || '')) return 'asking';
   return 'idle';

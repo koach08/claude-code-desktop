@@ -155,3 +155,51 @@ test('フッターの決まり文句だけでも拾わない', () => {
   const tail = 'ピッカーの操作は Esc to cancel でしたね、と説明している文章です。';
   assert.strictEqual(isAwaitingUser(tail), false);
 });
+
+// ── ツール自身が名乗る合図 ────────────────────────────────
+//
+// 2026-08-30 実測: Codex は人間の操作を待っている間、ウィンドウタイトルを
+// `[ ! ] Action Required | <user>` と `[ . ] …` で点滅させ続ける(実バッファで192回)。
+// 厄介なのは、この点滅が出力として途切れないこと。「直近5秒に出力があれば作業中」
+// と見ていると、いちばん人間を呼ぶべきタブが「作業中」のまま固定される。
+
+const { titleSaysWaiting, lastWindowTitle } = require('../src/prompt-detect');
+const OSC = (title) => `\x1b]0;${title}\x07`;
+
+test('タイトルが Action Required なら待ち', () => {
+  assert.strictEqual(titleSaysWaiting(`出力${OSC('[ ! ] Action Required | user')}`), true);
+});
+
+test('答えてタイトルが戻ったら待ちではない', () => {
+  // 途中に Action Required が残っていても、最後のタイトルで決める。
+  const raw = `${OSC('[ ! ] Action Required | user')}承認しました${OSC('user')}実行中`;
+  assert.strictEqual(titleSaysWaiting(raw), false);
+});
+
+test('タイトルを出さないツールでは判定しない(null)', () => {
+  // false と null を混ぜると、タイトルを出さないツールまで「待ちではない」に倒れる。
+  assert.strictEqual(titleSaysWaiting('ただの出力'), null);
+});
+
+test('最後のタイトルを取る', () => {
+  assert.strictEqual(lastWindowTitle(`${OSC('one')}x${OSC('two')}`), 'two');
+  assert.strictEqual(lastWindowTitle('タイトルなし'), null);
+});
+
+test('掃除したあとでは判定できない(生を渡すこと)', () => {
+  const raw = OSC('[ ! ] Action Required | user');
+  assert.strictEqual(titleSaysWaiting(cleanTail(raw)), null);
+});
+
+// ── 地の文への誤爆 ────────────────────────────────────────
+test('プロンプトの形を説明した文章では待ちにしない', () => {
+  // 実バッファに入っていた文そのもの。この判定を直したときの説明文。
+  const tail = '本物のプロンプトは必ず選択マーカー＋番号付きの選択肢の形で描かれます。'
+    + 'Codexの› 1. Yes, proceed (y)、ClaudeCodeの再開ピッカー、選択式の質問がこれです。';
+  assert.strictEqual(isAwaitingUser(tail), false);
+});
+
+test('行頭や空白のあとのマーカーは拾う', () => {
+  assert.ok(isAwaitingUser('› 1. Yes, proceed (y)\n  2. No (esc)'));
+  assert.ok(isAwaitingUser('なにか出力\n❯1. Resume from summary'));
+});

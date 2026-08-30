@@ -1308,7 +1308,10 @@ function detectActivity(output, sessionId) {
   // 判定規則は src/prompt-detect.js に一本化してある(ボード表示と共通)。
   // 読み込みに失敗したときは黙って「待ちではない」に倒す。ここは PTY の出力ごとに
   // 通るので、例外を投げると画面が出力のたびに壊れる。
-  const isApproval = !!(window.AriyaPrompt && window.AriyaPrompt.isAwaitingUser(tail));
+  // タイトルの合図も見る。Codex は待っている間タイトルを点滅させ続けるので、
+  // 出力が続いたまま人間を待っている状態は、テキスト側だけでは捕まらない。
+  const isApproval = !!(window.AriyaPrompt
+    && (window.AriyaPrompt.isAwaitingUser(tail) || window.AriyaPrompt.titleSaysWaiting(tail)));
 
   const patterns = [
     { re: { test: () => isApproval }, msg: 'あなたの返事待ち — ターミナルで番号を選ぶ' },

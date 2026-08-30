@@ -236,6 +236,7 @@ function readSecretKey(name) {
 const { claudeProjectSlug, findConversationId: findConvIdIn } = require('./src/conversation-id');
 const { saveLedger, loadLedger, dedupeConversationIds } = require('./src/ledger');
 const { inferProject, groupIntoTeams, cleanTail } = require('./src/board');
+const { titleSaysWaiting } = require('./src/prompt-detect');
 
 // 生きているタブが使用中の ID を除外したうえで検索する。
 function findConversationId(cwd, sinceMs) {
@@ -966,6 +967,9 @@ ipcMain.handle('board-snapshot', async () => {
       lastOutputAt: s.lastOutputAt || 0,
       exited: !!s.exited,
       tail: tailFor(id),
+      // 掃除する前の出力から読む。cleanTail は OSC を捨てるので、掃除後では
+      // ツール自身の合図(Codex の "Action Required" タイトル)が消えている。
+      titleWaiting: titleSaysWaiting(sessionBuffers.get(id) || ''),
       project: projectForConversation(s.conversationId, s.cwd),
     });
   }

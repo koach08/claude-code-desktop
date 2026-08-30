@@ -44,7 +44,17 @@
 
   // TUI が描く選択肢の枠。マーカーの直後に「数字.」と中身が続くこと。
   // 例: `› 1. Yes, proceed (y)` / `❯1. Resume from summary (recommended)` / `❯ 2. …`
-  const SELECT_PROMPT = /[❯›▶]\s*\d+\.\s*\S/;
+  //
+  // マーカーの前は行頭か空白であることを求める。これが無いと、プロンプトの形を
+  // **説明した文章** に当たる。実バッファで実際に起きていた:
+  //   「本物のプロンプトは必ず選択マーカー＋番号付きの選択肢の形で描かれます。
+  //     Codexの› 1. Yes, proceed (y)、ClaudeCode…」
+  // (この判定を直したときの説明文そのもの)。20窓 → 10窓に減る。
+  //
+  // ⚠️ それでも地の文を completely には分離できない。プロンプトを **引用** すると
+  // 本物と同じ並びになるため。原理的に無理なので、ツール自身が出す合図
+  // (下の titleSaysWaiting) を主に、この判定を従にする。
+  const SELECT_PROMPT = /(?:^|[\s\r\n])[❯›▶][ \t]*\d+\.[ \t]*\S/;
 
   // 素の CLI が使う y/n。行末にあることを求めて、文章中の "(y/n)" と分ける。
   const SHELL_YESNO = /\((?:y\/n|Y\/n|y\/N)\)\s*[?:]?\s*$/im;
@@ -84,6 +94,46 @@
   // 末尾 1500 字を見れば足りる。この幅なら実データの 36 件は全部落ちる。
   const TAIL_WINDOW = 1500;
 
+  // ── ツール自身が名乗る合図(2026-08-30 実測) ──
+  //
+  // Codex は人間の操作を待っている間、ウィンドウタイトルを
+  //   \x1b]0;[ ! ] Action Required | <user>\x07
+  //   \x1b]0;[ . ] Action Required | <user>\x07
+  // と交互に書き続ける。実バッファで 192 回。これは推測ではなく、ツールが
+  // 「人間の操作が要る」と名指しで言っている、いちばん確かな合図。
+  //
+  // 厄介なのは、この点滅が **出力として途切れない** こと。board は
+  // 「直近5秒に出力があれば作業中」と見るので、いちばん人間を呼ぶべきタブが
+  // 「作業中」のまま固定され、通知も出なかった。しかも cleanTail が OSC を
+  // 捨てるので、テキスト側の判定にも回っていなかった。
+  //
+  // 見るのは **最後の** タイトルだけ。答えるとタイトルは戻るので、途中に
+  // Action Required が残っていても、最後がそれでなければ待ちではない。
+  const OSC_TITLE = /\x1b\][012];([^\x07\x1b]*)(?:\x07|\x1b\\)/g;
+  const TITLE_WAITING = /Action Required/i;
+
+  function lastWindowTitle(raw) {
+    const t = String(raw || '').slice(-20000);
+    const re = new RegExp(OSC_TITLE.source, 'g');
+    let m, last = null;
+    while ((m = re.exec(t))) last = m[1];
+    return last;
+  }
+
+  // 生の出力を渡すこと。掃除したあとでは OSC が落ちていて判定できない。
+  //
+  // 戻り値は三値:
+  //   true  … タイトルが「人間の操作が要る」と言っている
+  //   false … タイトルは読めたが、そうは言っていない(= 待ちではない)
+  //   null  … タイトルを出さないツール。テキスト側の判定に任せる
+  // false と null を分けるのは、タイトルを出すツールについては **タイトルのほうを
+  // 本当とみなす** ため。答えたあとも選択肢の枠は画面に残るが、タイトルは戻る。
+  function titleSaysWaiting(raw) {
+    const title = lastWindowTitle(raw);
+    if (title === null) return null;
+    return TITLE_WAITING.test(title);
+  }
+
   // 掃除済みでも生出力でも受け付ける。
   function isAwaitingUser(text) {
     const t = cleanTail(text, 4000).slice(-TAIL_WINDOW);
@@ -93,5 +143,6 @@
   }
 
   return { cleanTail, isAwaitingUser, SELECT_PROMPT, SHELL_YESNO,
-           PICKER_FOOTER, PICKER_MARKER, TAIL_WINDOW };
+           PICKER_FOOTER, PICKER_MARKER, TAIL_WINDOW,
+           titleSaysWaiting, lastWindowTitle };
 });

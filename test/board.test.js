@@ -140,3 +140,26 @@ test('色コードで分断された選択肢を判定できる形に戻す', ()
 test('長さを指定ぶんに収める', () => {
   assert.ok(cleanTail('あ'.repeat(5000), 100).length <= 100);
 });
+
+// ── ツールの合図を、出力の途切れより優先する ──────────────
+test('待っている合図が出ていれば、出力が続いていても「あなた待ち」', () => {
+  // Codex は待っている間もタイトルを点滅させ続けるので、出力は途切れない。
+  const now = Date.now();
+  assert.strictEqual(deriveState({ titleWaiting: true, lastOutputAt: now }, now), 'asking');
+});
+
+test('タイトルを出すツールでは、答えた後にテキストが残っていても待ちにしない', () => {
+  // 承認済み・実行中の画面には選択肢の枠が残る。テキストだけ見ていると
+  // いつまでも「あなた待ち」と言い続ける。
+  const now = Date.now();
+  const tail = '› 1. Yes, proceed (y)\n✔ You approved codex to run\n';
+  assert.strictEqual(deriveState({ titleWaiting: false, tail, lastOutputAt: now }, now), 'working');
+  assert.strictEqual(deriveState({ titleWaiting: false, tail, lastOutputAt: now - 60000 }, now), 'idle');
+});
+
+test('タイトルを出さないツールでは、これまでどおりテキストで見る', () => {
+  const now = Date.now();
+  const tail = '› 1. Yes, proceed (y)\n  2. No (esc)';
+  assert.strictEqual(deriveState({ titleWaiting: null, tail, lastOutputAt: now - 60000 }, now), 'asking');
+  assert.strictEqual(deriveState({ tail, lastOutputAt: now - 60000 }, now), 'asking');
+});
