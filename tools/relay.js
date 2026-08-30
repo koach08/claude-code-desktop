@@ -20,6 +20,7 @@ const ROOT = path.join(__dirname, '..');
 const { runProcess } = require(path.join(ROOT, 'src/worker-run'));
 const { buildCommand } = require(path.join(ROOT, 'src/worker-cmd'));
 const { planRelay, buildStagePrompt } = require(path.join(ROOT, 'src/relay'));
+const { planWorktree, worktreeRoot } = require(path.join(ROOT, 'src/worktree'));
 const { judgeEngine } = require(path.join(ROOT, 'src/engine-judge'));
 
 function readSecretKey(name) {
@@ -93,23 +94,34 @@ function runStage(engine, prompt, cwd, write, timeoutMs) {
   if (plan.unreviewed) console.log('※ 別会社の点検役がいません。点検なしで進みます。');
   console.log(`場所: ${cwd}\n`);
 
-  // 点検に渡す差分。本作業が書き込む回だけ、前後で git の状態を比べて取る。
-  // 自己申告だけを点検させると、何も書き換えていなくても「問題なし」が返る。
-  const gitDiff = () => {
+  // 書き込む回は、本作業を隔離した作業ツリーの中でやらせる。
+  // 元のブランチには何も起きない。人間が差分を見て、当てるかどうかを決める。
+  const git = (args, at) => execSync(`git ${args}`, { cwd: at, encoding: 'utf-8', maxBuffer: 32 * 1024 * 1024 });
+  let wt = null;
+  if (opt.write) {
     try {
-      return execSync('git diff HEAD 2>/dev/null; git status --porcelain 2>/dev/null',
-        { cwd, encoding: 'utf-8', maxBuffer: 32 * 1024 * 1024 });
-    } catch { return ''; }
-  };
-  const before = opt.write ? gitDiff() : '';
+      wt = planWorktree(cwd, opt.task, Date.now());
+      fs.mkdirSync(worktreeRoot(), { recursive: true });
+      git(wt.addArgs.join(' '), cwd);
+      console.log(`隔離: ${wt.dir}\n枝  : ${wt.branch}\n`);
+    } catch (e) {
+      // 隔離できないなら書き込ませない。元のリポジトリで直接書かせるより、
+      // 断って人間に判断してもらうほうがよい。
+      console.error(`作業ツリーを作れませんでした: ${String(e.message || e).split('\n')[0]}`);
+      console.error('(git リポジトリでないか、既に同名の枝があります) --write を外して回してください。');
+      process.exit(1);
+    }
+  }
+  // 本作業と点検は隔離側で走らせる。点検は書き換わったファイルも読める。
+  const workCwd = wt ? wt.dir : cwd;
   const extra = {};
 
   const prior = [];
   for (const step of plan.steps) {
-    if (step.stage === 'review' && opt.write) {
-      const after = gitDiff();
-      // 走らせる前から出ていた差分は、この回の成果ではない。
-      extra.diff = after === before ? '' : after.slice(0, 60000);
+    if (step.stage === 'review' && wt) {
+      let d = '';
+      try { d = git(wt.diffArgs.join(' '), wt.dir) + git(wt.statusArgs.join(' '), wt.dir); } catch (_) {}
+      extra.diff = d.slice(0, 60000);
       extra.expectedWrite = true;
     }
     const prompt = buildStagePrompt(step, opt.task, prior, extra);
@@ -117,7 +129,8 @@ function runStage(engine, prompt, cwd, write, timeoutMs) {
     // 何も出ないまま何分も待たされると、動いているのか固まったのか分からない。
     const t0 = Date.now();
     const tick = setInterval(() => process.stdout.write(`${Math.round((Date.now() - t0) / 1000)}秒 `), 30000);
-    const r = await runStage(step.engine, prompt, cwd, !step.read, step.timeoutMs);
+    const at = (step.stage === 'survey') ? cwd : workCwd;
+    const r = await runStage(step.engine, prompt, at, !step.read, step.timeoutMs);
     clearInterval(tick);
     const out = (r.out || '').trim();
     console.log(`${r.ok ? 'ok' : (r.killed ? '時間切れ' : '失敗')} ${Math.round(r.ms / 1000)}秒`);
@@ -132,4 +145,21 @@ function runStage(engine, prompt, cwd, write, timeoutMs) {
   }
 
   if (plan.unreviewed) console.log('※ 点検を通していません。結果はそのつもりで扱ってください。');
+
+  // 隔離の後始末。差分は patch に落としてから畳む。畳むより先に取ること。
+  if (wt) {
+    let patch = '';
+    try { patch = git(wt.diffArgs.join(' '), wt.dir); } catch (_) {}
+    if (patch.trim()) {
+      const dir = path.join(os.homedir(), '.claude-code-app', 'patches');
+      fs.mkdirSync(dir, { recursive: true });
+      const file = path.join(dir, `${path.basename(wt.dir)}.patch`);
+      fs.writeFileSync(file, patch);
+      console.log(`\n書き換えは元のブランチには入っていません。差分はここです:\n  ${file}`);
+      console.log(`当てるなら: git apply "${file}"   (中身を読んでから)`);
+    } else {
+      console.log('\n作業ツリーに差分はありませんでした(何も書き換えていません)。');
+    }
+    try { git(wt.removeArgs.join(' '), cwd); git(wt.deleteBranchArgs.join(' '), cwd); } catch (_) {}
+  }
 })();
