@@ -408,8 +408,23 @@
       <!-- Normal Prompt -->
       <div id="input-row">
         <textarea id="prompt-input" placeholder="プロンプトを入力... (Enter で送信, Shift+Enter で改行)" rows="2"></textarea>
-        <button id="terminal-mic-btn" class="mic-btn" title="音声入力">&#127908;</button>
+        <button id="terminal-mic-btn" class="mic-btn" title="音声入力（入力欄に文字を入れるだけ）">&#127908;</button>
+        <button id="voice-talk-btn" class="mic-btn" title="音声で話す（返事を読み上げます）">&#128172;</button>
         <button id="send-btn">送信</button>
+      </div>
+
+      <!-- 音声で往復するときの帯。話していないときは畳んでおく -->
+      <div id="voice-panel" class="hidden">
+        <div id="voice-bar">
+          <span id="voice-state">待機</span>
+          <span id="voice-notice"></span>
+          <span id="voice-spacer"></span>
+          <button id="voice-hush-btn" title="読み上げを止める">&#128263; 黙る</button>
+          <button id="voice-handoff-btn" title="いまのタブに作業を渡す">このタブに渡す</button>
+          <button id="voice-clear-btn" title="会話を消す">履歴を消す</button>
+          <button id="voice-close-btn" title="閉じる">&times;</button>
+        </div>
+        <div id="voice-log"></div>
       </div>
       <div id="enter-hint" class="hidden"></div>
       <!-- 打っている最中に「別のエンジン向きでは」と出す。確信が高いときだけ。 -->
@@ -616,6 +631,9 @@
   <script src="prompt-detect.js"></script>
   <script src="nudge.js"></script>
   <script src="relay.js"></script>
+  <!-- 音声で往復する仕掛け。判断 (voice-turn) を先に読む -->
+  <script src="voice-turn.js"></script>
+  <script src="voice-chat.js"></script>
   <script src="renderer.js"></script>
 </body>
 </html>

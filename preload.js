@@ -32,6 +32,11 @@ contextBridge.exposeInMainWorld('api', {
   // AI Hub Chat API
   hubChat: (opts) => ipcRenderer.invoke('hub-chat', opts),
   hubTranscribe: (opts) => ipcRenderer.invoke('hub-transcribe', opts),
+  // 音声で往復するときの返事。1 回で返る (SSE ではない)
+  hubConverse: (opts) => ipcRenderer.invoke('hub-converse', opts),
+  // 音声の履歴。localStorage が消えても読めるようファイルにも残す
+  saveVoiceHistory: (h) => ipcRenderer.invoke('save-voice-history', h),
+  loadVoiceHistory: () => ipcRenderer.invoke('load-voice-history'),
   hubSuggestRoute: (text) => ipcRenderer.invoke('hub-suggest-route', { text }),
   suggestEngine: (task) => ipcRenderer.invoke('suggest-engine', { task }),
   boardSnapshot: () => ipcRenderer.invoke('board-snapshot'),

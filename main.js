@@ -852,6 +852,63 @@ ipcMain.handle('suggest-engine', async (_e, { task }) => judgeEngine(task));
 // 同じリポジトリを2つのエンジンが同時に編集して壊した事故が過去にあるため、
 // 隔離(worktree)が入るまで書き込みは開けない。
 const { buildCommand } = require('./src/worker-cmd');
+// ── 音声で往復するときの返事 ──────────────────────────────────
+// hub-chat は SSE を読む作りで、往復には向かない (1 文ずつ待たせたくない)。
+// koach-os 側に 1 回で返す口 (/hub/converse) を置いてあるので、そちらを叩く。
+ipcMain.handle('hub-converse', async (_e, { messages, context }) => {
+  const cfg = (() => {
+    try {
+      if (fs.existsSync(HUB_CONFIG_FILE)) {
+        return { ...DEFAULT_HUB_CONFIG, ...JSON.parse(fs.readFileSync(HUB_CONFIG_FILE, 'utf-8')) };
+      }
+    } catch (_) {}
+    return { ...DEFAULT_HUB_CONFIG };
+  })();
+  const headers = { 'Content-Type': 'application/json' };
+  if (cfg.apiSecret) headers.Authorization = `Bearer ${cfg.apiSecret}`;
+  try {
+    const res = await fetch(`${cfg.apiUrl}/converse`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        messages: messages || [],
+        context: context || '',
+        provider: cfg.defaultProvider === 'openai' ? 'claude' : (cfg.defaultProvider || 'claude'),
+      }),
+    });
+    if (!res.ok) return { ok: false, reply: 'うまく届きませんでした。', error: await res.text() };
+    return await res.json();
+  } catch (e) {
+    return { ok: false, reply: 'うまく届きませんでした。', error: e.message };
+  }
+});
+
+// 音声の履歴。⚠️ localStorage は再インストールや退避で消えるので、
+// 同じものをファイルにも残す。読むのは画面側の判断。
+const VOICE_HISTORY_FILE = path.join(SESSIONS_DIR, 'voice-history.json');
+const VOICE_HISTORY_MAX = 200;
+
+ipcMain.handle('save-voice-history', async (_e, history) => {
+  try {
+    const rows = Array.isArray(history) ? history.slice(-VOICE_HISTORY_MAX) : [];
+    fs.mkdirSync(SESSIONS_DIR, { recursive: true });
+    fs.writeFileSync(VOICE_HISTORY_FILE, JSON.stringify(rows, null, 2));
+    return { ok: true, count: rows.length };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
+ipcMain.handle('load-voice-history', async () => {
+  try {
+    if (!fs.existsSync(VOICE_HISTORY_FILE)) return [];
+    const r = JSON.parse(fs.readFileSync(VOICE_HISTORY_FILE, 'utf-8'));
+    return Array.isArray(r) ? r : [];
+  } catch (_) {
+    return [];
+  }
+});
+
 const { runProcess } = require('./src/worker-run');
 const workerJobs = new Map();   // jobId -> { cancel, engine, task, cwd, write, startedAt }
 

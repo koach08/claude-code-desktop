@@ -2979,10 +2979,138 @@ function stopVoiceRecording(btn, targetInputId) {
   }
 }
 
+// ── 音声で往復する ──────────────────────────────────────────
+// 🎤 は今までどおり「文字を入力欄に入れるだけ」。
+// 💬 はこちら。話す → 返事を読み上げる → 続きを話す。
+//
+// ⚠️ 読み上げ中は録音しない (自分の声を拾って回る)。判断は src/voice-turn.js。
+let voiceChat = null;
+
+function voiceSetState(state, label) {
+  const el = document.getElementById('voice-state');
+  if (!el) return;
+  el.textContent = label;
+  el.dataset.state = state;
+  const btn = document.getElementById('voice-talk-btn');
+  if (btn) {
+    btn.classList.toggle('recording', state === 'recording');
+    btn.classList.toggle('transcribing', state === 'transcribing' || state === 'thinking');
+    btn.textContent = state === 'recording' ? '⏹' : '\u{1F4AC}';
+  }
+}
+
+function voiceAddTurn(turn) {
+  const log = document.getElementById('voice-log');
+  if (!log) return;
+  const row = document.createElement('div');
+  row.className = `vturn ${turn.role}`;
+  row.textContent = turn.content;
+  log.appendChild(row);
+  log.scrollTop = log.scrollHeight;
+}
+
+function voiceNotice(text) {
+  const el = document.getElementById('voice-notice');
+  if (!el) return;
+  el.textContent = text;
+  setTimeout(() => { if (el.textContent === text) el.textContent = ''; }, 6000);
+}
+
+async function setupVoiceChat() {
+  if (!window.VoiceChat || voiceChat) return;
+
+  // ⚠️ localStorage は退避や再インストールで消える。先にファイルから種を入れる。
+  //    ファイルのほうが新しければ、そちらを正とする。
+  try {
+    const fromFile = await window.api.loadVoiceHistory();
+    if (Array.isArray(fromFile) && fromFile.length) {
+      const cur = JSON.parse(localStorage.getItem(window.VoiceChat.HISTORY_KEY) || '[]');
+      if (!Array.isArray(cur) || cur.length < fromFile.length) {
+        localStorage.setItem(window.VoiceChat.HISTORY_KEY, JSON.stringify(fromFile));
+      }
+    }
+  } catch (_) {}
+
+  voiceChat = window.VoiceChat.create({
+    transcribe: async (audioBuffer, mimeType) =>
+      window.api.hubTranscribe({ audioBuffer, mimeType }),
+
+    converse: async (messages, context) =>
+      window.api.hubConverse({ messages, context }),
+
+    // ⚠️ 渡すのは既に開いている Claude Code のタブ。改行を付けて実行させる
+    sendToTab: async (tabId, text) => { await window.api.sendInput(tabId, `${text}\r`); },
+
+    readTab: async (tabId) => {
+      const r = await window.api.loadBuffer(tabId);
+      const raw = (r && r.buffer) ? r.buffer : (typeof r === 'string' ? r : '');
+      // ANSI を落としてから返す。読み上げに記号を混ぜない
+      return String(raw)
+        // eslint-disable-next-line no-control-regex
+        .replace(/\x1b\[[0-9;?]*[a-zA-Z]|\x1b\][^\x07]*\x07/g, '');
+    },
+
+    listTabs: () => [...tabs.entries()].map(([id, t]) => ({
+      id, name: t.name || '', cwd: t.cwd || '', exited: !!t.exited,
+    })),
+
+    onState: voiceSetState,
+    onTurn: voiceAddTurn,
+    onNotice: voiceNotice,
+
+    // 履歴はファイルに残す。再起動しても続きから読める
+    loadHistory: () => {
+      try { return JSON.parse(localStorage.getItem(window.VoiceChat.HISTORY_KEY) || 'null'); }
+      catch (_) { return null; }
+    },
+    saveHistory: (h) => {
+      try { localStorage.setItem(window.VoiceChat.HISTORY_KEY, JSON.stringify(h)); } catch (_) {}
+      // 画面の外にも残す (localStorage が消えても読めるように)
+      try { window.api.saveVoiceHistory(h); } catch (_) {}
+    },
+  });
+
+  const panel = document.getElementById('voice-panel');
+  const openPanel = () => { if (panel) panel.classList.remove('hidden'); };
+
+  document.getElementById('voice-talk-btn')?.addEventListener('click', () => {
+    openPanel();
+    voiceChat.press();
+  });
+  document.getElementById('voice-hush-btn')?.addEventListener('click', () => voiceChat.hush());
+  document.getElementById('voice-close-btn')?.addEventListener('click', () => {
+    voiceChat.hush();
+    panel?.classList.add('hidden');
+  });
+  document.getElementById('voice-clear-btn')?.addEventListener('click', () => {
+    voiceChat.clear();
+    const log = document.getElementById('voice-log');
+    if (log) log.innerHTML = '';
+    voiceNotice('履歴を消しました。');
+  });
+
+  // ⚠️ 渡し先は本人が選ぶ。いま開いているタブへ、確かめてから渡す
+  document.getElementById('voice-handoff-btn')?.addEventListener('click', async () => {
+    const h = voiceChat.history;
+    const last = [...h].reverse().find((t) => t.role === 'user');
+    if (!last) return voiceNotice('渡す内容がありません。先に話してください。');
+    const t = tabs.get(activeId);
+    if (!t) return voiceNotice('渡し先のタブがありません。');
+    if (!confirm(`「${t.name || activeId}」に渡します。\n\n${last.content}`)) return;
+    const r = await voiceChat.handOff(activeId, last.content, t.cwd);
+    if (r.ok) voiceNotice(`${t.name || activeId} に渡しました。`);
+  });
+
+  // 前回の続きを読み戻す
+  const n = voiceChat.restore();
+  if (n) voiceNotice(`前回の続き ${n} 件を読み込みました。`);
+}
+
 // Initialize voice buttons when DOM ready
 document.addEventListener('DOMContentLoaded', () => {
   setupVoiceButton('chat-mic-btn', 'chat-input');
   setupVoiceButton('terminal-mic-btn', 'prompt-input');
+  setupVoiceChat();
 });
 
 // ── Util ──

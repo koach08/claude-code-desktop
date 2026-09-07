@@ -1117,3 +1117,49 @@ body[data-ui="chat"] #mode-toggle { display: none; }
 .board-dot.exited  { background: #f7768e; }
 .board-state { color: var(--fg2); font-size: 10px; }
 .board-empty { color: var(--fg2); font-size: 12px; padding: 16px; text-align: center; }
+
+/* ── 音声で往復するときの帯 ──────────────────────────────── */
+/* 話していないときは畳んでおく。作業の邪魔をしない大きさに留める。 */
+#voice-panel {
+  border-top: 1px solid var(--bg3);
+  background: var(--bg2);
+  max-height: 42vh;
+  display: flex; flex-direction: column;
+}
+#voice-panel.hidden { display: none; }
+
+#voice-bar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px; font-size: 12px;
+  border-bottom: 1px solid var(--bg3);
+}
+#voice-spacer { flex: 1; }
+
+/* 状態の色。録音中と読み上げ中は目で分かるようにする */
+#voice-state { font-weight: 600; color: var(--fg2); }
+#voice-state[data-state="recording"]    { color: var(--red); }
+#voice-state[data-state="transcribing"],
+#voice-state[data-state="thinking"]     { color: var(--yellow); }
+#voice-state[data-state="speaking"]     { color: var(--green, #9ece6a); }
+
+#voice-notice { color: var(--yellow); font-size: 11px; }
+
+#voice-bar button {
+  background: transparent; color: var(--fg2);
+  border: 1px solid var(--bg3); border-radius: 8px;
+  padding: 3px 9px; font-size: 11px; cursor: pointer;
+}
+#voice-bar button:hover { color: var(--fg); background: var(--bg3); }
+#voice-close-btn { border: none; font-size: 15px; }
+
+#voice-log {
+  overflow-y: auto; padding: 8px 10px;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.vturn {
+  font-size: 12.5px; line-height: 1.7;
+  padding: 5px 9px; border-radius: 10px; max-width: 82%;
+  white-space: pre-wrap; word-break: break-word;
+}
+.vturn.user      { align-self: flex-end; background: var(--bg3); }
+.vturn.assistant { align-self: flex-start; background: var(--bg); border: 1px solid var(--bg3); }
