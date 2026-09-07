@@ -1710,6 +1710,88 @@ app.on('open-url', (event, url) => {
   handleDeepLink(url);
 });
 
+// ── 外から操作するための窓 ────────────────────────────────────
+// 音声や MCP からタブを操作したい。ipcMain はアプリの中からしか届かないので、
+// localhost だけに開いた小さな HTTP の窓を立てる。守りは src/control-server.js 側。
+//
+// ⚠️ 端末に文字を流し込める窓なので、止め方を先に用意しておく:
+//    ~/.claude-code-app/control-off を作れば書き込みが全部断られる (再起動は要らない)。
+//
+// タブを開く口は出していない。create-session の中身を外から呼ぶには electron の
+// 内部 API に触ることになり、版が上がると黙って壊れるため。開くのは手でよい。
+const { startControlServer } = require('./src/control-server');
+let controlServer = null;
+
+// 窓から走らせた裏方ワーカーの出力を溜める。renderer へ送る経路とは別に持つ
+// (窓から呼ばれたときは、見ている画面が無いこともあるため)。
+const controlJobs = new Map();
+const CONTROL_JOB_MAX = 40;
+
+function startControl() {
+  try {
+    controlServer = startControlServer({
+      sessions,
+      sessionBuffers,
+
+      closeSession: async (id) => {
+        const s = sessions.get(id);
+        if (s && s.pty) { try { s.pty.kill(); } catch (_) {} sessions.delete(id); }
+        sessionBuffers.delete(id);
+        savedBuffer.delete(id);
+        try { fs.unlinkSync(path.join(BUFFERS_DIR, `${id}.buf`)); } catch (_) {}
+      },
+
+      runWorker: async ({ engine, task, cwd, write, model, timeoutMs }) => {
+        let spec;
+        try {
+          spec = buildCommand(engine, task, { cwd: cwd || os.homedir(), write: !!write, model });
+        } catch (err) {
+          return { ok: false, error: String(err.message || err) };
+        }
+        const env = { ...shellEnv };
+        if (spec.needsKey && !env[spec.needsKey]) {
+          const k = readSecretKey(spec.needsKey);
+          if (k) {
+            env[spec.needsKey] = k;
+            if (spec.needsKey === 'XAI_API_KEY') env.GROK_API_KEY = k;
+          }
+        }
+        const jobId = `c_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+        const job = { done: false, output: '', engine, task, startedAt: Date.now() };
+        controlJobs.set(jobId, job);
+        // 溜めすぎない。古いものから捨てる
+        while (controlJobs.size > CONTROL_JOB_MAX) {
+          controlJobs.delete(controlJobs.keys().next().value);
+        }
+        const handle = runProcess(
+          {
+            bin: spec.bin, args: spec.args, cwd: spec.cwd, env,
+            timeoutMs: Number(timeoutMs) > 0 ? Number(timeoutMs) : undefined,
+          },
+          {
+            onOutput: (d) => { job.output = (job.output + d).slice(-200000); },
+            onDone: (r) => { job.done = true; job.code = r.code; job.ms = Date.now() - job.startedAt; },
+          },
+        );
+        if (handle.failed) { controlJobs.delete(jobId); return { ok: false, error: '起動できなかった' }; }
+        job.cancel = handle.cancel;
+        return { ok: true, jobId, engine, bin: spec.bin, write: spec.write, cwd: spec.cwd };
+      },
+
+      workerResult: (jobId) => {
+        const j = controlJobs.get(jobId);
+        if (!j) return null;
+        return {
+          done: j.done, code: j.code, ms: j.ms, engine: j.engine,
+          output: j.output.slice(-20000),
+        };
+      },
+    });
+  } catch (e) {
+    console.error('control server failed:', e.message);
+  }
+}
+
 // ── Lifecycle ──
 let timer;
 app.whenReady().then(() => {
@@ -1719,6 +1801,7 @@ app.whenReady().then(() => {
   createMenu();
   timer = setInterval(saveSessionsSync, 10000);
   setTimeout(autoUpdateClisInBackground, 8000); // 起動を邪魔しないよう遅延実行
+  startControl();  // 外から操作するための窓 (127.0.0.1 のみ)
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
 app.on('before-quit', () => {
@@ -1729,6 +1812,7 @@ app.on('before-quit', () => {
   }
   clearCrashFlag();
   if (timer) clearInterval(timer);
+  try { if (controlServer) controlServer.close(); } catch (_) {}
 });
 let sessionsSavedOnClose = false;
 
