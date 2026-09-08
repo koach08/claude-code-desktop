@@ -10,5 +10,10 @@
   <true/>
   <key>com.apple.security.cs.allow-dyld-environment-variables</key>
   <true/>
+  <!-- 声で操作するためのマイク。⚠️ hardenedRuntime を有効にしていると、
+       Info.plist の説明文だけでは足りず、この entitlement が無いと録音が塞がれる。
+       ヘルパー側にも要るので entitlementsInherit も同じこのファイルを指している。 -->
+  <key>com.apple.security.device.audio-input</key>
+  <true/>
 </dict>
 </plist>

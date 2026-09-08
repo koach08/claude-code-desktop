@@ -855,7 +855,7 @@ const { buildCommand } = require('./src/worker-cmd');
 // ── 音声で往復するときの返事 ──────────────────────────────────
 // hub-chat は SSE を読む作りで、往復には向かない (1 文ずつ待たせたくない)。
 // koach-os 側に 1 回で返す口 (/hub/converse) を置いてあるので、そちらを叩く。
-ipcMain.handle('hub-converse', async (_e, { messages, context }) => {
+ipcMain.handle('hub-converse', async (_e, { messages, context, provider, model }) => {
   const cfg = (() => {
     try {
       if (fs.existsSync(HUB_CONFIG_FILE)) {
@@ -873,7 +873,11 @@ ipcMain.handle('hub-converse', async (_e, { messages, context }) => {
       body: JSON.stringify({
         messages: messages || [],
         context: context || '',
-        provider: cfg.defaultProvider === 'openai' ? 'claude' : (cfg.defaultProvider || 'claude'),
+        // 声で切り替えたぶんが最優先。指定が無ければ設定、それも無ければ Claude。
+        // ⚠️ 以前ここで openai を claude に読み替えていた。Astra を指名しても
+        //    Claude が答えてしまうので外した (声の相手は本人が選ぶ)。
+        provider: provider || cfg.defaultProvider || 'claude',
+        model: model || '',
       }),
     });
     if (!res.ok) return { ok: false, reply: 'うまく届きませんでした。', error: await res.text() };

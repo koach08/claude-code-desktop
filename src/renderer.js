@@ -656,8 +656,10 @@ async function newTab(mode, cwd) {
   try {
     const session = await window.api.createSession({ mode: mode || 'claude', cwd });
     addTab(session);
+    return session;                 // 声から開いたとき、どれを開いたか返す
   } catch (err) {
     console.error('Session create failed:', err);
+    return null;
   }
 }
 
@@ -3035,8 +3037,14 @@ async function setupVoiceChat() {
     transcribe: async (audioBuffer, mimeType) =>
       window.api.hubTranscribe({ audioBuffer, mimeType }),
 
-    converse: async (messages, context) =>
-      window.api.hubConverse({ messages, context }),
+    // ⚠️ engine は声で切り替わる。指定しないと設定の既定 (Claude) になる
+    converse: async (messages, context, engine) =>
+      window.api.hubConverse({
+        messages,
+        context,
+        provider: (engine && engine.provider) || '',
+        model: (engine && engine.model) || '',
+      }),
 
     // ⚠️ 渡すのは既に開いている Claude Code のタブ。改行を付けて実行させる
     sendToTab: async (tabId, text) => { await window.api.sendInput(tabId, `${text}\r`); },
@@ -3053,6 +3061,28 @@ async function setupVoiceChat() {
     listTabs: () => [...tabs.entries()].map(([id, t]) => ({
       id, name: t.name || '', cwd: t.cwd || '', exited: !!t.exited,
     })),
+
+    // ── アプリそのものの操作 ──
+    // ⚠️ 閉じる・渡す は voice-chat 側で復唱の確認を通ってからここへ来る
+    openTab: async (mode) => {
+      const s = await newTab(mode || 'claude');
+      return s ? { id: s.id, name: s.name || mode } : null;
+    },
+    closeTab: async (id) => { await closeTab(id); },
+    switchTab: (id) => { switchTab(id); },
+    getActiveId: () => activeId,
+
+    onEngine: (e) => {
+      const el = document.getElementById('voice-engine');
+      if (el) el.textContent = e.label || 'Claude';
+    },
+    loadEngine: () => {
+      try { return JSON.parse(localStorage.getItem('ariya.voice.engine') || 'null'); }
+      catch (_) { return null; }
+    },
+    saveEngine: (e) => {
+      try { localStorage.setItem('ariya.voice.engine', JSON.stringify(e)); } catch (_) {}
+    },
 
     onState: voiceSetState,
     onTurn: voiceAddTurn,
@@ -3100,6 +3130,10 @@ async function setupVoiceChat() {
     const r = await voiceChat.handOff(activeId, last.content, t.cwd);
     if (r.ok) voiceNotice(`${t.name || activeId} に渡しました。`);
   });
+
+  // 前回選んだ声の相手を画面に出す
+  const el = document.getElementById('voice-engine');
+  if (el) el.textContent = voiceChat.engine.label || 'Claude';
 
   // 前回の続きを読み戻す
   const n = voiceChat.restore();

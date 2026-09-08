@@ -21,6 +21,11 @@
     ? global.VoiceTurn
     : require('./voice-turn');
 
+  // 操作の読み取り。会話と違い、間違えると端末に文字が入るので別部品にしてある。
+  const VC = (typeof global !== 'undefined' && global.VoiceCommand)
+    ? global.VoiceCommand
+    : require('./voice-command');
+
   const HISTORY_KEY = 'ariya.voice.history';
   const MAX_KEEP = 200;          // 保存しておく往復の数
   const BARGE_GAP_MS = 250;      // 読み上げを止めてから録りはじめるまでの間
@@ -33,6 +38,14 @@
       sendToTab,         // async (tabId, text) => void   … 作業の引き渡し
       readTab,           // async (tabId) => string       … 進捗を読む
       listTabs,          // () => [{id, cwd, name, exited}]
+      // ── ここから下はアプリそのものの操作。無くても会話だけは動く ──
+      openTab,           // async (mode) => {id, name} … 新しいタブ
+      closeTab,          // async (tabId) => void
+      switchTab,         // (tabId) => void
+      getActiveId,       // () => string
+      onEngine,          // (engine) => void  … 声の相手が変わったことを画面に出す
+      loadEngine,        // () => {provider, model, label} | null
+      saveEngine,        // (engine) => void
       onState,           // (state, label) => void
       onTurn,            // (turn) => void  … 画面に出す
       onNotice,          // (text) => void  … 断った理由など
@@ -50,6 +63,15 @@
     let handoff = null;   // {tabId, cwd, task, at}
 
     const guard = V.makeSendGuard();
+    // ⚠️ 取り違えたまま実行しないための関門。閉じる/渡すは必ずここを通す。
+    const confirmer = VC.makeConfirmer();
+
+    // 声の返事を作るエンジン。既定は Claude。声で切り替えられる。
+    let engine = { provider: '', model: '', label: '' };
+    try {
+      const e = loadEngine ? loadEngine() : null;
+      if (e && e.provider) engine = e;
+    } catch (_) {}
 
     function setState(s) {
       state = s;
@@ -122,6 +144,97 @@
       stream = null;
     }
 
+    // ── 操作 ────────────────────────────────────────────────
+    // ⚠️ ここは端末に文字を入れる側。読み取り (voice-command) と分けてある。
+
+    function tabName(t) {
+      if (!t) return 'そのタブ';
+      return t.name || VC.basename(t.cwd || '') || String(t.id);
+    }
+
+    // 返事を 1 つ出して読み上げる。状態も進める。
+    async function respond(reply, extra) {
+      push('assistant', reply, extra || {});
+      if (state === 'thinking') setState(V.nextState('thinking', 'got_reply'));
+      else setState('speaking');
+      await speak(reply);
+      setState(V.nextState('speaking', 'done'));
+    }
+
+    function tail(text) {
+      const lines = String(text || '').split('\n').filter((x) => x.trim()).slice(-PROGRESS_TAIL);
+      return lines.join('\n');
+    }
+
+    // 確認を通ったものだけがここへ来る
+    async function runIntent(intent) {
+      if (intent.kind === 'close') {
+        if (!closeTab) return respond('この版ではタブを閉じられません。');
+        await closeTab(intent.tab.id);
+        if (handoff && handoff.tabId === intent.tab.id) handoff = null;
+        return respond(`${tabName(intent.tab)} を閉じました。`);
+      }
+      if (intent.kind === 'work') {
+        const chk = V.checkTarget(intent.tab.id, listTabs(), { expectCwd: intent.tab.cwd });
+        if (!chk.ok) return respond(`渡せませんでした。${chk.reason}。`);
+        await sendToTab(intent.tab.id, intent.task);
+        handoff = { tabId: intent.tab.id, cwd: chk.tab.cwd, task: intent.task, at: Date.now() };
+        return respond(`${tabName(intent.tab)} に渡しました。`, { kind: 'handoff' });
+      }
+      return respond('分かりませんでした。');
+    }
+
+    async function handleCommand(cmd) {
+      // 黙るのは即座に。読み上げないので respond を通さない。
+      if (cmd.kind === 'hush') { stopSpeaking(); setState('idle'); return undefined; }
+
+      if (cmd.kind === 'engine') {
+        engine = { provider: cmd.provider, model: cmd.model, label: cmd.label };
+        try { if (saveEngine) saveEngine(engine); } catch (_) {}
+        try { if (onEngine) onEngine(engine); } catch (_) {}
+        return respond(`これからは ${cmd.label} が答えます。`);
+      }
+
+      if (cmd.kind === 'list') {
+        const live = listTabs().filter((t) => !t.exited);
+        if (!live.length) return respond('開いているタブはありません。');
+        const names = live.map(tabName);
+        const head = names.slice(0, 6).join('、');
+        const more = names.length > 6 ? `、ほか ${names.length - 6} つ` : '';
+        return respond(`${names.length} つ開いています。${head}${more}です。`);
+      }
+
+      if (cmd.kind === 'open') {
+        if (!openTab) return respond('この版ではタブを開けません。');
+        const t = await openTab(cmd.mode);
+        return respond(`${cmd.mode} のタブを開きました。`, { tabId: t && t.id });
+      }
+
+      if (cmd.kind === 'switch') {
+        if (!switchTab) return respond('この版ではタブを切り替えられません。');
+        switchTab(cmd.tab.id);
+        return respond(`${tabName(cmd.tab)} に切り替えました。`);
+      }
+
+      if (cmd.kind === 'progress') {
+        const target = cmd.tab ? cmd.tab.id : (handoff && handoff.tabId);
+        if (!target) return respond('渡してある作業はありません。');
+        const t = tail(await readTab(target));
+        return respond(t ? `直近はこうです。${t}` : 'まだ何も出ていません。');
+      }
+
+      if (cmd.kind === 'ask') {
+        const cand = cmd.candidates && cmd.candidates.length
+          ? ` ${cmd.candidates.slice(0, 4).join('、')}のどれですか。` : '';
+        return respond(`${cmd.why}。${cand || 'どのタブか言ってください。'}`);
+      }
+
+      // 閉じる・渡す は復唱して確かめる
+      if (cmd.confirm) return respond(confirmer.ask(cmd));
+
+      return respond('分かりませんでした。');
+    }
+
     // ── ひと回り ────────────────────────────────────────────
     async function finish() {
       releaseMic();
@@ -151,24 +264,31 @@
       setState(V.nextState('transcribing', 'got_text'));   // thinking
 
       try {
-        // 作業を渡した先があるなら、その進捗を材料として渡す
+        // 1) 確認待ちがあるなら、まずその返事として読む。
+        //    ⚠️ 「はい」を会話として流すと、待っていた用件が宙に浮く。
+        const ans = confirmer.answer(text);
+        if (ans.verdict === 'yes') { await runIntent(ans.intent); return; }
+        if (ans.verdict === 'no') { await respond('やめました。'); return; }
+        // 'other' は待っていた用件を捨てて、新しい話として続ける
+
+        // 2) アプリの操作か。迷ったら talk に落ちる作りにしてある。
+        const cmd = VC.parse(text, {
+          tabs: listTabs(),
+          activeId: getActiveId ? getActiveId() : '',
+        });
+        if (cmd.kind !== 'talk') { await handleCommand(cmd); return; }
+
+        // 3) 会話。渡した先があるなら、その進捗を材料として渡す
         let context = '';
         if (handoff && handoff.tabId) {
           try {
-            const tail = await readTab(handoff.tabId);
-            const lines = String(tail || '').split('\n').filter(Boolean).slice(-PROGRESS_TAIL);
-            context = `渡してある作業: ${handoff.task}\n直近の様子:\n${lines.join('\n')}`;
+            context = `渡してある作業: ${handoff.task}\n直近の様子:\n${tail(await readTab(handoff.tabId))}`;
           } catch (_) {}
         }
 
-        const kind = V.classify(text);
-        const res = await converse(V.forSending(history), context);
+        const res = await converse(V.forSending(history), context, engine);
         const reply = (res && res.reply) ? String(res.reply) : '返事が来ませんでした。';
-        push('assistant', reply, { kind: kind.kind });
-
-        setState(V.nextState('thinking', 'got_reply'));   // speaking
-        await speak(reply);
-        setState(V.nextState('speaking', 'done'));        // idle
+        await respond(reply, { kind: 'talk' });
       } catch (e) {
         setState('idle');
         if (onNotice) onNotice(`うまくいきませんでした: ${String(e && e.message || e).slice(0, 120)}`);
@@ -182,6 +302,15 @@
       get state() { return state; },
       get history() { return history.slice(); },
       get handoff() { return handoff; },
+      get engine() { return { ...engine }; },
+      get waiting() { return confirmer.pending; },
+
+      // 画面から切り替えたいとき (声で言えるので必須ではない)
+      setEngine(e) {
+        engine = { provider: e.provider || '', model: e.model || '', label: e.label || '' };
+        try { if (saveEngine) saveEngine(engine); } catch (_) {}
+        try { if (onEngine) onEngine(engine); } catch (_) {}
+      },
 
       // マイクを押したとき。状態によって意味が変わる
       async press() {
