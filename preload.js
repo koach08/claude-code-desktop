@@ -34,6 +34,10 @@ contextBridge.exposeInMainWorld('api', {
   hubTranscribe: (opts) => ipcRenderer.invoke('hub-transcribe', opts),
   // 音声で往復するときの返事。1 回で返る (SSE ではない)
   hubConverse: (opts) => ipcRenderer.invoke('hub-converse', opts),
+  // 声のやり取り (直に叩く。遅い経路を通さない)
+  voiceTranscribe: (opts) => ipcRenderer.invoke('voice-transcribe', opts),
+  voiceReply: (opts) => ipcRenderer.invoke('voice-reply', opts),
+  voiceTts: (opts) => ipcRenderer.invoke('voice-tts', opts),
   // 音声の履歴。localStorage が消えても読めるようファイルにも残す
   saveVoiceHistory: (h) => ipcRenderer.invoke('save-voice-history', h),
   loadVoiceHistory: () => ipcRenderer.invoke('load-voice-history'),

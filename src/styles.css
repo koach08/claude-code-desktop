@@ -1173,3 +1173,13 @@ body[data-ui="chat"] #mode-toggle { display: none; }
   font-size: 11px;
   opacity: 0.85;
 }
+
+/* 聞いている間は 💬 が脈打つ。⚠️ マイクが開いていることが一目で分かるようにする */
+.mic-btn.live-on {
+  color: #ff5f56;
+  animation: mic-pulse 1.4s ease-in-out infinite;
+}
+@keyframes mic-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.55; transform: scale(1.14); }
+}

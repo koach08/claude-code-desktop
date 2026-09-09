@@ -124,3 +124,27 @@ test('壊れた履歴は落とす', () => {
   const out = V.forSending([{ role: 'user', content: 'ok' }, null, { role: 'user' }, {}]);
   assert.equal(out.length, 1);
 });
+
+// ── 読み上げの区切り ──────────────────────────────────────────
+test('先頭の一文だけ先に鳴らせるように切る', () => {
+  const c = V.chunksForSpeech('3つ開いています。AOZORA、midori-os、ariya bridge です。どれを見ますか。');
+  assert.strictEqual(c.length, 3);
+  assert.strictEqual(c[0], '3つ開いています。');
+});
+
+test('短すぎる断片は次とくっつける（不自然に切れて聞こえるため）', () => {
+  const c = V.chunksForSpeech('はい。AOZORA のタブに渡しました。');
+  assert.strictEqual(c.length, 1);
+  assert.strictEqual(c[0], 'はい。AOZORA のタブに渡しました。');
+});
+
+test('末尾が短いときは前にくっつける', () => {
+  const c = V.chunksForSpeech('ビルドは通りました。テストも全部通っています。以上。');
+  assert.strictEqual(c[c.length - 1].endsWith('以上。'), true);
+  assert.ok(c[c.length - 1].length >= V.MIN_CHUNK);
+});
+
+test('空なら何も鳴らさない', () => {
+  assert.deepStrictEqual(V.chunksForSpeech(''), []);
+  assert.deepStrictEqual(V.chunksForSpeech('   '), []);
+});

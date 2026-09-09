@@ -26,6 +26,11 @@
     ? global.VoiceCommand
     : require('./voice-command');
 
+  // 話し終わりの見極め。⚠️ 無いときは押して止める昔の動きに落ちる。
+  const VD = (typeof global !== 'undefined' && global.VoiceVad)
+    ? global.VoiceVad
+    : require('./voice-vad');
+
   const HISTORY_KEY = 'ariya.voice.history';
   const MAX_KEEP = 200;          // 保存しておく往復の数
   const BARGE_GAP_MS = 250;      // 読み上げを止めてから録りはじめるまでの間
@@ -34,6 +39,7 @@
   function create(deps) {
     const {
       transcribe,        // async (blobArray, mimeType) => {text} | {error}
+      tts,               // async (text) => {audio, mime} | {error}  … 良い声で読む
       converse,          // async (messages, context) => {ok, reply}
       sendToTab,         // async (tabId, text) => void   … 作業の引き渡し
       readTab,           // async (tabId) => string       … 進捗を読む
@@ -62,6 +68,16 @@
     // 作業を渡した先を覚えておく。進捗を読むときに使う
     let handoff = null;   // {tabId, cwd, task, at}
 
+    // ── 押さずに話すための道具 ──────────────────────────────
+    // ⚠️ マイクは開けっぱなしにする。ひと言ごとに開き直すと、そのたび待たされる。
+    let liveMode = false;      // 連続で聞き続けるか
+    let meter = null;          // {ctx, analyser, buf} … 音量を見る
+    let ticker = null;         // 50ms ごとの見張り
+    let player = null;         // mp3 を鳴らす Audio
+    let speakToken = 0;        // 読み上げの世代。割り込んだら古いものを捨てる
+    const vad = VD.createVad();
+    const barge = VD.createBarge();
+
     const guard = V.makeSendGuard();
     // ⚠️ 取り違えたまま実行しないための関門。閉じる/渡すは必ずここを通す。
     const confirmer = VC.makeConfirmer();
@@ -87,45 +103,153 @@
       return turn;
     }
 
+    // ── 音量を見る ──────────────────────────────────────────
+    // ⚠️ AudioContext が無い環境 (テストなど) では黙って諦める。
+    //    そのときは「押して止める」昔の動きのままになる。
+    function openMeter() {
+      if (meter || !stream) return;
+      try {
+        const Ctx = global.AudioContext || global.webkitAudioContext;
+        if (!Ctx) return;
+        const ctx = new Ctx();
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 1024;
+        ctx.createMediaStreamSource(stream).connect(analyser);
+        meter = { ctx, analyser, buf: new Float32Array(analyser.fftSize) };
+      } catch (_) { meter = null; }
+    }
+
+    function level() {
+      if (!meter) return 0;
+      try {
+        meter.analyser.getFloatTimeDomainData(meter.buf);
+        return VD.rmsOf(meter.buf);
+      } catch (_) { return 0; }
+    }
+
+    function startTicker() {
+      if (ticker || !meter) return;
+      ticker = setInterval(() => {
+        const rms = level();
+        if (state === 'recording') {
+          const e = vad.feed(rms, Date.now());
+          if (e === 'stop') stopRecording();
+          else if (e === 'timeout') {
+            // 何も話さなかった。送らずに降りる。
+            // ⚠️ 先に liveMode を下ろす。順番を逆にすると cancelRecording が
+            //    「ライブ中だから開けておく」と判断し、マイクと見張りが
+            //    開きっぱなしで残る (聞かれ続けているのと同じ)。
+            const wasLive = liveMode;
+            liveMode = false;
+            cancelRecording();
+            if (wasLive && onNotice) onNotice('しばらく声が無かったので、いったん切りました。');
+          }
+        } else if (state === 'speaking' && liveMode) {
+          // ⚠️ 読み上げの回り込みで誤爆しないよう、はっきりした声だけ拾う
+          if (barge.feed(rms)) { barge.reset(); stopSpeaking(); listen(); }
+        }
+      }, 50);
+    }
+
+    function stopTicker() {
+      if (ticker) { clearInterval(ticker); ticker = null; }
+    }
+
     // ── 読み上げ ────────────────────────────────────────────
     function stopSpeaking() {
-      try {
-        if (global.speechSynthesis) global.speechSynthesis.cancel();
-      } catch (_) {}
+      speakToken += 1;         // ⚠️ 作りかけの音が後から鳴らないようにする
+      try { if (player) { player.pause(); player.src = ''; } } catch (_) {}
+      player = null;
+      try { if (global.speechSynthesis) global.speechSynthesis.cancel(); } catch (_) {}
       utter = null;
     }
 
-    function speak(text) {
+    // 良い声 (mp3) を先に試し、駄目なら Mac 内蔵に落ちる。
+    // ⚠️ mp3 を画面の中で鳴らすと、マイクの反響消しが効くので割り込める。
+    //    内蔵の声は OS 側で鳴るため反響消しの対象外で、割り込みは当てにできない。
+    function playOne(bytes, mime) {
       return new Promise((resolve) => {
-        if (!global.speechSynthesis || !text) return resolve();
-        stopSpeaking();
+        const blob = new global.Blob([bytes], { type: mime || 'audio/mpeg' });
+        const url = global.URL.createObjectURL(blob);
+        const a = new global.Audio(url);
+        player = a;
+        const done = () => {
+          try { global.URL.revokeObjectURL(url); } catch (_) {}
+          if (player === a) player = null;
+          resolve();
+        };
+        a.onended = done;
+        a.onerror = done;
+        a.play().catch(done);
+      });
+    }
+
+    async function speak(text) {
+      if (!text) return;
+      stopSpeaking();
+      const my = speakToken;
+
+      // ⚠️ 返事を丸ごと音にすると長いぶん待たされる (実測 3 文で 3.25 秒)。
+      //    先頭の一文を鳴らしながら、次の文を作る。
+      if (tts && global.Audio && global.URL && global.Blob) {
+        const parts = V.chunksForSpeech(text);
+        if (parts.length) {
+          try {
+            let pending = tts(parts[0]).catch(() => null);
+            for (let i = 0; i < parts.length; i += 1) {
+              const r = await pending;
+              if (my !== speakToken) return;                 // 割り込まれた
+              pending = (i + 1 < parts.length)
+                ? tts(parts[i + 1]).catch(() => null) : null;
+              if (!r || !r.audio) throw new Error('tts');
+              await playOne(r.audio, r.mime);
+              if (my !== speakToken) return;
+            }
+            return;
+          } catch (_) { /* 内蔵の声に落ちる */ }
+        }
+      }
+
+      await new Promise((resolve) => {
+        if (!global.speechSynthesis) return resolve();
         const u = new global.SpeechSynthesisUtterance(text);
         u.lang = 'ja-JP';
         u.rate = 1.05;
-        // 日本語の声を選ぶ。無ければ既定のまま
         try {
-          const v = global.speechSynthesis.getVoices()
-            .find((x) => /ja[-_]JP/i.test(x.lang));
+          const v = global.speechSynthesis.getVoices().find((x) => /ja[-_]JP/i.test(x.lang));
           if (v) u.voice = v;
         } catch (_) {}
         u.onend = () => { utter = null; resolve(); };
         u.onerror = () => { utter = null; resolve(); };
         utter = u;
         global.speechSynthesis.speak(u);
+        return undefined;
       });
     }
 
     // ── 録音 ────────────────────────────────────────────────
-    async function startRecording() {
-      // ⚠️ ここを飛ばすと自分の声を拾う
-      if (!V.canRecord(state)) return;
+    async function openMic() {
+      if (stream) return true;
       try {
-        stream = await global.navigator.mediaDevices.getUserMedia({ audio: true });
+        // ⚠️ 反響消しを頼む。これが無いと、読み上げを自分で聞き取って回り続ける
+        stream = await global.navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+        });
       } catch (_) {
         if (onNotice) onNotice('マイクが使えませんでした。許可を確かめてください。');
-        return;
+        return false;
       }
+      openMeter();
+      return true;
+    }
+
+    async function listen() {
+      // ⚠️ ここを飛ばすと自分の声を拾う
+      if (!V.canRecord(state)) return;
+      if (!(await openMic())) { liveMode = false; return; }
       chunks = [];
+      vad.reset();
+      barge.reset();
       const mime = global.MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
         ? 'audio/webm;codecs=opus' : 'audio/webm';
       recorder = new global.MediaRecorder(stream, { mimeType: mime });
@@ -133,13 +257,30 @@
       recorder.onstop = () => { finish().catch(() => setState('idle')); };
       recorder.start();
       setState(V.nextState('idle', 'start'));
+      startTicker();
     }
+
+    const startRecording = listen;
 
     function stopRecording() {
       try { if (recorder && recorder.state === 'recording') recorder.stop(); } catch (_) {}
     }
 
+    // 送らずにやめる (何も話さなかったとき)
+    function cancelRecording() {
+      try {
+        if (recorder) { recorder.onstop = null; if (recorder.state === 'recording') recorder.stop(); }
+      } catch (_) {}
+      recorder = null;
+      chunks = [];
+      setState('idle');
+      if (!liveMode) releaseMic();
+    }
+
     function releaseMic() {
+      stopTicker();
+      try { if (meter && meter.ctx) meter.ctx.close(); } catch (_) {}
+      meter = null;
       try { if (stream) stream.getTracks().forEach((t) => t.stop()); } catch (_) {}
       stream = null;
     }
@@ -237,7 +378,9 @@
 
     // ── ひと回り ────────────────────────────────────────────
     async function finish() {
-      releaseMic();
+      // ⚠️ ライブ中はマイクを開けたままにする。ひと言ごとに開き直すと、
+      //    そのたびに待たされて会話に聞こえない。
+      if (!liveMode) releaseMic();
       setState(V.nextState('recording', 'stop'));   // transcribing
 
       const blob = new global.Blob(chunks, { type: recorder.mimeType });
@@ -294,6 +437,8 @@
         if (onNotice) onNotice(`うまくいきませんでした: ${String(e && e.message || e).slice(0, 120)}`);
       } finally {
         guard.end();
+        // 返事が終わったら、そのまま次を聞く。確認待ちのときも聞き続ける。
+        if (liveMode && state === 'idle') listen().catch(() => { liveMode = false; });
       }
     }
 
@@ -303,6 +448,7 @@
       get history() { return history.slice(); },
       get handoff() { return handoff; },
       get engine() { return { ...engine }; },
+      get live() { return liveMode; },
       get waiting() { return confirmer.pending; },
 
       // 画面から切り替えたいとき (声で言えるので必須ではない)
@@ -328,6 +474,32 @@
         // 文字にしている間・考えている間は何もしない
         if (onNotice) onNotice(`${V.LABEL[state]}なので、少し待ってください。`);
         return undefined;
+      },
+
+      // ── 押さずに話す ────────────────────────────────────
+      // ⚠️ 開始も終了もここだけ。press() は昔ながらの押して録るほう。
+      async startLive() {
+        if (liveMode) return true;
+        if (!(await openMic())) return false;
+        if (!meter) {
+          // 音量が見られない環境。押して止める形でしか使えない
+          if (onNotice) onNotice('この環境では自動で区切れません。押して止めてください。');
+          return false;
+        }
+        liveMode = true;
+        stopSpeaking();
+        if (state !== 'idle') setState('idle');
+        await listen();
+        return true;
+      },
+
+      stopLive() {
+        liveMode = false;
+        stopSpeaking();
+        try { if (recorder && recorder.state === 'recording') { recorder.onstop = null; recorder.stop(); } } catch (_) {}
+        recorder = null;
+        releaseMic();
+        setState('idle');
       },
 
       // 読み上げだけ止める (次を喋らず黙らせたいとき)

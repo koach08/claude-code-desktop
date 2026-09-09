@@ -141,8 +141,31 @@ function forSending(history) {
     .map((h) => ({ role: h.role, content: String(h.content) }));
 }
 
+// ── 読み上げの区切り ──────────────────────────────────────────
+// ⚠️ 返事を丸ごと音にすると、長いほど待たされる (実測で 3 文 3.25 秒)。
+//    先頭の一文だけ先に鳴らし、残りは鳴らしている間に作る。
+//    短すぎる断片 (「はい。」など) は不自然に切れて聞こえるので、次とくっつける。
+//    ⚠️ ここを大きくすると先頭が長くなり、先に鳴らす意味が薄れる。
+const MIN_CHUNK = 8;
+
+function chunksForSpeech(text) {
+  const t = String(text || '').trim();
+  if (!t) return [];
+  const parts = t.split(/(?<=[。！？!?])/).map((x) => x.trim()).filter(Boolean);
+  const out = [];
+  for (const p of parts) {
+    if (out.length && out[out.length - 1].length < MIN_CHUNK) out[out.length - 1] += p;
+    else out.push(p);
+  }
+  // 最後だけ短くなったときも、前にくっつける
+  if (out.length > 1 && out[out.length - 1].length < MIN_CHUNK) {
+    out[out.length - 2] += out.pop();
+  }
+  return out;
+}
+
 const API = {
-  STATES, LABEL, nextState, canRecord, onMicPress,
+  STATES, LABEL, nextState, canRecord, onMicPress, chunksForSpeech, MIN_CHUNK,
   makeSendGuard, DUP_WINDOW_MS,
   classify, checkTarget, forSending, SEND_TURNS,
 };

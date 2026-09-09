@@ -887,6 +887,39 @@ ipcMain.handle('hub-converse', async (_e, { messages, context, provider, model }
   }
 });
 
+// ── 声のやり取り (直に叩く) ──
+// ⚠️ hub を経由すると往復で約 1.5 秒延びる。実測は src/voice-net.js の頭に書いた。
+//    鍵が手元にあるときは直、無いときだけ hub に落ちる。
+const voiceNetMod = require('./src/voice-net');
+function voiceNet() {
+  const cfg = (() => {
+    try {
+      if (fs.existsSync(HUB_CONFIG_FILE)) {
+        return { ...DEFAULT_HUB_CONFIG, ...JSON.parse(fs.readFileSync(HUB_CONFIG_FILE, 'utf-8')) };
+      }
+    } catch (_) {}
+    return { ...DEFAULT_HUB_CONFIG };
+  })();
+  return voiceNetMod.create({
+    fetchImpl: fetch,
+    getKey: readSecretKey,
+    hubUrl: cfg.apiUrl,
+    hubSecret: cfg.apiSecret,
+  });
+}
+
+ipcMain.handle('voice-transcribe', async (_e, { audioBuffer, mimeType }) =>
+  voiceNet().transcribe(Buffer.from(audioBuffer), mimeType));
+
+ipcMain.handle('voice-reply', async (_e, { messages, context, provider, model }) =>
+  voiceNet().reply(messages || [], { context, provider, model }));
+
+ipcMain.handle('voice-tts', async (_e, { text, voice }) => {
+  const r = await voiceNet().tts(text, { voice });
+  // ⚠️ Uint8Array のまま返す。base64 にすると 1.3 倍に膨らむ
+  return r.audio ? { audio: r.audio, mime: r.mime } : { error: r.error || 'tts failed' };
+});
+
 // 音声の履歴。⚠️ localStorage は再インストールや退避で消えるので、
 // 同じものをファイルにも残す。読むのは画面側の判断。
 const VOICE_HISTORY_FILE = path.join(SESSIONS_DIR, 'voice-history.json');

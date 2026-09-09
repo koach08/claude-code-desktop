@@ -3034,12 +3034,19 @@ async function setupVoiceChat() {
   } catch (_) {}
 
   voiceChat = window.VoiceChat.create({
+    // ⚠️ hub 経由だと往復で 1.5 秒延びる。直に叩く口を使う (鍵が無ければ中で hub に落ちる)
     transcribe: async (audioBuffer, mimeType) =>
-      window.api.hubTranscribe({ audioBuffer, mimeType }),
+      window.api.voiceTranscribe({ audioBuffer, mimeType }),
 
-    // ⚠️ engine は声で切り替わる。指定しないと設定の既定 (Claude) になる
+    // 良い声で読む。Mac 内蔵の声は素っ気ないので、鍵があるときはこちらを使う
+    tts: async (text) => {
+      const r = await window.api.voiceTts({ text, voice: 'nova' });
+      return (r && r.audio) ? { audio: r.audio, mime: r.mime } : { error: (r && r.error) || 'tts' };
+    },
+
+    // ⚠️ engine は声で切り替わる。指定が無ければ速いモデルが既定 (重いと会話が途切れる)
     converse: async (messages, context, engine) =>
-      window.api.hubConverse({
+      window.api.voiceReply({
         messages,
         context,
         provider: (engine && engine.provider) || '',
@@ -3103,13 +3110,25 @@ async function setupVoiceChat() {
   const panel = document.getElementById('voice-panel');
   const openPanel = () => { if (panel) panel.classList.remove('hidden'); };
 
-  document.getElementById('voice-talk-btn')?.addEventListener('click', () => {
+  // 💬 は「押さずに話す」の入り切り。⚠️ 押しっぱなしではなく、切るまで聞き続ける。
+  const talkBtn = document.getElementById('voice-talk-btn');
+  const paintLive = () => {
+    if (!talkBtn) return;
+    talkBtn.classList.toggle('live-on', voiceChat.live);
+    talkBtn.title = voiceChat.live ? '聞いています（押すと終了）' : '押さずに話す';
+  };
+  talkBtn?.addEventListener('click', async () => {
     openPanel();
-    voiceChat.press();
+    if (voiceChat.live) { voiceChat.stopLive(); paintLive(); return; }
+    const ok = await voiceChat.startLive();
+    if (!ok) voiceChat.press();       // 自動で区切れない環境は昔ながらの押して録る
+    paintLive();
   });
   document.getElementById('voice-hush-btn')?.addEventListener('click', () => voiceChat.hush());
   document.getElementById('voice-close-btn')?.addEventListener('click', () => {
-    voiceChat.hush();
+    // ⚠️ 閉じるときは必ずマイクも落とす。開いたまま隠れるのがいちばん怖い
+    voiceChat.stopLive();
+    paintLive();
     panel?.classList.add('hidden');
   });
   document.getElementById('voice-clear-btn')?.addEventListener('click', () => {
@@ -3130,6 +3149,8 @@ async function setupVoiceChat() {
     const r = await voiceChat.handOff(activeId, last.content, t.cwd);
     if (r.ok) voiceNotice(`${t.name || activeId} に渡しました。`);
   });
+
+  paintLive();
 
   // 前回選んだ声の相手を画面に出す
   const el = document.getElementById('voice-engine');
