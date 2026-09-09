@@ -1183,3 +1183,8 @@ body[data-ui="chat"] #mode-toggle { display: none; }
   0%, 100% { opacity: 1; transform: scale(1); }
   50%      { opacity: 0.55; transform: scale(1.14); }
 }
+
+/* 使った量。⚠️ 常に見えるようにする。あとから請求で気づくのがいちばん困る */
+#voice-usage { margin-left: 8px; font-size: 11px; opacity: 0.7; font-variant-numeric: tabular-nums; }
+#voice-usage.warn { color: #fbbf24; opacity: 1; }
+#voice-mode-btn { margin-left: 6px; font-size: 11px; padding: 1px 8px; border-radius: 9px; }

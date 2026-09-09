@@ -2987,6 +2987,14 @@ function stopVoiceRecording(btn, targetInputId) {
 //
 // ⚠️ 読み上げ中は録音しない (自分の声を拾って回る)。判断は src/voice-turn.js。
 let voiceChat = null;
+let realtime = null;
+// ⚠️ 既定は「節約」。即応は声のまま考えるぶん速いが、そのぶんトークンを食う。
+let voiceMode = (() => {
+  try { return localStorage.getItem('ariya.voice.mode') || 'thrifty'; } catch (_) { return 'thrifty'; }
+})();
+// 1 回の会話で使ってよい額。届いたら切る。⚠️ 請求で知るのがいちばん困るので、
+// 使った額は常に画面に出す。
+const VOICE_YEN_CAP = 200;
 
 function voiceSetState(state, label) {
   const el = document.getElementById('voice-state');
@@ -3114,20 +3122,31 @@ async function setupVoiceChat() {
   const talkBtn = document.getElementById('voice-talk-btn');
   const paintLive = () => {
     if (!talkBtn) return;
-    talkBtn.classList.toggle('live-on', voiceChat.live);
-    talkBtn.title = voiceChat.live ? '聞いています（押すと終了）' : '押さずに話す';
+    const on = voiceChat.live || !!(realtime && realtime.connected);
+    talkBtn.classList.toggle('live-on', on);
+    talkBtn.title = on ? '聞いています（押すと終了）' : '押さずに話す';
   };
   talkBtn?.addEventListener('click', async () => {
     openPanel();
+    if (voiceMode === 'realtime') {
+      setupRealtime();
+      if (!realtime) return voiceNotice('即応の部品が読み込めていません。');
+      if (realtime.connected) { realtime.disconnect(); paintLive(); return; }
+      await realtime.connect();
+      paintLive();
+      return undefined;
+    }
     if (voiceChat.live) { voiceChat.stopLive(); paintLive(); return; }
     const ok = await voiceChat.startLive();
     if (!ok) voiceChat.press();       // 自動で区切れない環境は昔ながらの押して録る
     paintLive();
+    return undefined;
   });
   document.getElementById('voice-hush-btn')?.addEventListener('click', () => voiceChat.hush());
   document.getElementById('voice-close-btn')?.addEventListener('click', () => {
     // ⚠️ 閉じるときは必ずマイクも落とす。開いたまま隠れるのがいちばん怖い
     voiceChat.stopLive();
+    if (realtime && realtime.connected) realtime.disconnect();
     paintLive();
     panel?.classList.add('hidden');
   });
@@ -3149,6 +3168,67 @@ async function setupVoiceChat() {
     const r = await voiceChat.handOff(activeId, last.content, t.cwd);
     if (r.ok) voiceNotice(`${t.name || activeId} に渡しました。`);
   });
+
+  // ── 即応（声のまま考える）──────────────────────────────
+  // ⚠️ こちらは繋いでいる間ずっと課金されうるので、既定にしない。
+  //    声が出ている間しか送らない作りだが、それでも節約より高い。
+  const usageEl = document.getElementById('voice-usage');
+  const modeBtn = document.getElementById('voice-mode-btn');
+
+  function setupRealtime() {
+    if (realtime || !window.Realtime) return;
+    realtime = window.Realtime.create({
+      getToken: async () => {
+        const t = await window.api.realtimeToken();
+        if (!t || t.error) throw new Error((t && t.error) || 'token');
+        return t;
+      },
+      yenCap: VOICE_YEN_CAP,
+      listTabs: () => [...tabs.entries()].map(([id, t]) => ({
+        id, name: t.name || '', cwd: t.cwd || '', exited: !!t.exited,
+      })),
+      openTab: async (mode) => {
+        const sn = await newTab(mode || 'claude');
+        return sn ? { id: sn.id, name: sn.name || mode } : null;
+      },
+      switchTab: (id) => switchTab(id),
+      closeTab: async (id) => { await closeTab(id); },
+      sendToTab: async (id, text) => { await window.api.sendInput(id, `${text}\r`); },
+      readTab: async (id) => {
+        const r = await window.api.loadBuffer(id);
+        const raw = (r && r.buffer) ? r.buffer : (typeof r === 'string' ? r : '');
+        // eslint-disable-next-line no-control-regex
+        return String(raw).replace(/\x1b\[[0-9;?]*[a-zA-Z]|\x1b\][^\x07]*\x07/g, '');
+      },
+      getHandoff: () => (voiceChat && voiceChat.handoff ? voiceChat.handoff.tabId : null),
+      onState: voiceSetState,
+      onTurn: voiceAddTurn,
+      onNotice: voiceNotice,
+      onUsage: (u) => {
+        if (!usageEl) return;
+        const pct = Math.round((u.yen / VOICE_YEN_CAP) * 100);
+        usageEl.textContent = `${u.yen.toFixed(1)} 円 / ${VOICE_YEN_CAP} 円`;
+        usageEl.title = `送った声 ${u.speechSec.toFixed(0)} 秒 · ${u.tokens.toLocaleString()} トークン · 道具 ${u.calls} 回`;
+        usageEl.classList.toggle('warn', pct >= 70);
+      },
+    });
+  }
+
+  const paintMode = () => {
+    if (modeBtn) modeBtn.textContent = voiceMode === 'realtime' ? '即応' : '節約';
+  };
+  modeBtn?.addEventListener('click', () => {
+    // ⚠️ 話している最中に切り替えない。先に今のものを止める
+    if (voiceChat.live) { voiceChat.stopLive(); paintLive(); }
+    if (realtime && realtime.connected) realtime.disconnect();
+    voiceMode = voiceMode === 'realtime' ? 'thrifty' : 'realtime';
+    try { localStorage.setItem('ariya.voice.mode', voiceMode); } catch (_) {}
+    paintMode();
+    voiceNotice(voiceMode === 'realtime'
+      ? '即応にしました。声のまま考えるので速いですが、トークンを使います。'
+      : '節約にしました。少し待ちますが、使う量は小さくなります。');
+  });
+  paintMode();
 
   paintLive();
 

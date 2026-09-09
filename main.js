@@ -908,6 +908,38 @@ function voiceNet() {
   });
 }
 
+// ── 声のまま考えるモデル (Realtime) の一時鍵 ──
+// ⚠️ 本物の鍵は画面に渡さない。数分で切れる一時鍵だけを渡す。
+//    ⚠️ 繋いだまま黙っていると無音も課金されるので、画面側は
+//    「声が出ている間だけ送る」作りにしてある (src/realtime.js)。
+const REALTIME_MODEL = 'gpt-realtime-2.1';
+
+ipcMain.handle('realtime-token', async () => {
+  const key = readSecretKey('OPENAI_API_KEY');
+  if (!key) return { error: 'OPENAI_API_KEY がありません' };
+  const cfg = (() => {
+    try {
+      if (fs.existsSync(HUB_CONFIG_FILE)) {
+        return { ...DEFAULT_HUB_CONFIG, ...JSON.parse(fs.readFileSync(HUB_CONFIG_FILE, 'utf-8')) };
+      }
+    } catch (_) {}
+    return { ...DEFAULT_HUB_CONFIG };
+  })();
+  const model = cfg.realtimeModel || REALTIME_MODEL;
+  try {
+    const res = await fetch('https://api.openai.com/v1/realtime/client_secrets', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session: { type: 'realtime', model } }),
+    });
+    if (!res.ok) return { error: (await res.text()).slice(0, 200) };
+    const j = await res.json();
+    return { key: j.value, model, expiresAt: j.expires_at };
+  } catch (e) {
+    return { error: e.message };
+  }
+});
+
 ipcMain.handle('voice-transcribe', async (_e, { audioBuffer, mimeType }) =>
   voiceNet().transcribe(Buffer.from(audioBuffer), mimeType));
 

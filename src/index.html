@@ -418,6 +418,8 @@
         <div id="voice-bar">
           <span id="voice-state">待機</span>
           <span id="voice-engine" title="声の相手。「アストラで」などと言うと変わります">Claude</span>
+          <button id="voice-mode-btn" title="即応=声のまま考える(速いが高い) / 節約=聞き取りと読み上げに分ける(遅いが安い)">節約</button>
+          <span id="voice-usage" title="この会話で使ったトークン">—</span>
           <span id="voice-notice"></span>
           <span id="voice-spacer"></span>
           <button id="voice-hush-btn" title="読み上げを止める">&#128263; 黙る</button>
@@ -636,6 +638,8 @@
   <script src="voice-turn.js"></script>
   <script src="voice-command.js"></script>
   <script src="voice-vad.js"></script>
+  <script src="realtime-tools.js"></script>
+  <script src="realtime.js"></script>
   <script src="voice-chat.js"></script>
   <script src="renderer.js"></script>
 </body>

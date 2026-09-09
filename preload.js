@@ -38,6 +38,8 @@ contextBridge.exposeInMainWorld('api', {
   voiceTranscribe: (opts) => ipcRenderer.invoke('voice-transcribe', opts),
   voiceReply: (opts) => ipcRenderer.invoke('voice-reply', opts),
   voiceTts: (opts) => ipcRenderer.invoke('voice-tts', opts),
+  // 声のまま考えるモデル。⚠️ 返るのは数分で切れる一時鍵で、本物の鍵ではない
+  realtimeToken: () => ipcRenderer.invoke('realtime-token'),
   // 音声の履歴。localStorage が消えても読めるようファイルにも残す
   saveVoiceHistory: (h) => ipcRenderer.invoke('save-voice-history', h),
   loadVoiceHistory: () => ipcRenderer.invoke('load-voice-history'),
