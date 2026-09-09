@@ -8,6 +8,38 @@
 # nohup で切り離して実行すること。呼び出し元 (Ariya Bridge 内の Claude) は
 # switchover の途中で殺されるが、このスクリプトは生き残って最後まで進む。
 
+# Ariya Bridge のタブから起動された場合は、親から完全に切り離した自分を作り直して
+# そちらへ引き継ぐ。nohup は SIGHUP を無視するだけで、アプリ終了時にプロセスグループ
+# ごと落とされるのは防げない。2026-08-23 はそれで差し替えの途中(ditto)で死んだ。
+# 二重 fork + setsid で新しいセッションリーダーになれば、アプリが終わっても生き残る。
+ariya_ancestor() {
+  local pid=$$ cmd i=0
+  while [ "${pid:-0}" -gt 1 ] && [ $i -lt 60 ]; do
+    cmd=$(ps -o command= -p "$pid" 2>/dev/null)
+    case "$cmd" in
+      *"Ariya Bridge.app/Contents/MacOS/Ariya Bridge"*) return 0 ;;
+    esac
+    pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
+    i=$((i+1))
+  done
+  return 1
+}
+if [ "${WAIT_SWITCHOVER_DETACHED:-0}" != "1" ] && ariya_ancestor; then
+  _LOG="$HOME/.claude-code-app/switchover.log"
+  mkdir -p "$HOME/.claude-code-app"
+  echo "=== $(date '+%F %T') Ariya Bridge 内からの起動を検出。切り離して実行し直します ===" >> "$_LOG"
+  WAIT_SWITCHOVER_DETACHED=1 SWITCHOVER_DETACHED=1 \
+  python3 -c 'import os,sys
+if os.fork() > 0: os._exit(0)
+os.setsid()
+if os.fork() > 0: os._exit(0)
+os.execvp("zsh", ["zsh"] + sys.argv[1:])' "${0:A}" "$@" >> "$_LOG" 2>&1 &
+  disown 2>/dev/null || true
+  echo "親から切り離して起動しました。このタブが閉じても最後まで走ります。"
+  echo "進行: tail -f $_LOG"
+  exit 0
+fi
+
 # 待ち判定から除外する「自分自身」のセッションID。
 #   第1引数 > $CLAUDE_CODE_SESSION_ID (Claude Code が自動で入れる) > 最後に書かれた .jsonl
 # の順に決める。以前は特定IDを直書きしていたため、次のセッションから走らせると
