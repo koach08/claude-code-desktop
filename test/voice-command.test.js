@@ -2,11 +2,20 @@ const test = require('node:test');
 const assert = require('node:assert');
 const C = require('../src/voice-command');
 
+
+// ⚠️ 読みの表は既定で空 (公開リポジトリに案件名を置かないため)。
+//    カタカナで名指しする試験は、自分で入れてから始める。
+require('../src/voice-command').setAliases([
+  ['あおぞら', 'aozora'], ['みどり', 'midori'], ['こはく', 'kohaku'],
+  ['みどりおーえす', 'midorios'],
+  ['ありや', 'ariya'], ['ありあ', 'ariya'],
+]);
+
 // 実際に開いているタブの形に合わせる (renderer の listTabs と同じ)
 const TABS = [
   { id: 'a', name: 'AOZORA', cwd: '/work/aozora-ai', exited: false },
   { id: 'b', name: 'midori-os', cwd: '/work/midori-os', exited: false },
-  { id: 'c', name: 'Ariya Bridge', cwd: '/work/claude-code-desktop', exited: false },
+  { id: 'c', name: 'Ariya Bridge', cwd: '/work/ariya-bridge', exited: false },
   { id: 'd', name: 'kohaku', cwd: '/work/kohaku', exited: true },
 ];
 

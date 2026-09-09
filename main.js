@@ -908,6 +908,22 @@ function voiceNet() {
   });
 }
 
+// 声で案件を名指しするときの読みの表。
+// ⚠️ このリポジトリは公開してあるので、案件の名前をコードに書かない。
+//    手元の ~/.claude-code-app/voice-aliases.json に置く。無ければ空で動く
+//    (綴りが一致すれば当たる。読みで呼びたいときだけ書く)。
+const VOICE_ALIASES_FILE = path.join(SESSIONS_DIR, 'voice-aliases.json');
+
+ipcMain.handle('voice-aliases', async () => {
+  try {
+    if (!fs.existsSync(VOICE_ALIASES_FILE)) return [];
+    const rows = JSON.parse(fs.readFileSync(VOICE_ALIASES_FILE, 'utf-8'));
+    return Array.isArray(rows) ? rows : [];
+  } catch (_) {
+    return [];
+  }
+});
+
 // ── 声のまま考えるモデル (Realtime) の一時鍵 ──
 // ⚠️ 本物の鍵は画面に渡さない。数分で切れる一時鍵だけを渡す。
 //    ⚠️ 繋いだまま黙っていると無音も課金されるので、画面側は

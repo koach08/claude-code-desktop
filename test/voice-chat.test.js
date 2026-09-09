@@ -8,6 +8,15 @@
 const test = require('node:test');
 const assert = require('node:assert');
 
+
+// ⚠️ 読みの表は既定で空 (公開リポジトリに案件名を置かないため)。
+//    カタカナで名指しする試験は、自分で入れてから始める。
+require('../src/voice-command').setAliases([
+  ['あおぞら', 'aozora'], ['みどり', 'midori'], ['こはく', 'kohaku'],
+  ['みどりおーえす', 'midorios'],
+  ['ありや', 'ariya'], ['ありあ', 'ariya'],
+]);
+
 // ── ブラウザの偽物 ────────────────────────────────────────────
 function makeFakes() {
   const spoken = [];

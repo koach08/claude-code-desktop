@@ -3029,6 +3029,12 @@ function voiceNotice(text) {
 async function setupVoiceChat() {
   if (!window.VoiceChat || voiceChat) return;
 
+  // 案件の読みは手元のファイルから。⚠️ コードには書かない (公開リポジトリのため)
+  try {
+    const rows = await window.api.voiceAliases();
+    if (window.VoiceCommand) window.VoiceCommand.setAliases(rows);
+  } catch (_) {}
+
   // ⚠️ localStorage は退避や再インストールで消える。先にファイルから種を入れる。
   //    ファイルのほうが新しければ、そちらを正とする。
   try {

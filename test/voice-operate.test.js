@@ -27,9 +27,18 @@ installFakes();
 
 const VoiceChat = require('../src/voice-chat');
 
+
+// ⚠️ 読みの表は既定で空 (公開リポジトリに案件名を置かないため)。
+//    カタカナで名指しする試験は、自分で入れてから始める。
+require('../src/voice-command').setAliases([
+  ['あおぞら', 'aozora'], ['みどり', 'midori'], ['こはく', 'kohaku'],
+  ['みどりおーえす', 'midorios'],
+  ['ありや', 'ariya'], ['ありあ', 'ariya'],
+]);
+
 const TABS = [
   { id: 'a', name: 'AOZORA', cwd: '/x/aozora-ai', exited: false },
-  { id: 'b', name: 'Ariya Bridge', cwd: '/x/claude-code-desktop', exited: false },
+  { id: 'b', name: 'Ariya Bridge', cwd: '/x/ariya-bridge', exited: false },
 ];
 
 function make(over = {}) {

@@ -21,17 +21,23 @@
       .replace(/[\s　・,.。、_\-/]+/g, '');
   }
 
-  // 綴りとカタカナを繋ぐ表。⚠️ 新しい案件を足したらここに 1 行足す。
-  // 左は書き起こしに出る読み、右はフォルダ名やタブ名に出る綴り。
-  const ALIASES = [
-    ['えがく', 'aozora'], ['えーがく', 'aozora'],
-    ['こーち', 'midori'], ['こち', 'midori'], ['こーちおーえす', 'midorios'],
-    ['ありや', 'ariya'], ['ありあ', 'ariya'], ['あーりや', 'ariya'],
-    ['いちまい', 'kohaku'],
-    ['さくら', 'sakura'], ['こはくびゅー', 'kohakuvue'],
-    ['くりぷと', 'crypto'], ['かぶ', 'stock'], ['かぶとれーだー', 'stocktrader'],
-    ['とうし', 'investment'], ['えいご', 'english'],
-  ];
+  // 綴りとカタカナを繋ぐ表。
+  //
+  // ⚠️ **中身をここに書かない。** 案件の名前は手元の
+  //    `~/.claude-code-app/voice-aliases.json` に置く。このリポジトリは公開して
+  //    あるので、扱っている案件の名前が並ぶと、それだけで持ち主が分かる。
+  //
+  // 形は [[読み, 綴り], ...]。例: [["あおぞら", "aozora"]]
+  // 表が空でも綴りが一致すれば当たる。読みで呼びたいときだけ足せばよい。
+  let ALIASES = [];
+
+  function setAliases(rows) {
+    ALIASES = (Array.isArray(rows) ? rows : [])
+      .filter((r) => Array.isArray(r) && r.length >= 2 && r[0] && r[1])
+      .map((r) => [norm(r[0]), norm(r[1])]);
+    return ALIASES.length;
+  }
+  function getAliases() { return ALIASES.map((r) => [...r]); }
 
   // 読みを綴りに置き換えた別名も作る。どちらでも当たるようにする。
   function variants(s) {
@@ -230,7 +236,8 @@
 
   const API = {
     norm, variants, basename, resolveTab, readEngine, parse,
-    makeConfirmer, describe, ENGINES, ALIASES, CONFIRM_TTL_MS,
+    makeConfirmer, describe, ENGINES, CONFIRM_TTL_MS,
+    setAliases, getAliases,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = API;
   else global.VoiceCommand = API;
