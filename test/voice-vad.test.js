@@ -19,7 +19,7 @@ const rep = (v, n) => Array(n).fill(v);
 test('話して黙ったら、そこで区切る', () => {
   const vad = createVad();
   // 少し無音 → 1 秒話す → 1 秒黙る
-  const ev = run(vad, [...rep(0.005, 4), ...rep(0.09, 20), ...rep(0.004, 24)]);
+  const ev = run(vad, [...rep(0.005, 4), ...rep(0.09, 20), ...rep(0.004, 40)]);
   assert.strictEqual(ev[0].e, 'speech');
   assert.strictEqual(ev[ev.length - 1].e, 'stop');
 });
@@ -29,7 +29,7 @@ test('言葉の切れ目では切らない', () => {
   const vad = createVad();
   const ev = run(vad, [
     ...rep(0.09, 10), ...rep(0.004, 8),   // 400ms の間
-    ...rep(0.09, 10), ...rep(0.004, 24),  // 話し直して、最後に本当に黙る
+    ...rep(0.09, 10), ...rep(0.004, 40),  // 話し直して、最後に本当に黙る
   ]);
   const stops = ev.filter((x) => x.e === 'stop');
   assert.strictEqual(stops.length, 1);
