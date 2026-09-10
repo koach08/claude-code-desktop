@@ -1911,7 +1911,8 @@ function startControl() {
             timeoutMs: Number(timeoutMs) > 0 ? Number(timeoutMs) : undefined,
           },
           {
-            onOutput: (d) => { job.output = (job.output + d).slice(-200000); },
+            // ⚠️ runProcess は {which, text} を渡す。文字列扱いすると [object Object] が並ぶ(実測)
+            onOutput: (d) => { job.output = (job.output + (typeof d === 'string' ? d : (d && d.text) || '')).slice(-200000); },
             onDone: (r) => { job.done = true; job.code = r.code; job.ms = Date.now() - job.startedAt; },
           },
         );
