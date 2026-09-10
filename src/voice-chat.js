@@ -75,6 +75,7 @@
     let ticker = null;         // 50ms ごとの見張り
     let player = null;         // mp3 を鳴らす Audio
     let speakToken = 0;        // 読み上げの世代。割り込んだら古いものを捨てる
+    let speechStartedAt = 0;   // 話し始めた時刻。短すぎる音を送らないため
     const vad = VD.createVad();
     const barge = VD.createBarge();
 
@@ -133,6 +134,7 @@
         const rms = level();
         if (state === 'recording') {
           const e = vad.feed(rms, Date.now());
+          if (e === 'speech') speechStartedAt = Date.now();
           if (e === 'stop') stopRecording();
           else if (e === 'timeout') {
             // 何も話さなかった。送らずに降りる。
@@ -393,6 +395,14 @@
         if (onNotice) onNotice(r && r.error ? `聞き取れませんでした: ${r.error}` : '聞き取れませんでした。');
         return;
       }
+      // ⚠️ 一瞬の音や無音を渡すと、聞き取りが「ご視聴ありがとうございました」のような
+      //    定型を作り出す（実測）。話した長さが短いか、定型そのものなら捨てて聞き続ける。
+      const spokeSec = speechStartedAt ? (Date.now() - speechStartedAt) / 1000 : 99;
+      speechStartedAt = 0;
+      if (V.isPhantom(text) || (liveMode && spokeSec < V.MIN_SPEECH_SEC)) {
+        setState(V.nextState('transcribing', 'fail'));
+        return;
+      }
 
       // ⚠️ 二重送信よけ。押し間違いと二重認識をここで止める
       const ok = guard.check(text);
@@ -421,11 +431,16 @@
         });
         if (cmd.kind !== 'talk') { await handleCommand(cmd); return; }
 
-        // 3) 会話。渡した先があるなら、その進捗を材料として渡す
+        // 3) 会話。⚠️ 会話側のモデルに手は無い。せめて実物（開いているタブ）は渡す。
+        //    渡さないと「確認してみます」とだけ言って何もしない返事になる（実測）。
         let context = '';
+        try {
+          const live = listTabs().filter((t) => !t.exited);
+          if (live.length) context += `開いているタブ: ${live.map(tabName).join('、')}\n`;
+        } catch (_) {}
         if (handoff && handoff.tabId) {
           try {
-            context = `渡してある作業: ${handoff.task}\n直近の様子:\n${tail(await readTab(handoff.tabId))}`;
+            context += `渡してある作業: ${handoff.task}\n直近の様子:\n${tail(await readTab(handoff.tabId))}`;
           } catch (_) {}
         }
 

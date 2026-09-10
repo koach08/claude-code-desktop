@@ -141,6 +141,27 @@ function forSending(history) {
     .map((h) => ({ role: h.role, content: String(h.content) }));
 }
 
+// ── 聞き取りのゴミ ─────────────────────────────────────────────
+// ⚠️ Whisper 系はほぼ無音・一瞬の音を渡すと、動画の締めの言葉を作り出す。
+//    実測で「ご視聴ありがとうございました」「夢をありがとう」が届いた。
+//    定型そのものと、意味を持たない短い断片は捨てて、聞き続ける。
+const PHANTOM = [
+  /^ご視聴(ありがとうございました|ありがとう)[。.!！]*$/,
+  /^(最後まで)?(ご覧|見て)(いただき|くださり)?ありがとうございました[。.!！]*$/,
+  /^チャンネル登録/, /^(夢|ご視聴|視聴)をありがとう/,
+  /^(おっ|あっ|えっ|うっ|んっ|あ|え|ん|お|う)[。.!！?？]*$/,
+  /^[。.、,!！?？\s]*$/,
+];
+function isPhantom(text) {
+  const t = String(text || '').trim();
+  if (!t) return true;
+  return PHANTOM.some((re) => re.test(t));
+}
+
+// 話した長さがこれより短ければ、送らずに聞き直す（秒）。
+// ⚠️ 短いと「おっ」だけが飛ぶ。長いと「はい」を落とす。0.45 秒は「はい」が通る長さ
+const MIN_SPEECH_SEC = 0.45;
+
 // ── 読み上げの区切り ──────────────────────────────────────────
 // ⚠️ 返事を丸ごと音にすると、長いほど待たされる (実測で 3 文 3.25 秒)。
 //    先頭の一文だけ先に鳴らし、残りは鳴らしている間に作る。
@@ -166,6 +187,7 @@ function chunksForSpeech(text) {
 
 const API = {
   STATES, LABEL, nextState, canRecord, onMicPress, chunksForSpeech, MIN_CHUNK,
+  isPhantom, PHANTOM, MIN_SPEECH_SEC,
   makeSendGuard, DUP_WINDOW_MS,
   classify, checkTarget, forSending, SEND_TURNS,
 };

@@ -148,3 +148,16 @@ test('空なら何も鳴らさない', () => {
   assert.deepStrictEqual(V.chunksForSpeech(''), []);
   assert.deepStrictEqual(V.chunksForSpeech('   '), []);
 });
+
+// ── 聞き取りのゴミ ────────────────────────────────────────────
+test('無音から作り出された定型は捨てる', () => {
+  // ⚠️ 実測で届いたもの。動画の締めの言葉を作り出す癖がある
+  for (const t of ['ご視聴ありがとうございました', 'ご視聴ありがとうございました。', '夢をありがとう', 'チャンネル登録お願いします']) {
+    assert.strictEqual(V.isPhantom(t), true, t);
+  }
+});
+
+test('一瞬の音の断片は捨てるが、短い返事は捨てない', () => {
+  for (const t of ['おっ', 'あっ', 'ん', '。']) assert.strictEqual(V.isPhantom(t), true, t);
+  for (const t of ['はい', 'いいえ', 'やめて', 'エガクのタブで']) assert.strictEqual(V.isPhantom(t), false, t);
+});
