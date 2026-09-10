@@ -48,6 +48,8 @@ contextBridge.exposeInMainWorld('api', {
   hubSuggestRoute: (text) => ipcRenderer.invoke('hub-suggest-route', { text }),
   suggestEngine: (task) => ipcRenderer.invoke('suggest-engine', { task }),
   boardSnapshot: () => ipcRenderer.invoke('board-snapshot'),
+  // 他のアプリ(Claude デスクトップ / Codex Desktop / ChatGPT Work)の会話一覧
+  listExternalConversations: () => ipcRenderer.invoke('list-external-conversations'),
 
   // 裏方ワーカー(タブを開かずにエンジンを走らせる)
   workerStart: (opts) => ipcRenderer.invoke('worker-start', opts),

@@ -13,6 +13,7 @@
       <div id="drag-region"></div>
       <div id="tabs"></div>
       <button id="new-tab-btn" title="新しいタブ (Cmd+T)">+</button>
+      <button id="open-external-btn" title="他のアプリの会話を開く (Cmd+Shift+O)">↗</button>
       <div id="topbar-spacer"></div>
       <div id="mode-toggle">
         <button class="mode-btn active" data-mode="claude">Claude</button>
@@ -651,5 +652,17 @@
   <script src="realtime.js"></script>
   <script src="voice-chat.js"></script>
   <script src="renderer.js"></script>
+  <!-- 他のアプリで進めた会話を、ここのタブとして続けるための一覧 -->
+  <div id="external-picker" class="hidden" role="dialog" aria-label="他のアプリの会話を開く">
+    <div class="ext-box">
+      <div class="ext-head">
+        <strong>他のアプリの会話を開く</strong>
+        <input id="ext-filter" type="search" placeholder="絞り込み(題・場所)" autocomplete="off" />
+        <button id="ext-close" title="閉じる">×</button>
+      </div>
+      <p class="ext-note">Claude デスクトップ(Code)・Codex Desktop・ChatGPT Work の会話です。選ぶと同じ会話をこのアプリのタブで続けます。Claude Cowork と ChatGPT の Web の会話は記録が手元に無いので出ません。</p>
+      <div id="ext-list" class="ext-list"></div>
+    </div>
+  </div>
 </body>
 </html>

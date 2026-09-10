@@ -124,6 +124,25 @@ body[data-ui="builder"] #hint { display: none; }
   flex-shrink: 0;
 }
 #new-tab-btn:hover { background: var(--bg3); color: var(--fg); }
+#open-external-btn { background: none; border: 1px solid var(--border); color: var(--fg2); border-radius: 4px; padding: 0 8px; height: 24px; cursor: pointer; font-size: 13px; margin-left: 4px; }
+#open-external-btn:hover { background: var(--bg3); color: var(--fg); }
+/* 他のアプリの会話を開く */
+#external-picker { position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 1000; display: flex; align-items: flex-start; justify-content: center; padding-top: 8vh; }
+#external-picker.hidden { display: none; }
+.ext-box { width: min(760px, 92vw); max-height: 78vh; background: var(--bg2, #1f2335); color: var(--fg, #c0caf5); border: 1px solid var(--border, #3b4261); border-radius: 8px; display: flex; flex-direction: column; box-shadow: 0 16px 48px rgba(0,0,0,.5); }
+.ext-head { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border, #3b4261); }
+.ext-head input { flex: 1; background: var(--bg, #1a1b26); color: inherit; border: 1px solid var(--border, #3b4261); border-radius: 4px; padding: 4px 8px; font-size: 13px; }
+.ext-head button { background: none; border: 1px solid var(--border, #3b4261); color: inherit; border-radius: 4px; width: 26px; height: 26px; cursor: pointer; }
+.ext-note { margin: 0; padding: 8px 12px; font-size: 11.5px; opacity: .7; line-height: 1.5; }
+.ext-list { overflow: auto; padding: 4px 6px 10px; }
+.ext-item { display: grid; grid-template-columns: 110px 1fr auto; gap: 10px; align-items: center; padding: 7px 8px; border-radius: 4px; cursor: pointer; font-size: 13px; }
+.ext-item:hover, .ext-item.sel { background: var(--bg3, #292e42); }
+.ext-app { font-size: 11px; opacity: .8; white-space: nowrap; }
+.ext-app[data-engine="codex"] { color: #9ece6a; }
+.ext-app[data-engine="claude"] { color: #7aa2f7; }
+.ext-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ext-cwd { font-size: 11px; opacity: .55; white-space: nowrap; max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+.ext-when { font-size: 11px; opacity: .6; white-space: nowrap; }
 
 #topbar-spacer { flex: 1; min-width: 40px; -webkit-app-region: drag; }
 

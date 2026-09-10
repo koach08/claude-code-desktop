@@ -110,6 +110,23 @@ function getTabSessionId(tabEl) {
 // ── Listeners ──
 function setupListeners() {
   document.getElementById('new-tab-btn').addEventListener('click', () => newTab(currentMode));
+  document.getElementById('open-external-btn').addEventListener('click', () => openExternalPicker());
+  document.getElementById('ext-close').addEventListener('click', () => closeExternalPicker());
+  document.getElementById('external-picker').addEventListener('click', (e) => { if (e.target.id === 'external-picker') closeExternalPicker(); });
+  document.getElementById('ext-filter').addEventListener('input', () => renderExternalList());
+  document.getElementById('ext-filter').addEventListener('keydown', (e) => {
+    const items = [...document.querySelectorAll('#ext-list .ext-item')];
+    const cur = items.findIndex((x) => x.classList.contains('sel'));
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      const next = Math.max(0, Math.min(items.length - 1, cur + (e.key === 'ArrowDown' ? 1 : -1)));
+      items.forEach((x, i) => x.classList.toggle('sel', i === next));
+      if (items[next]) items[next].scrollIntoView({ block: 'nearest' });
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      (items[cur >= 0 ? cur : 0] || {}).click && items[cur >= 0 ? cur : 0].click();
+    } else if (e.key === 'Escape') { closeExternalPicker(); }
+  });
   document.getElementById('send-btn').addEventListener('click', send);
   document.getElementById('settings-btn').addEventListener('click', openSettings);
 
@@ -389,6 +406,7 @@ function setupListeners() {
   window.api.onMenuAction((action) => {
     switch (action) {
       case 'new-tab': newTab(currentMode); break;
+      case 'open-external': openExternalPicker(); break;
       case 'close-tab': if (activeId) closeTab(activeId); break;
       case 'saved':
         setStatus('ready', '保存しました');
@@ -652,6 +670,47 @@ async function switchSessionMode(newMode) {
 }
 
 // ── Tab Management ──
+// ── 他のアプリの会話を開く ────────────────────────────────
+// Claude デスクトップ / Codex Desktop / ChatGPT Work の会話は記録が手元にあるので、
+// 同じ会話を `claude --resume` / `codex resume` でこのアプリのタブとして続けられる。
+// デスクトップアプリを別に開いてメモリを食わなくて済む(本人の望み)。
+let externalItems = [];
+async function openExternalPicker() {
+  const el = document.getElementById('external-picker');
+  el.classList.remove('hidden');
+  document.getElementById('ext-list').innerHTML = '<div class="ext-note">読み込んでいます…</div>';
+  const r = await window.api.listExternalConversations();
+  externalItems = (r && r.items) || [];
+  renderExternalList();
+  const f = document.getElementById('ext-filter');
+  f.value = ''; f.focus();
+}
+function closeExternalPicker() { document.getElementById('external-picker').classList.add('hidden'); }
+function renderExternalList() {
+  const q = (document.getElementById('ext-filter').value || '').trim().toLowerCase();
+  const list = document.getElementById('ext-list');
+  const open = new Set([...tabs.values()].map((t) => t.session && t.session.conversationId).filter(Boolean));
+  const items = externalItems.filter((x) => !q || `${x.title} ${x.cwd} ${x.app}`.toLowerCase().includes(q));
+  if (!items.length) { list.innerHTML = '<div class="ext-note">該当する会話がありません</div>'; return; }
+  list.innerHTML = '';
+  items.forEach((x, i) => {
+    const row = document.createElement('div');
+    row.className = 'ext-item' + (i === 0 ? ' sel' : '');
+    const when = new Date(x.mtime);
+    const short = (x.cwd || '').replace(/^\/Users\/[^/]+/, '~');
+    row.innerHTML = `<span class="ext-app" data-engine="${x.engine}">${esc(x.app)}${open.has(x.id) ? ' · 開いています' : ''}</span>`
+      + `<span class="ext-title" title="${esc(x.title)}">${esc(x.title)}</span>`
+      + `<span><span class="ext-cwd" title="${esc(short)}">${esc(short)}</span> <span class="ext-when">${when.getMonth() + 1}/${when.getDate()} ${String(when.getHours()).padStart(2, '0')}:${String(when.getMinutes()).padStart(2, '0')}</span></span>`;
+    row.addEventListener('click', async () => {
+      closeExternalPicker();
+      // 既に同じ会話のタブがあればそこへ
+      for (const [id, t] of tabs) if (t.session && t.session.conversationId === x.id) { switchTab(id); return; }
+      await restoreTab({ mode: x.engine, cwd: x.cwd || undefined, name: x.title, conversationId: x.id });
+    });
+    list.appendChild(row);
+  });
+}
+
 async function newTab(mode, cwd) {
   try {
     const session = await window.api.createSession({ mode: mode || 'claude', cwd });

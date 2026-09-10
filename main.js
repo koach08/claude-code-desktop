@@ -155,6 +155,12 @@ function createMenu() {
           click: () => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('menu-action', 'new-tab'); }
         },
         {
+          // Claude デスクトップ / Codex Desktop / ChatGPT Work で進めた会話を、このアプリのタブとして続ける
+          label: '他のアプリの会話を開く…',
+          accelerator: 'CmdOrCtrl+Shift+O',
+          click: () => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('menu-action', 'open-external'); }
+        },
+        {
           label: 'タブを閉じる',
           accelerator: 'CmdOrCtrl+W',
           click: () => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('menu-action', 'close-tab'); }
@@ -236,6 +242,7 @@ function readSecretKey(name) {
 const { claudeProjectSlug, findConversationId: findConvIdIn, findCodexSessionId } = require('./src/conversation-id');
 const { saveLedger, loadLedger, dedupeConversationIds } = require('./src/ledger');
 const { inferProject, groupIntoTeams, cleanTail } = require('./src/board');
+const { listExternalConversations } = require('./src/external-conversations');
 const { titleSaysWaiting } = require('./src/prompt-detect');
 
 // 生きているタブが使用中の ID を除外したうえで検索する。
@@ -407,7 +414,7 @@ ipcMain.handle('create-session', async (_event, { cwd, name, mode, restoreFromId
     }
   });
 
-  return { id, name: sessionData.name, cwd: sessionData.cwd, mode: sessionMode, restored: isRestore };
+  return { id, name: sessionData.name, cwd: sessionData.cwd, mode: sessionMode, restored: isRestore, conversationId: sessionData.conversationId || null };
 });
 
 // ── IPC: Switch mode (kills current, starts new) ──
@@ -1144,6 +1151,12 @@ function projectForConversation(conversationId, cwd) {
 function tailFor(id) {
   return cleanTail(sessionBuffers.get(id) || '');
 }
+
+// 他のアプリで進めた会話の一覧。読むだけ(開くのは create-session に conversationId を渡す)
+ipcMain.handle('list-external-conversations', async () => {
+  try { return { ok: true, items: listExternalConversations({ limit: 80 }) }; }
+  catch (e) { return { ok: false, error: String(e && e.message || e), items: [] }; }
+});
 
 ipcMain.handle('board-snapshot', async () => {
   const tabs = [];
