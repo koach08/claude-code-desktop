@@ -5,7 +5,7 @@
 //
 // ⚠️ ここは端末に文字を流し込める窓。守りを先に書く。
 //   - 127.0.0.1 にだけ束ねる。外からは繋がらない
-//   - 合言葉を要る。~/.claude-code-app/control.json に 0600 で置き、起動ごとに作り直す
+//   - 合言葉を要る。~/.claude-code-app/control.json に 0600 で置く。再起動しても同じものを使う(消せば作り直す)
 //   - 制御文字を落とす。Ctrl-C やエスケープを送り込めないようにする
 //   - 長さに上限。1 回 4000 文字まで
 //   - 止める札。~/.claude-code-app/control-off があれば書き込みを全部断る
@@ -56,7 +56,14 @@ function startControlServer(deps) {
     workerResult,        // (jobId) => {done, output, code} | null
   } = deps;
 
-  const token = crypto.randomBytes(24).toString('hex');
+  // ⚠️ 以前は起動ごとに作り直していて、koach-os に貼った合言葉が再起動のたびに切れた(本人)。
+  //    前回の control.json が読めて形が正しければ、それを使い回す。0600 のまま。
+  let token = '';
+  try {
+    const prev = JSON.parse(fs.readFileSync(TOKEN_FILE, 'utf-8'));
+    if (typeof prev.token === 'string' && /^[0-9a-f]{48}$/.test(prev.token)) token = prev.token;
+  } catch (_) { /* 初回、または壊れている */ }
+  if (!token) token = crypto.randomBytes(24).toString('hex');
   try {
     fs.mkdirSync(DIR, { recursive: true });
     fs.writeFileSync(TOKEN_FILE, JSON.stringify({ port: PORT, token }, null, 2), { mode: 0o600 });

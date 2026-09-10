@@ -54,4 +54,48 @@ function findConversationId(cwd, sinceMs, opts = {}) {
   return null;
 }
 
-module.exports = { claudeProjectSlug, findConversationId };
+// Codex CLI の会話を探す。記録は ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl で、
+// 1行目が session_meta(payload.id / cwd / originator)。Ariya のタブから起動したものは
+// originator が "codex-tui"(Codex Desktop や codex_exec の記録は別物なので除く)。
+// ⚠️ ここが無いと再起動で `codex` を素で起動し直し、Codex のタブは毎回まっさらになっていた。
+function findCodexSessionId(cwd, sinceMs, opts = {}) {
+  const claimed = opts.claimed || new Set();
+  const home = opts.homedir || os.homedir();
+  const root = path.join(home, '.codex', 'sessions');
+  const days = [];
+  for (const back of [0, 1]) {
+    const d = new Date((opts.now || Date.now()) - back * 86400000);
+    days.push(path.join(root, String(d.getFullYear()), String(d.getMonth() + 1).padStart(2, '0'), String(d.getDate()).padStart(2, '0')));
+  }
+  const want = String(cwd || '').replace(/\/+$/, '');
+  const found = [];
+  for (const dir of days) {
+    let names = [];
+    try { names = fs.readdirSync(dir).filter((f) => f.startsWith('rollout-') && f.endsWith('.jsonl')); } catch (_) { continue; }
+    for (const f of names) {
+      const file = path.join(dir, f);
+      try {
+        const st = fs.statSync(file);
+        const born = st.birthtimeMs || st.mtimeMs;
+        if (born < sinceMs - 2000) continue;
+        const fd = fs.openSync(file, 'r');
+        // ⚠️ 1行目に base_instructions(数十KB)が入るので、小さく読むと途中で切れて JSON にならない
+        const buf = Buffer.alloc(512 * 1024);
+        let n = 0;
+        try { n = fs.readSync(fd, buf, 0, buf.length, 0); } finally { fs.closeSync(fd); }
+        const first = buf.toString('utf8', 0, n).split('\n')[0];
+        const meta = JSON.parse(first);
+        const p = meta && meta.payload;
+        if (!p || meta.type !== 'session_meta') continue;
+        if (p.originator && p.originator !== 'codex-tui') continue;
+        if (String(p.cwd || '').replace(/\/+$/, '') !== want) continue;
+        if (!p.id || claimed.has(p.id)) continue;
+        found.push({ id: p.id, born });
+      } catch (_) { /* 途中まで書かれている行など */ }
+    }
+  }
+  found.sort((a, b) => b.born - a.born);
+  return found.length ? found[0].id : null;
+}
+
+module.exports = { claudeProjectSlug, findConversationId, findCodexSessionId };

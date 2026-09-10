@@ -233,7 +233,7 @@ function readSecretKey(name) {
 // 会話ID検出の実装は src/conversation-id.js に切り出してある(テストから叩くため)。
 // ここが外れると再起動時に --resume が付かず会話が失われる。過去2度踏んだ穴
 // (スラッグの作り方 / mtime での絞り込み)は test/conversation-id.test.js で固定した。
-const { claudeProjectSlug, findConversationId: findConvIdIn } = require('./src/conversation-id');
+const { claudeProjectSlug, findConversationId: findConvIdIn, findCodexSessionId } = require('./src/conversation-id');
 const { saveLedger, loadLedger, dedupeConversationIds } = require('./src/ledger');
 const { inferProject, groupIntoTeams, cleanTail } = require('./src/board');
 const { titleSaysWaiting } = require('./src/prompt-detect');
@@ -252,13 +252,20 @@ function makeConvIdDetector(id, mode, cwd, startMs, preset) {
   let detected = !!preset;
   let lastCheck = 0;
   return () => {
-    if (mode !== 'claude' || detected) return;
+    if ((mode !== 'claude' && mode !== 'codex') || detected) return;
     const now = Date.now();
     if (now - lastCheck < 1500) return;
     lastCheck = now;
     const s = sessions.get(id);
     if (!s || s.conversationId) return;
-    const found = findConversationId(cwd, startMs);
+    let found = null;
+    if (mode === 'codex') {
+      const claimed = new Set();
+      for (const [, o] of sessions) if (o && o.conversationId) claimed.add(o.conversationId);
+      found = findCodexSessionId(cwd, startMs, { claimed });
+    } else {
+      found = findConversationId(cwd, startMs);
+    }
     if (found) { s.conversationId = found; detected = true; }
   };
 }
@@ -310,7 +317,8 @@ ipcMain.handle('create-session', async (_event, { cwd, name, mode, restoreFromId
     }
   } else if (sessionMode === 'codex') {
     cmd = IS_WIN ? 'codex.cmd' : 'codex';
-    args = [];
+    // 前の会話があれば戻す(無ければ素で起動)。Claude の --resume と同じ扱い
+    args = conversationId ? ['resume', conversationId] : [];
   } else if (sessionMode === 'gemini') {
     cmd = IS_WIN ? 'gemini.cmd' : 'gemini';
     args = [];
@@ -347,10 +355,18 @@ ipcMain.handle('create-session', async (_event, { cwd, name, mode, restoreFromId
     env: spawnEnv,
   });
 
+  // ⚠️ 再起動で復元した12本が全部「Claude Code」で、何のセッションか分からなかった(本人)。
+  //    既定名のままなら、会話の最初の依頼から名前を付ける
+  const GENERIC = new Set(['Claude Code', 'Codex', 'Gemini', 'Grok', 'Terminal']);
+  let tabName = name || deriveSessionName(sessionCwd, sessionMode);
+  if (conversationId && (!name || GENERIC.has(name))) {
+    const t = titleForConversation(conversationId, sessionCwd);
+    if (t) tabName = t;
+  }
   const sessionData = {
     pty: ptyProcess,
     cwd: sessionCwd,
-    name: name || deriveSessionName(sessionCwd, sessionMode),
+    name: tabName,
     mode: sessionMode,
     conversationId: conversationId || null,
     createdAt: new Date().toISOString(),
@@ -1068,6 +1084,38 @@ ipcMain.handle('worker-list', async () => [...workerJobs.entries()].map(([jobId,
 // 会話ファイルの末尾に出てくるリポジトリ名の最頻値を案件として使う。
 // 会話ファイルは大きい(実測で最大130MB)ので末尾だけ読み、
 // サイズと更新時刻が変わらない限り読み直さない。
+// 会話の最初の依頼(本人の言葉)から、タブに付ける短い名前を作る。
+// 記録は ~/.claude/projects/<slug>/<id>.jsonl。先頭 300KB だけ読む(1本 4MB を超える会話がある)。
+const titleCache = new Map();
+function titleForConversation(conversationId, cwd) {
+  if (!conversationId) return null;
+  if (titleCache.has(conversationId)) return titleCache.get(conversationId);
+  let title = null;
+  try {
+    const file = path.join(os.homedir(), '.claude', 'projects', claudeProjectSlug(cwd || os.homedir()), `${conversationId}.jsonl`);
+    const fd = fs.openSync(file, 'r');
+    const buf = Buffer.alloc(300 * 1024);
+    let n = 0;
+    try { n = fs.readSync(fd, buf, 0, buf.length, 0); } finally { fs.closeSync(fd); }
+    for (const line of buf.toString('utf8', 0, n).split('\n')) {
+      if (!line.includes('"type":"user"')) continue;
+      let d;
+      try { d = JSON.parse(line); } catch (_) { continue; }
+      const c = d && d.message && d.message.content;
+      let text = typeof c === 'string' ? c : Array.isArray(c) ? c.filter((x) => x && x.type === 'text').map((x) => x.text).join(' ') : '';
+      text = String(text || '').trim();
+      // 貼り付けた記録・システムの前置き・スラッシュ命令は名前にしない
+      if (!text || text.startsWith('<') || text.startsWith('/') || text.startsWith('This session is being continued') || text.startsWith('Base directory for this skill')) continue;
+      text = text.replace(/\s+/g, ' ').replace(/^[│|─┼\s]+/, '').replace(/^[0-9a-f]{8}\s*│\s*/, '');
+      if (text.length < 4) continue;
+      title = text.slice(0, 22) + (text.length > 22 ? '…' : '');
+      break;
+    }
+  } catch (_) { /* 記録が無い・読めない */ }
+  titleCache.set(conversationId, title);
+  return title;
+}
+
 const projectCache = new Map();   // conversationId -> { size, mtimeMs, project }
 const PROJECT_TAIL_BYTES = 400 * 1024;
 
