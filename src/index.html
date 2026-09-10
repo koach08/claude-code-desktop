@@ -409,7 +409,16 @@
       <div id="input-row">
         <textarea id="prompt-input" placeholder="プロンプトを入力... (Enter で送信, Shift+Enter で改行)" rows="2"></textarea>
         <button id="terminal-mic-btn" class="mic-btn" title="音声入力（入力欄に文字を入れるだけ）">&#127908;</button>
-        <button id="voice-talk-btn" class="mic-btn" title="音声で話す（返事を読み上げます）">&#128172;</button>
+        <!-- 音声モードの入り切り。ChatGPT / Gemini / Grok と同じ「波形」の丸ボタン。
+             状態は data-state で持ち、見た目は styles.css 側で切り替える -->
+        <button id="voice-talk-btn" class="voice-toggle" data-state="idle" title="音声モード" aria-label="音声モード" aria-pressed="false">
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+            <rect class="b b1" x="3"    y="9"  width="2.6" height="6"  rx="1.3"/>
+            <rect class="b b2" x="8.2"  y="5"  width="2.6" height="14" rx="1.3"/>
+            <rect class="b b3" x="13.4" y="7"  width="2.6" height="10" rx="1.3"/>
+            <rect class="b b4" x="18.6" y="10" width="2.6" height="4"  rx="1.3"/>
+          </svg>
+        </button>
         <button id="send-btn">送信</button>
       </div>
 

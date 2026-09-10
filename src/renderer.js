@@ -3001,11 +3001,16 @@ function voiceSetState(state, label) {
   if (!el) return;
   el.textContent = label;
   el.dataset.state = state;
+  // ⚠️ 中身は SVG なので textContent を触らない。状態は data-state で渡し、見た目は CSS
   const btn = document.getElementById('voice-talk-btn');
   if (btn) {
-    btn.classList.toggle('recording', state === 'recording');
-    btn.classList.toggle('transcribing', state === 'transcribing' || state === 'thinking');
-    btn.textContent = state === 'recording' ? '⏹' : '\u{1F4AC}';
+    const map = {
+      idle: 'idle', closed: 'idle', connecting: 'thinking',
+      recording: 'listening', listening: 'listening',
+      transcribing: 'thinking', thinking: 'thinking',
+      speaking: 'speaking',
+    };
+    btn.dataset.state = map[state] || 'idle';
   }
 }
 
@@ -3130,7 +3135,9 @@ async function setupVoiceChat() {
     if (!talkBtn) return;
     const on = voiceChat.live || !!(realtime && realtime.connected);
     talkBtn.classList.toggle('live-on', on);
-    talkBtn.title = on ? '聞いています（押すと終了）' : '押さずに話す';
+    talkBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    talkBtn.title = on ? '音声モード オン（押すと終了）' : '音声モード';
+    if (!on) talkBtn.dataset.state = 'idle';
   };
   talkBtn?.addEventListener('click', async () => {
     openPanel();

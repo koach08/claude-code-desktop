@@ -8,6 +8,10 @@
 // 音そのものは触らない。音量 (0〜1 の RMS) を渡すと、区切りだけを返す。
 // electron も Web Audio も読まないので node からテストできる。
 
+// ⚠️ 関数で包む。<script> で読むファイルはグローバルを共有するので、裸の
+//    `const API` は voice-turn.js のものと衝突して読み込み時に落ちる（実際に落ちて、
+//    💬 を押しても何も起きない状態になった）。
+(function attach(global) {
 const DEFAULTS = {
   startRms: 0.030,     // これを超えたら「話し始めた」
   stopRms: 0.015,      // これを下回り続けたら「話し終わった」
@@ -78,8 +82,8 @@ function rmsOf(samples) {
   return Math.sqrt(sum / samples.length);
 }
 
-const API = { createVad, createBarge, rmsOf, DEFAULTS };
-
-// node からはテストで require、画面からは <script> で読むので window にも載せる。
-if (typeof module !== 'undefined' && module.exports) module.exports = API;
-if (typeof window !== 'undefined') window.VoiceVad = API;
+  const API = { createVad, createBarge, rmsOf, DEFAULTS };
+  // node からはテストで require、画面からは <script> で読むので window にも載せる。
+  if (typeof module !== 'undefined' && module.exports) module.exports = API;
+  if (typeof window !== 'undefined') window.VoiceVad = API;
+}(typeof window !== 'undefined' ? window : globalThis));

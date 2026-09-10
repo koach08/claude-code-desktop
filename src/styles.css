@@ -1174,13 +1174,64 @@ body[data-ui="chat"] #mode-toggle { display: none; }
   opacity: 0.85;
 }
 
-/* 聞いている間は 💬 が脈打つ。⚠️ マイクが開いていることが一目で分かるようにする */
-.mic-btn.live-on {
-  color: #ff5f56;
-  animation: mic-pulse 1.4s ease-in-out infinite;
+/* ── 音声モードの丸ボタン ─────────────────────────────────
+   ChatGPT / Gemini / Grok の「音声モード」と同じ作法:
+   切のときは輪郭だけの丸に静かな波形。入のときは塗りつぶしの丸で波形が動く。
+   状態は data-state（idle / listening / thinking / speaking）で切り替える。 */
+.voice-toggle {
+  width: 36px; height: 36px; padding: 0;
+  border-radius: 50%;
+  border: 1.5px solid var(--border, #3a3a3a);
+  background: transparent; color: var(--fg2);
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+  position: relative;
+  transition: background .18s, color .18s, border-color .18s, transform .12s;
 }
-@keyframes mic-pulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
+.voice-toggle:hover { color: var(--fg); border-color: var(--fg2); }
+.voice-toggle:active { transform: scale(.94); }
+.voice-toggle:focus-visible { outline: 2px solid var(--accent, #7aa2f7); outline-offset: 2px; }
+.voice-toggle .b { fill: currentColor; transform-origin: center; }
+
+/* 入: 塗りつぶしの丸。輪が外へ広がる */
+.voice-toggle.live-on {
+  background: var(--fg); color: var(--bg, #1a1b26); border-color: var(--fg);
+}
+.voice-toggle.live-on::after {
+  content: ""; position: absolute; inset: -4px; border-radius: 50%;
+  border: 1.5px solid var(--fg);
+  opacity: 0; animation: voice-ring 1.8s ease-out infinite;
+}
+@keyframes voice-ring {
+  0%   { transform: scale(.85); opacity: .55; }
+  100% { transform: scale(1.35); opacity: 0; }
+}
+
+/* 聞いている: 波形が上下に動く（棒ごとに位相をずらす） */
+.voice-toggle[data-state="listening"] .b { animation: voice-bar .9s ease-in-out infinite; }
+.voice-toggle[data-state="listening"] .b2 { animation-delay: .12s; }
+.voice-toggle[data-state="listening"] .b3 { animation-delay: .24s; }
+.voice-toggle[data-state="listening"] .b4 { animation-delay: .36s; }
+@keyframes voice-bar {
+  0%, 100% { transform: scaleY(.45); }
+  50%      { transform: scaleY(1.25); }
+}
+
+/* 考えている・文字にしている: 静かに息をする */
+.voice-toggle[data-state="thinking"] .b { animation: voice-breathe 1.4s ease-in-out infinite; opacity: .7; }
+@keyframes voice-breathe {
+  0%, 100% { transform: scaleY(.6); }
+  50%      { transform: scaleY(.9); }
+}
+
+/* 話している: 速く大きく */
+.voice-toggle[data-state="speaking"] .b { animation: voice-bar .55s ease-in-out infinite; }
+.voice-toggle[data-state="speaking"] .b2 { animation-delay: .08s; }
+.voice-toggle[data-state="speaking"] .b3 { animation-delay: .16s; }
+.voice-toggle[data-state="speaking"] .b4 { animation-delay: .24s; }
+
+@media (prefers-reduced-motion: reduce) {
+  .voice-toggle .b, .voice-toggle.live-on::after { animation: none !important; }
+}
   50%      { opacity: 0.55; transform: scale(1.14); }
 }
 
