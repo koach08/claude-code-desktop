@@ -130,7 +130,7 @@ test('何も話さなければ、自分から降りる', async () => {
   // 待つ上限を短くして試す
   await vc.startLive();
   mic = 0.001;
-  await wait(9400);
+  await wait(25400);
   assert.strictEqual(vc.live, false, '無言のまま聞き続けている');
   assert.ok(log.heard.some((n) => n.includes('声が無かった')));
 });

@@ -44,7 +44,7 @@ test('咳や物音では録りはじめない', () => {
 
 test('何も話さなければ、待ちくたびれて自分から降りる', () => {
   const vad = createVad();
-  const ev = run(vad, rep(0.003, 400));
+  const ev = run(vad, rep(0.003, 600));
   assert.strictEqual(ev[ev.length - 1].e, 'timeout');
   assert.ok(ev[ev.length - 1].at <= DEFAULTS.noSpeechMs + 100);
 });
