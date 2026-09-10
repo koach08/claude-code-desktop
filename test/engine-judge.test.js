@@ -3,7 +3,7 @@
 //   実行: npm test
 const test = require('node:test');
 const assert = require('node:assert');
-const { judgeEngine, ENGINE_SIGNALS } = require('../src/engine-judge');
+const { judgeEngine, ENGINE_SIGNALS , ENGINE_LABELS } = require('../src/engine-judge');
 
 // [入力, 期待レーン, 補足]
 const CASES = [
@@ -65,10 +65,11 @@ test('決め手なしは Claude Code の low に落ちる', () => {
 
 // 判定表そのものの健全性。
 test('判定表に壊れた行が無い', () => {
-  const lanes = new Set(['claude', 'codex', 'gemini', 'grok', 'shell']);
+  const lanes = new Set(Object.keys(ENGINE_LABELS));
   for (const s of ENGINE_SIGNALS) {
     assert.ok(lanes.has(s.e), `未知のレーン: ${s.e}`);
-    assert.ok(s.w >= 1 && s.w <= 3, `重みが範囲外: ${s.why}`);
+    // 4 は「他のレーンの決め手(3)を上書きしたい」ときだけ使う（資料まわりなど）
+    assert.ok(s.w >= 1 && s.w <= 4, `重みが範囲外: ${s.why}`);
     assert.ok(s.why && s.re instanceof RegExp, `why/re が欠けている: ${JSON.stringify(s)}`);
   }
   for (const lane of lanes) {
