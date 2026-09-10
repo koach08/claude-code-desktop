@@ -72,7 +72,30 @@ function startControlServer(deps) {
     res.end(body);
   };
 
+  // ⚠️ ブラウザから叩けるようにする。koach-os の画面は本人の Mac の中で動くので、
+  //    127.0.0.1 のこのサーバーに直接届く。クラウドを経由しない。
+  //    許すのは「本人の画面」だけ: koach-os の本番と、手元の開発サーバー。
+  //    ⚠️ 合言葉は今まで通り必須。ここを緩めると、開いている別のサイトから叩ける。
+  const ALLOWED_ORIGINS = [
+    'https://koach-os.vercel.app',
+    'http://localhost:3000', 'http://127.0.0.1:3000',
+    'http://localhost:3457', 'http://127.0.0.1:3457',
+  ];
+  function cors(req, res) {
+    const origin = req.headers.origin;
+    if (!origin) return;                       // 画面以外（curl など）はそのまま
+    if (!ALLOWED_ORIGINS.includes(origin)) return;
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Max-Age', '600');
+    res.setHeader('Vary', 'Origin');
+  }
+
   const server = http.createServer(async (req, res) => {
+    cors(req, res);
+    // 下見の問い合わせ。⚠️ ここで合言葉を求めるとブラウザが送れないので通す
+    if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
     // 合言葉。無い・違うなら中身を一切見ない
     const auth = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
     if (auth !== token) return send(res, 401, { error: '合言葉が違います' });
