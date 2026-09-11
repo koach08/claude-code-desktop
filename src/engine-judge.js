@@ -62,8 +62,19 @@ const ENGINE_SIGNALS = [
   { e: 'claude', w: 4, why: '資料・原稿の作成と手直し', re: /スライド|資料|原稿|レジュメ|配布物|講義|授業|シラバス|記事|論文|プレゼン/ },
 ];
 
+// ⚠️ EGAKU(NSFW を含む生成 SaaS)の作業は Claude / Claude Code 以外に出さない(本人の決定 2026-09-11)。
+//    OpenAI(Astra/Codex)・Google(Gemini)・xAI(Grok)に画面や中身を流さないため。点数で競わせず、先に決める。
+const EGAKU_ONLY_CLAUDE = /egaku|えがく|エガク|画く|egaku\.ai|nsfw|venice|civitai|runpod.{0,20}(worker|生成)|α[123]|character_set/i;
+
 function judgeEngine(task) {
   const t = String(task || '');
+  if (EGAKU_ONLY_CLAUDE.test(t)) {
+    return {
+      engine: 'claude', label: ENGINE_LABELS.claude,
+      reason: 'EGAKU の作業 → Claude 固定(他社のエンジンに画面・中身を出さない)',
+      confidence: 'high', hits: ['EGAKU 固定'], scores: {}, runnerUp: null,
+    };
+  }
   // ⚠️ レーンを足したらここも増える。手で並べていたので astra を足したとき落ちた。
   //    ラベルの一覧から作れば、次からは足すだけで済む。
   const scores = {};
