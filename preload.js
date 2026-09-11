@@ -58,6 +58,11 @@ contextBridge.exposeInMainWorld('api', {
   openExternal: (url) => ipcRenderer.invoke('open-external-url', url),
   loadWebTabs: () => ipcRenderer.invoke('load-web-tabs'),
   saveWebTabs: (rows) => ipcRenderer.invoke('save-web-tabs', rows),
+  // Web タブを外(制御窓 → Claude Code)から読む・書く・押すための台帳と合図
+  webTabAttached: (info) => ipcRenderer.send('web-tab-attached', info),
+  webTabClosed: (wid) => ipcRenderer.send('web-tab-closed', { wid }),
+  onOpenWebUrl: (cb) => { ipcRenderer.on('open-web-url', (_e, p) => cb(p)); },
+  onCloseWebTab: (cb) => { ipcRenderer.on('close-web-tab', (_e, p) => cb(p)); },
 
   // 裏方ワーカー(タブを開かずにエンジンを走らせる)
   workerStart: (opts) => ipcRenderer.invoke('worker-start', opts),

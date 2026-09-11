@@ -283,6 +283,9 @@ function setupListeners() {
     });
   });
   document.getElementById('web-close').addEventListener('click', () => closeWebPicker());
+  // 制御窓(Claude Code など)から「この URL を開け」「このタブを閉じろ」
+  if (window.api.onOpenWebUrl) window.api.onOpenWebUrl(({ url, title }) => addWebTab({ url, title }));
+  if (window.api.onCloseWebTab) window.api.onCloseWebTab(({ wid }) => closeWebTab(wid));
   document.getElementById('web-picker').addEventListener('click', (e) => { if (e.target.id === 'web-picker') closeWebPicker(); });
   document.getElementById('web-url-form').addEventListener('submit', (e) => {
     e.preventDefault();
@@ -836,6 +839,10 @@ function addWebTab({ id, url, title, silent }) {
       else if (b.dataset.act === 'ext') window.api.openExternal ? window.api.openExternal(w.url) : window.open(w.url);
     } catch (_) {}
   });
+  // 外(制御窓)から読める・押せるように、中身の webContents を main に知らせる
+  view.addEventListener('dom-ready', () => {
+    try { window.api.webTabAttached({ wid, wcId: view.getWebContentsId(), url: w.url, title: w.title }); } catch (_) {}
+  });
   view.addEventListener('page-title-updated', (e) => {
     w.title = (e.title || w.title).slice(0, 80);
     tabEl.querySelector('.tname').textContent = w.title;
@@ -873,6 +880,7 @@ function closeWebTab(wid) {
   const w = webTabs.get(wid); if (!w) return;
   w.tabEl.remove(); w.pane.remove();
   webTabs.delete(wid);
+  try { window.api.webTabClosed(wid); } catch (_) {}
   saveWebTabs();
   if (activeWebId === wid) {
     activeWebId = null;

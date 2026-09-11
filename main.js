@@ -890,6 +890,45 @@ ipcMain.handle('hub-suggest-route', async (_e, { text }) => {
 // 判定表と判定関数は src/engine-judge.js に切り出してある(electron 非依存)。
 // テストから直接叩けるようにするためで、npm test が回帰を見張る。
 const { judgeEngine } = require('./src/engine-judge');
+const webBridge = require('./src/web-tab-bridge');
+// Web タブ(webview)の webContents。renderer が dom-ready で {wid, wcId} を知らせてくる。
+// 制御窓(control-server)から「読む・書く・押す」をするための台帳。
+const webTabContents = new Map();   // wid → { wcId, url, title }
+ipcMain.on('web-tab-attached', (_e, { wid, wcId, url, title }) => {
+  if (wid && wcId) webTabContents.set(String(wid), { wcId: Number(wcId), url: String(url || ''), title: String(title || '') });
+});
+ipcMain.on('web-tab-closed', (_e, { wid }) => { webTabContents.delete(String(wid)); });
+function webContentsOf(wid) {
+  const rec = webTabContents.get(String(wid));
+  if (!rec) return null;
+  const { webContents } = require('electron');
+  const wc = webContents.fromId(rec.wcId);
+  if (!wc || wc.isDestroyed()) { webTabContents.delete(String(wid)); return null; }
+  return wc;
+}
+function listWebTabsLive() {
+  const out = [];
+  for (const [wid, rec] of webTabContents) {
+    const wc = webContentsOf(wid);
+    if (!wc) continue;
+    out.push({ id: wid, url: wc.getURL() || rec.url, title: wc.getTitle() || rec.title, loading: wc.isLoading() });
+  }
+  return out;
+}
+// renderer に「この URL を Web タブで開け」と頼み、attached が来るまで待つ(最長 20 秒)
+function openWebTabFromMain(url, title) {
+  return new Promise((resolve) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return resolve(null);
+    const before = new Set(webTabContents.keys());
+    for (const t of listWebTabsLive()) if (t.url === url) return resolve(t.id);
+    mainWindow.webContents.send('open-web-url', { url, title: title || '' });
+    const t0 = Date.now();
+    const iv = setInterval(() => {
+      for (const wid of webTabContents.keys()) if (!before.has(wid)) { clearInterval(iv); return resolve(wid); }
+      if (Date.now() - t0 > 20000) { clearInterval(iv); resolve(null); }
+    }, 200);
+  });
+}
 
 ipcMain.handle('suggest-engine', async (_e, { task }) => judgeEngine(task));
 
@@ -1998,6 +2037,41 @@ function startControl() {
     controlServer = startControlServer({
       sessions,
       sessionBuffers,
+
+      // Web タブ(claude.ai / chatgpt.com / 任意サイト)を読む・書く・押す
+      web: {
+        list: () => listWebTabsLive(),
+        open: (url, title) => openWebTabFromMain(url, title),
+        eval: async (wid, js) => {
+          const wc = webContentsOf(wid);
+          if (!wc) throw new Error('その Web タブはありません');
+          return wc.executeJavaScript(js, true);
+        },
+        navigate: async (wid, url) => {
+          const wc = webContentsOf(wid);
+          if (!wc) throw new Error('その Web タブはありません');
+          await wc.loadURL(url);
+          return { ok: true, url: wc.getURL() };
+        },
+        shot: async (wid) => {
+          const wc = webContentsOf(wid);
+          if (!wc) throw new Error('その Web タブはありません');
+          const img = await wc.capturePage();
+          const dir = path.join(SESSIONS_DIR, 'shots');
+          fs.mkdirSync(dir, { recursive: true });
+          const file = path.join(dir, `${String(wid).replace(/[^\w.-]/g, '_')}.png`);
+          fs.writeFileSync(file, img.toPNG());
+          const sz = img.getSize();
+          return { ok: true, file, width: sz.width, height: sz.height };
+        },
+        close: (wid) => {
+          if (!webTabContents.has(String(wid)) || !mainWindow || mainWindow.isDestroyed()) return false;
+          mainWindow.webContents.send('close-web-tab', { wid: String(wid) });
+          return true;
+        },
+        judge: (task) => judgeEngine(task),
+        bridge: webBridge,
+      },
 
       closeSession: async (id) => {
         const s = sessions.get(id);

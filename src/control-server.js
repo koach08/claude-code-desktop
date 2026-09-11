@@ -54,6 +54,7 @@ function startControlServer(deps) {
     closeSession,        // async (id) => void
     runWorker,           // async ({engine, task, cwd, write, model, timeoutMs}) => {ok, jobId}
     workerResult,        // (jobId) => {done, output, code} | null
+    web,                 // { list, open, eval, navigate, shot, judge, bridge } Web タブの橋(無ければ /web は 503)
   } = deps;
 
   // ⚠️ 以前は起動ごとに作り直していて、koach-os に貼った合言葉が再起動のたびに切れた(本人)。
@@ -207,6 +208,109 @@ function startControlServer(deps) {
         const r = workerResult(parts[1]);
         if (!r) return send(res, 404, { error: 'そのジョブはありません' });
         return send(res, 200, r);
+      }
+
+      // ── Web タブ(claude.ai / chatgpt.com / 任意サイト)を読む・書く・押す ──────────
+      // 本人がタブの中でログインしておき、ここからは中身を読んで入力欄に書くだけ。
+      // 合言葉・127.0.0.1・control-off はここにも効く。書き込みは全部 log に残す。
+      if (parts[0] === 'web') {
+        if (!web) return send(res, 503, { error: 'Web タブの橋がありません' });
+        const B = web.bridge;
+
+        // 一覧
+        if (req.method === 'GET' && parts.length === 1) return send(res, 200, { tabs: web.list() });
+
+        // 開く {url, title?}
+        if (req.method === 'POST' && parts.length === 1) {
+          const url = String(body.url || '');
+          if (!/^https?:\/\//i.test(url)) return send(res, 400, { error: 'url は http(s):// から' });
+          const id = await web.open(url, body.title);
+          log(`web open ${url}`);
+          if (!id) return send(res, 504, { error: 'タブが開きませんでした' });
+          return send(res, 200, { ok: true, id });
+        }
+
+        // 作業に応じてどのチャットに投げるか決めて、投げる {text, engine?: 'auto'|'chatgpt'|'claude', submit?: true}
+        //   auto: engine-judge が astra なら ChatGPT、claude なら Claude。codex/gemini/grok なら Web には投げず判定だけ返す
+        //   ⚠️ EGAKU は judge が claude 固定なので ChatGPT には行かない
+        if (req.method === 'POST' && parts[1] === 'ask' && parts.length === 2) {
+          const text = B.cleanText(body.text, B.MAX_ASK);
+          if (!text) return send(res, 400, { error: 'text が空です' });
+          const want = String(body.engine || 'auto');
+          const judgement = web.judge(text);
+          let target = want === 'auto' ? B.pickWebTarget(judgement) : (want === 'chatgpt' || want === 'claude' ? want : null);
+          if (!target) {
+            return send(res, 200, { ok: true, routed: false, judgement,
+              hint: `${judgement.label} 向き。Web のチャットではなく /worker(engine=${judgement.engine}) か手元のタブで` });
+          }
+          let tab = web.list().find((t) => B.tabMatches(t, target));
+          let id = tab ? tab.id : await web.open(B.TARGET_URL[target], B.TARGET_TITLE[target]);
+          if (!id) return send(res, 504, { error: `${target} のタブが開きませんでした` });
+          if (!tab) await new Promise((r) => setTimeout(r, 2500));   // 読み込みを待つ
+          const r = await web.eval(id, B.askScript(text, body.submit !== false));
+          log(`web ask ${target} id=${id} len=${text.length} submit=${body.submit !== false} → ${JSON.stringify(r).slice(0, 80)}`);
+          return send(res, 200, { ok: !!(r && r.ok), routed: true, target, id, judgement, result: r });
+        }
+
+        const id = parts[1];
+        const op = parts[2];
+        if (!id) return send(res, 404, { error: 'タブ id が要ります' });
+
+        // 最後の返事と、まだ書いている途中か
+        if (req.method === 'GET' && op === 'reply') {
+          const r = await web.eval(id, B.READ_SCRIPT);
+          return send(res, 200, r);
+        }
+        // 本文 ?selector=
+        if (req.method === 'GET' && op === 'text') {
+          const r = await web.eval(id, B.textScript(u.searchParams.get('selector') || ''));
+          return send(res, 200, r);
+        }
+        // 押せるもの・書けるものの一覧
+        if (req.method === 'GET' && op === 'outline') {
+          const r = await web.eval(id, B.OUTLINE_SCRIPT);
+          return send(res, 200, r);
+        }
+        // 見た目(PNG を ~/.claude-code-app/shots/ に保存してパスを返す)
+        if (req.method === 'GET' && op === 'shot') {
+          const r = await web.shot(id);
+          return send(res, 200, r);
+        }
+        // 移動 {url}
+        if (req.method === 'POST' && op === 'navigate') {
+          const url = String(body.url || '');
+          if (!/^https?:\/\//i.test(url)) return send(res, 400, { error: 'url は http(s):// から' });
+          log(`web navigate ${id} ${url}`);
+          return send(res, 200, await web.navigate(id, url));
+        }
+        // 押す {selector?, text?}
+        if (req.method === 'POST' && op === 'click') {
+          const r = await web.eval(id, B.clickScript(body.selector, body.text));
+          log(`web click ${id} ${body.selector || ''} ${body.text || ''} → ${JSON.stringify(r).slice(0, 80)}`);
+          return send(res, 200, r);
+        }
+        // 書く {selector, text}
+        if (req.method === 'POST' && op === 'fill') {
+          if (!body.selector) return send(res, 400, { error: 'selector が要ります' });
+          const r = await web.eval(id, B.fillScript(body.selector, B.cleanText(body.text, B.MAX_ASK)));
+          log(`web fill ${id} ${body.selector} len=${String(body.text || '').length}`);
+          return send(res, 200, r);
+        }
+        // 任意の JS {js}  ⚠️ 何でもできる口。合言葉を持つ本人の道具(Claude Code)だけが使う前提
+        if (req.method === 'POST' && op === 'eval') {
+          const js = String(body.js || '');
+          if (!js) return send(res, 400, { error: 'js が空です' });
+          log(`web eval ${id} len=${js.length}`);
+          let r;
+          try { r = await web.eval(id, js); } catch (e) { return send(res, 200, { ok: false, error: String(e.message || e) }); }
+          return send(res, 200, { ok: true, result: r });
+        }
+        // 閉じる
+        if (req.method === 'DELETE' && parts.length === 2) {
+          log(`web close ${id}`);
+          return send(res, 200, { ok: !!web.close(id) });
+        }
+        return send(res, 404, { error: `知らない口です: ${req.method} ${u.pathname}` });
       }
 
       return send(res, 404, { error: `知らない口です: ${req.method} ${u.pathname}` });
