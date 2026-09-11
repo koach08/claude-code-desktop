@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, Menu, dialog, shell, clipboard } = require('electron');
+const { app, BrowserWindow, ipcMain, Menu, dialog, shell, clipboard, session } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -2063,8 +2063,32 @@ function startControl() {
 let timer;
 // Web タブの中で開くポップアップ(Google ログインなど)は、同じ保存領域(persist:web)の
 // 小窓で開く。外のブラウザに飛ばすとログインが戻ってこない。
+// Google のログインは UA に "Ariya Bridge/1.7.7" や "Electron/32" が混じっていると
+// 「このブラウザまたはアプリは安全でない可能性があります」で弾く(2026-09-11 に実際に出た)。
+// renderer 側の置換は "Ariya Bridge" の空白を跨げず、productName が残っていた。
+// ここで Chrome と同じ名乗りに揃え、persist:web の全リクエスト(ポップアップ含む)に効かせる。
+function chromeLikeUA() {
+  return String(app.userAgentFallback || '')
+    .replace(new RegExp(' ?' + app.getName().replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '/[\\d.]+'), '')
+    .replace(/ ?claude-code-desktop\/[\d.]+/, '')
+    .replace(/ ?Electron\/[\d.]+/, '');
+}
+function setupWebSession() {
+  const ua = chromeLikeUA();
+  const ses = session.fromPartition('persist:web');
+  ses.setUserAgent(ua);
+  // Client Hints も Chrome と同じ並びにする(UA だけ揃えても brands で見抜かれることがある)
+  const m = /Chrome\/(\d+)/.exec(ua); const major = m ? m[1] : '128';
+  const brands = `"Chromium";v="${major}", "Google Chrome";v="${major}", "Not;A=Brand";v="99"`;
+  ses.webRequest.onBeforeSendHeaders((details, cb) => {
+    const h = details.requestHeaders;
+    if ('sec-ch-ua' in h || 'Sec-CH-UA' in h) { delete h['sec-ch-ua']; h['Sec-CH-UA'] = brands; }
+    cb({ requestHeaders: h });
+  });
+}
 app.on('web-contents-created', (_event, contents) => {
   if (contents.getType() !== 'webview') return;
+  try { contents.setUserAgent(chromeLikeUA()); } catch (_) {}
   contents.setWindowOpenHandler(({ url }) => {
     if (!/^https?:\/\//i.test(url)) return { action: 'deny' };
     return {
@@ -2080,6 +2104,7 @@ app.on('web-contents-created', (_event, contents) => {
 app.whenReady().then(() => {
   setCrashFlag();
   try { app.setAsDefaultProtocolClient(DEEP_LINK_SCHEME); } catch (_) {}
+  try { setupWebSession(); } catch (e) { console.error('web session:', e.message); }
   createWindow();
   createMenu();
   timer = setInterval(saveSessionsSync, 10000);

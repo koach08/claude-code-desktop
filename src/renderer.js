@@ -765,7 +765,9 @@ const WEB_PRESETS = [
   { label: 'Fleet View', url: 'http://127.0.0.1:7373/', note: '従業員と割り振り(bash run.sh が要る)' },
 ];
 // Electron のままの UA だと Google のログインが「安全でないブラウザ」と弾く。Chrome として名乗る
-const WEB_UA = String((typeof navigator !== 'undefined' && navigator.userAgent) || '').replace(/ ?Electron\/[\d.]+/, '').replace(/ ?Ariya[^ ]*\/[\d.]+/, '').replace(/ ?claude-code-desktop\/[\d.]+/, '');
+// ⚠️ productName は "Ariya Bridge" と空白入り。旧 /Ariya[^ ]*\// は空白で止まって残していた。
+//    正本は main.js の setupWebSession()(セッション全体に効く)。ここは webview 属性の保険。
+const WEB_UA = String((typeof navigator !== 'undefined' && navigator.userAgent) || '').replace(/ ?Electron\/[\d.]+/, '').replace(/ ?Ariya Bridge\/[\d.]+/, '').replace(/ ?Ariya[^ ]*\/[\d.]+/, '').replace(/ ?claude-code-desktop\/[\d.]+/, '');
 
 function openWebPicker() {
   const el = document.getElementById('web-picker');
