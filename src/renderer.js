@@ -806,7 +806,10 @@ function addWebTab({ id, url, title, silent }) {
   tabEl.className = 'tab web';
   tabEl.dataset.wid = wid;
   tabEl.innerHTML = `<span class="tab-icon">WW</span><span class="tname">${esc(w.title)}</span><span class="tab-badge"></span><span class="tclose">&times;</span>`;
-  document.getElementById('tabs').appendChild(tabEl);
+  // ⚠️ #tabs は max-width 60% でスクロールバー無しの横スクロール。端末タブが 15 本あると
+  //    末尾に足した Web タブは画面の外に出て「タブがどこかに消えた」になる(2026-09-11)。
+  //    Web タブは先頭(信号機の隣)に置き、開いたときは必ず見える位置まで寄せる。
+  document.getElementById('tabs').prepend(tabEl);
 
   const pane = document.createElement('div');
   pane.className = 'pane web';
@@ -859,6 +862,7 @@ function switchWebTab(wid) {
   activeWebId = wid;
   tabs.forEach((t) => { t.tabEl.classList.remove('active'); t.pane.classList.remove('active'); });
   webTabs.forEach((x, xid) => { const on = xid === wid; x.tabEl.classList.toggle('active', on); x.pane.classList.toggle('active', on); });
+  try { w.tabEl.scrollIntoView({ inline: 'nearest', block: 'nearest' }); } catch (_) {}
   document.getElementById('status-cwd').textContent = w.url;
   setTimeout(() => { try { w.view.focus(); } catch (_) {} }, 50);
 }
@@ -1081,6 +1085,8 @@ function switchTab(id) {
     t.tabEl.classList.toggle('active', on);
     t.pane.classList.toggle('active', on);
     if (on) {
+      // タブが多いと選んだタブが横スクロールの外にいる。見える位置まで寄せる
+      try { t.tabEl.scrollIntoView({ inline: 'nearest', block: 'nearest' }); } catch (_) {}
       // Clear badge when switching to this tab
       const badge = t.tabEl.querySelector('.tab-badge');
       if (badge) badge.classList.remove('visible', 'approval');
