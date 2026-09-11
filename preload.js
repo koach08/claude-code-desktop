@@ -63,6 +63,8 @@ contextBridge.exposeInMainWorld('api', {
   webTabClosed: (wid) => ipcRenderer.send('web-tab-closed', { wid }),
   onOpenWebUrl: (cb) => { ipcRenderer.on('open-web-url', (_e, p) => cb(p)); },
   onCloseWebTab: (cb) => { ipcRenderer.on('close-web-tab', (_e, p) => cb(p)); },
+  // Brave の ChatGPT ログインをこのアプリへ取り込む(メニューから)
+  importBraveChatgpt: () => ipcRenderer.invoke('import-brave-chatgpt'),
 
   // 裏方ワーカー(タブを開かずにエンジンを走らせる)
   workerStart: (opts) => ipcRenderer.invoke('worker-start', opts),

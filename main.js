@@ -190,6 +190,12 @@ function createMenu() {
           click: () => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('menu-action', 'open-web'); }
         },
         {
+          // Brave のログイン(chatgpt.com/openai.com)をこのアプリの Web タブへ取り込む。
+          // Google の埋め込みログイン拒否を避けるため、ログイン済みの状態をそのまま移す。
+          label: 'Brave から ChatGPT のログインを取り込む',
+          click: () => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('menu-action', 'import-brave-chatgpt'); }
+        },
+        {
           label: 'タブを閉じる',
           accelerator: 'CmdOrCtrl+W',
           click: () => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('menu-action', 'close-tab'); }
@@ -1723,6 +1729,21 @@ const WEB_TABS_FILE = path.join(SESSIONS_DIR, 'web-tabs.json');
 ipcMain.handle('open-external-url', async (_e, url) => {
   if (!/^https?:\/\//i.test(String(url || ''))) return false;
   try { await shell.openExternal(String(url)); return true; } catch { return false; }
+});
+// Brave のログイン(chatgpt.com/openai.com)をこのアプリの Web タブ(persist:web)へ取り込む。
+// キーチェーン許可の確認は macOS が本人に出す。値はここだけで扱い、外へ出さない。
+ipcMain.handle('import-brave-chatgpt', async () => {
+  try {
+    const { session } = require('electron');
+    const braveImport = require('./src/brave-cookie-import');
+    const r = await braveImport.importBraveChatgpt({
+      session,
+      log: (line) => { try { fs.appendFileSync(path.join(SESSIONS_DIR, 'brave-import.log'), `${new Date().toISOString()} ${line}\n`); } catch (_) {} },
+    });
+    return { ok: true, ...r };
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
 });
 ipcMain.handle('load-web-tabs', async () => {
   try {

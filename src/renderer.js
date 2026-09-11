@@ -425,6 +425,7 @@ function setupListeners() {
       case 'new-tab': newTab(currentMode); break;
       case 'open-external': openExternalPicker(); break;
       case 'open-web': openWebPicker(); break;
+      case 'import-brave-chatgpt': importBraveChatgpt(); break;
       case 'close-tab': if (activeId) closeTab(activeId); break;
       case 'saved':
         setStatus('ready', '保存しました');
@@ -787,6 +788,21 @@ function openWebPicker() {
   const f = document.getElementById('web-url'); f.value = ''; f.focus();
 }
 function closeWebPicker() { document.getElementById('web-picker').classList.add('hidden'); }
+
+// Brave のログイン(chatgpt.com/openai.com)をこのアプリへ取り込み、ChatGPT のタブを開く。
+// Google の埋め込みログイン拒否を避けるため、ログイン操作ではなく「ログイン済み」を移す。
+async function importBraveChatgpt() {
+  setStatus('working', 'Brave から ChatGPT のログインを取り込み中(キーチェーンの許可を求められます)…');
+  let r;
+  try { r = await window.api.importBraveChatgpt(); }
+  catch (e) { r = { ok: false, error: String(e && e.message || e) }; }
+  if (r && r.ok) {
+    setStatus('ready', `取り込み完了(${r.ok || r.set || 0} 件)。ChatGPT を開きます`);
+    addWebTab({ url: 'https://chatgpt.com/', title: 'ChatGPT' });
+  } else {
+    setStatus('error', `取り込めませんでした: ${(r && r.error) || '不明'}（Brave にログインしているか確認）`);
+  }
+}
 
 function saveWebTabs() {
   window.api.saveWebTabs([...webTabs.values()].map((w) => ({ id: w.id, url: w.url, title: w.title })));
