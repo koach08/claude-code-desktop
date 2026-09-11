@@ -759,7 +759,8 @@ const webTabs = new Map();
 let activeWebId = null;
 const WEB_PRESETS = [
   { label: 'Alfred (koach-os)', url: 'https://koach-os.vercel.app/', note: '司令塔。話しかける・予定・判断待ち' },
-  { label: 'Claude', url: 'https://claude.ai/', note: 'Cowork や普段のチャット' },
+  // ⚠️ claude.ai/ は最後に使った画面(本人は Claude Code)へ飛ぶので、チャットは /new で開く
+  { label: 'Claude チャット', url: 'https://claude.ai/new', note: '普段のチャット(新しい会話)' },
   { label: 'ChatGPT', url: 'https://chatgpt.com/', note: 'Astra など Web の会話' },
   { label: 'Fleet View', url: 'http://127.0.0.1:7373/', note: '従業員と割り振り(bash run.sh が要る)' },
 ];
