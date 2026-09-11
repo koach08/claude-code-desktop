@@ -1,6 +1,11 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('api', {
+  // ドロップされた File のフルパス。Electron 32 で File.path が消えたので webUtils で取る
+  // (2026-09-11: 消えた後もずっと f.path を見ていて、ドロップが黙って何も起きなかった)
+  pathForFile: (file) => { try { return webUtils.getPathForFile(file); } catch (_) { return ''; } },
+  // クリップボードの画像をファイルに落としてパスを返す(無ければ '')
+  saveClipboardImage: () => ipcRenderer.invoke('save-clipboard-image'),
   createSession: (opts) => ipcRenderer.invoke('create-session', opts || {}),
   switchMode: (sessionId, newMode) => ipcRenderer.invoke('switch-mode', { sessionId, newMode }),
   sendInput: (sessionId, input) => ipcRenderer.invoke('send-input', { sessionId, input }),

@@ -504,7 +504,7 @@ function setupListeners() {
     document.getElementById('app').classList.remove('drag-over');
     const files = e.dataTransfer.files;
     if (!files || files.length === 0) return;
-    const paths = Array.from(files).map(f => f.path).filter(Boolean);
+    const paths = Array.from(files).map(f => (window.api.pathForFile ? window.api.pathForFile(f) : f.path)).filter(Boolean);
     if (paths.length === 0) return;
 
     // Shift+ドロップ: 従来どおりフォルダを新規タブで開く
@@ -525,6 +525,29 @@ function setupListeners() {
     ta.dispatchEvent(new Event('input'));
   });
 }
+
+// 入力欄への画像の貼り付け(スクショなど)。端末には画像を渡せないので、ファイルに落として
+// そのパスを入れる。Claude / Codex はパスを渡せば画像を読む
+function insertPathIntoPrompt(p) {
+  const ta = document.getElementById('builder-prompt') && document.body.dataset.ui === 'builder'
+    ? document.getElementById('builder-prompt')
+    : document.getElementById('prompt-input');
+  if (!ta || !p) return false;
+  const needsSpace = ta.value && !ta.value.endsWith(' ');
+  ta.value += (needsSpace ? ' ' : '') + quoteDropPath(p) + ' ';
+  ta.focus();
+  ta.dispatchEvent(new Event('input'));
+  return true;
+}
+document.addEventListener('paste', async (e) => {
+  const items = e.clipboardData && e.clipboardData.items;
+  if (!items || !window.api.saveClipboardImage) return;
+  const hasImage = Array.from(items).some((it) => it.kind === 'file' && /^image\//.test(it.type));
+  if (!hasImage) return;
+  e.preventDefault();
+  const p = await window.api.saveClipboardImage();
+  if (p) insertPathIntoPrompt(p);
+});
 
 // ドロップされたファイル/フォルダのパスを shell 安全にクォート
 function quoteDropPath(p) {

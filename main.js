@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, Menu, dialog, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, Menu, dialog, shell, clipboard } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -1048,6 +1048,17 @@ ipcMain.handle('load-voice-history', async () => {
 
 const { runProcess } = require('./src/worker-run');
 const workerJobs = new Map();   // jobId -> { cancel, engine, task, cwd, write, startedAt }
+
+// 入力欄に貼られた画像を ~/.claude-code-app/pasted/ に保存してパスを返す
+ipcMain.handle('save-clipboard-image', () => {
+  const img = clipboard.readImage();
+  if (!img || img.isEmpty()) return '';
+  const dir = path.join(os.homedir(), '.claude-code-app', 'pasted');
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, `paste-${new Date().toISOString().replace(/[:.]/g, '-')}.png`);
+  fs.writeFileSync(file, img.toPNG());
+  return file;
+});
 
 ipcMain.handle('worker-start', async (event, { engine, task, cwd, write, model, timeoutMs, allowUnsandboxed }) => {
   let spec;
