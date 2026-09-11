@@ -39,6 +39,16 @@ const IS_WIN = process.platform === 'win32';
 const IS_MAC = process.platform === 'darwin';
 
 let shellEnv = { ...process.env };
+// ⚠️ Claude Code のセッションの中から起動されると(入れ替えスクリプトを Claude に走らせた時など)、
+//    CLAUDECODE=1 / CLAUDE_CODE_CHILD_SESSION=1 を引き継ぎ、タブの claude が「子セッション」扱いで
+//    会話を保存しなくなる(Transcript saving is off)。--resume で戻らず Fleet View にも出ない。
+//    2026-09-11 に 07:02 の入れ替え以降の全タブがこれだった。エンジンに渡す環境からは必ず外す。
+const CLAUDE_INHERIT_KEYS = ['CLAUDECODE', 'CLAUDE_CODE_CHILD_SESSION', 'CLAUDE_CODE_ENTRYPOINT'];
+function scrubInheritedClaudeEnv(env) {
+  for (const k of CLAUDE_INHERIT_KEYS) delete env[k];
+  return env;
+}
+scrubInheritedClaudeEnv(shellEnv);
 // Grok コーディングレーンの既定モデル。grok-4.6 = xAI の現行最上位。
 // TUI 内で /models から grok-build-0.1（速い・安いコーディング特化）等へ切替可。
 const GROK_MODEL = 'xai/grok-4.6';
@@ -58,6 +68,7 @@ if (!IS_WIN) {
       if (i > 0) shellEnv[line.substring(0, i)] = line.substring(i + 1);
     });
   } catch (_) {}
+  scrubInheritedClaudeEnv(shellEnv);   // ログインシェル側にも入っていれば外す
 }
 
 function getPty() {

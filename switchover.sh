@@ -12,6 +12,9 @@ set -e
 SELF="$(cd -- "$(dirname -- "$0")" && pwd)/$(basename -- "$0")"
 HERE="$(dirname -- "$SELF")"
 
+# ⚠️ Claude Code のセッションから実行すると CLAUDECODE / CLAUDE_CODE_CHILD_SESSION が open 経由で
+#    アプリに引き継がれ、タブの claude が会話を保存しなくなる(2026-09-11 に半日分のタブがそうなった)。
+#    open の前で必ず外す。main.js 側でも外すが、二重に守る。
 # --- 実行元ガード ---------------------------------------------------------
 # 2026-08-23 20:06、このスクリプトを Ariya Bridge のタブ(=アプリの子プロセス)から
 # 実行し、手順1でアプリを終了させた瞬間に自分ごと道連れで死んだ。ditto が途中で
@@ -94,11 +97,11 @@ trap 'rm -rf "$STAGE" 2>/dev/null || true' EXIT
 
 if ! ditto "$SRC" "$STAGE"; then
   echo "   ⚠ 展開に失敗。/Applications には触れていません"
-  rm -rf "$STAGE"; open "$DST" 2>/dev/null || true; exit 1
+  rm -rf "$STAGE"; env -u CLAUDECODE -u CLAUDE_CODE_CHILD_SESSION -u CLAUDE_CODE_ENTRYPOINT open "$DST" 2>/dev/null || true; exit 1
 fi
 if [ ! -x "$STAGE/Contents/MacOS/Ariya Bridge" ] || [ ! -f "$STAGE/Contents/Info.plist" ]; then
   echo "   ⚠ 展開結果が不完全。/Applications には触れていません"
-  rm -rf "$STAGE"; open "$DST" 2>/dev/null || true; exit 1
+  rm -rf "$STAGE"; env -u CLAUDECODE -u CLAUDE_CODE_CHILD_SESSION -u CLAUDE_CODE_ENTRYPOINT open "$DST" 2>/dev/null || true; exit 1
 fi
 
 if [ -d "$DST" ]; then mv "$DST" "$OLD"; fi
@@ -111,7 +114,7 @@ else
   trap - EXIT
   rm -rf "$DST"
   [ -d "$OLD" ] && mv "$OLD" "$DST"
-  open "$DST"; exit 1
+  env -u CLAUDECODE -u CLAUDE_CODE_CHILD_SESSION -u CLAUDE_CODE_ENTRYPOINT open "$DST"; exit 1
 fi
 
 echo "3) URL スキーム (ariya://) を LaunchServices に登録..."
@@ -123,7 +126,7 @@ for d in "$SRC" "$(dirname "$(dirname "$SRC")")/mac/Ariya Bridge.app"; do
 done
 
 echo "4) 新アプリを起動..."
-open "$DST"
+env -u CLAUDECODE -u CLAUDE_CODE_CHILD_SESSION -u CLAUDE_CODE_ENTRYPOINT open "$DST"
 
 echo
 echo "確認:"
