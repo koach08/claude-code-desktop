@@ -24,10 +24,12 @@ body {
 }
 /* macOS traffic lights spacing */
 #drag-region { width: 72px; flex-shrink: 0; }
-#tabs, #new-tab-btn, #mode-toggle, #ui-toggle, #settings-btn,
+#tabs, #new-tab-btn, #open-external-btn, #engine-suggest-btn, #mode-toggle, #ui-toggle, #settings-btn,
 .tab, .mode-btn, .ui-btn {
   -webkit-app-region: no-drag;
 }
+/* ⚠️ #topbar は窓を掴んで動かす領域(drag)。ここに置くボタンは no-drag に入れないと
+   押しても窓が掴まれるだけで click が届かない。↗ が「押しても何も起きない」のはこれだった(2026-09-11)。 */
 
 #tabs {
   display: flex; gap: 5px; scrollbar-width: none; margin-left: 6px;
