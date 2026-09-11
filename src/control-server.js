@@ -103,6 +103,16 @@ function startControlServer(deps) {
     cors(req, res);
     // 下見の問い合わせ。⚠️ ここで合言葉を求めるとブラウザが送れないので通す
     if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
+    // 合言葉を「本人の koach-os の画面」にだけ渡す口。合言葉は要らない(これが合言葉を配る側)。
+    // ⚠️ 本人は control.json を開いて貼る手順が分からなかった(2026-09-11)。Origin はブラウザが付ける
+    //    ヘッダで、ページのスクリプトからは偽れない。ブラウザ以外は同じ Mac で control.json を読めるので
+    //    隠す意味がない。それでも Origin の無い要求(curl 等)には渡さない。
+    if (req.method === 'GET' && req.url.split('?')[0] === '/pair') {
+      const origin = req.headers.origin || '';
+      if (!origin || !ALLOWED_ORIGINS.includes(origin)) return send(res, 403, { error: 'その画面には渡しません' });
+      log(`pair ${origin}`);
+      return send(res, 200, { token, port: PORT });
+    }
     // 合言葉。無い・違うなら中身を一切見ない
     const auth = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
     if (auth !== token) return send(res, 401, { error: '合言葉が違います' });

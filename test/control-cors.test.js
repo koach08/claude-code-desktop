@@ -35,3 +35,11 @@ test('外に向けて開いていない', () => {
   assert.match(src, /server\.listen\(PORT, '127\.0\.0\.1'/);
   assert.ok(!/listen\(PORT, '0\.0\.0\.0'/.test(src));
 });
+
+test('合言葉を配る口(/pair)は Origin が許可先のときだけ。Origin 無しにも渡さない', () => {
+  const i = src.indexOf("=== '/pair'");
+  const j = src.indexOf('auth !== token');
+  assert.ok(i > 0 && i < j, '/pair が合言葉の確認より後にある(合言葉が要る形になっている)');
+  const block = src.slice(i, i + 400);
+  assert.match(block, /!origin \|\| !ALLOWED_ORIGINS\.includes\(origin\)/, 'Origin 無し/許可外を弾いていない');
+});
