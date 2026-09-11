@@ -105,7 +105,19 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      // Web タブ(koach-os / claude.ai / chatgpt.com をこのアプリの中に出す)のため。
+      // 本人の望みは「デスクトップアプリをいくつも開かない」(2026-09-11)
+      webviewTag: true,
     },
+  });
+  // ⚠️ webview は中身のサイトが動く別のレンダラ。preload も node も渡さない。
+  //    src が http(s) 以外(file: など)なら付けさせない。
+  mainWindow.webContents.on('will-attach-webview', (event, webPreferences, params) => {
+    delete webPreferences.preload;
+    webPreferences.nodeIntegration = false;
+    webPreferences.contextIsolation = true;
+    webPreferences.sandbox = true;
+    if (!/^https?:\/\//i.test(String(params.src || ''))) event.preventDefault();
   });
   mainWindow.loadFile(path.join(__dirname, 'src', 'index.html'));
 
@@ -159,6 +171,12 @@ function createMenu() {
           label: '他のアプリの会話を開く…',
           accelerator: 'CmdOrCtrl+Shift+O',
           click: () => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('menu-action', 'open-external'); }
+        },
+        {
+          // Alfred(koach-os) / claude.ai / chatgpt.com をこのアプリの中のタブで開く
+          label: 'Web をタブで開く…',
+          accelerator: 'CmdOrCtrl+Shift+W',
+          click: () => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('menu-action', 'open-web'); }
         },
         {
           label: 'タブを閉じる',
@@ -1638,6 +1656,29 @@ ipcMain.handle('clear-work-log', async () => {
 
 // ── Prefs (UI mode etc.) ──
 const PREFS_FILE = path.join(SESSIONS_DIR, 'prefs.json');
+// ── Web タブ (koach-os / claude.ai / chatgpt.com をこの中で開く) ──
+// prefs.json は save-prefs が丸ごと書き換えるので、混ぜずに別ファイルに持つ。
+const WEB_TABS_FILE = path.join(SESSIONS_DIR, 'web-tabs.json');
+ipcMain.handle('open-external-url', async (_e, url) => {
+  if (!/^https?:\/\//i.test(String(url || ''))) return false;
+  try { await shell.openExternal(String(url)); return true; } catch { return false; }
+});
+ipcMain.handle('load-web-tabs', async () => {
+  try {
+    const rows = JSON.parse(fs.readFileSync(WEB_TABS_FILE, 'utf-8'));
+    return Array.isArray(rows) ? rows.filter((r) => r && /^https?:\/\//i.test(String(r.url || ''))) : [];
+  } catch { return []; }
+});
+ipcMain.handle('save-web-tabs', async (_e, rows) => {
+  try {
+    fs.mkdirSync(SESSIONS_DIR, { recursive: true });
+    const clean = (Array.isArray(rows) ? rows : [])
+      .filter((r) => r && /^https?:\/\//i.test(String(r.url || '')))
+      .map((r) => ({ id: String(r.id || ''), url: String(r.url).slice(0, 2000), title: String(r.title || '').slice(0, 200) }));
+    fs.writeFileSync(WEB_TABS_FILE, JSON.stringify(clean, null, 2));
+  } catch (_) {}
+});
+
 ipcMain.handle('load-prefs', async () => {
   try { return JSON.parse(fs.readFileSync(PREFS_FILE, 'utf-8')); } catch { return {}; }
 });
@@ -1998,6 +2039,22 @@ function startControl() {
 
 // ── Lifecycle ──
 let timer;
+// Web タブの中で開くポップアップ(Google ログインなど)は、同じ保存領域(persist:web)の
+// 小窓で開く。外のブラウザに飛ばすとログインが戻ってこない。
+app.on('web-contents-created', (_event, contents) => {
+  if (contents.getType() !== 'webview') return;
+  contents.setWindowOpenHandler(({ url }) => {
+    if (!/^https?:\/\//i.test(url)) return { action: 'deny' };
+    return {
+      action: 'allow',
+      overrideBrowserWindowOptions: {
+        width: 520, height: 720, autoHideMenuBar: true,
+        webPreferences: { partition: 'persist:web', nodeIntegration: false, contextIsolation: true, sandbox: true },
+      },
+    };
+  });
+});
+
 app.whenReady().then(() => {
   setCrashFlag();
   try { app.setAsDefaultProtocolClient(DEEP_LINK_SCHEME); } catch (_) {}

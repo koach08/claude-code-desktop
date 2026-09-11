@@ -47,6 +47,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     await window.api.saveSessions();
     window.api.cleanupOldBuffers(oldIds);
 
+    await restoreWebTabs();
     // Show restore notification
     const msg = crashed
       ? `${saved.length}個のセッションを復元しました (前回クラッシュ検出)`
@@ -54,6 +55,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     setStatus('ready', msg);
   } else {
     await newTab(currentMode);
+    await restoreWebTabs();
   }
 
   startAutoSave();
@@ -275,7 +277,19 @@ function setupListeners() {
 
   // Mode toggle
   document.querySelectorAll('.mode-btn').forEach(b => {
-    b.addEventListener('click', () => switchSessionMode(b.dataset.mode));
+    b.addEventListener('click', () => {
+      if (b.dataset.mode === 'web') { openWebPicker(); return; }   // Web はエンジンではない
+      switchSessionMode(b.dataset.mode);
+    });
+  });
+  document.getElementById('web-close').addEventListener('click', () => closeWebPicker());
+  document.getElementById('web-picker').addEventListener('click', (e) => { if (e.target.id === 'web-picker') closeWebPicker(); });
+  document.getElementById('web-url-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const v = (document.getElementById('web-url').value || '').trim();
+    if (!v) return;
+    closeWebPicker();
+    addWebTab({ url: /^https?:\/\//i.test(v) ? v : `https://${v}` });
   });
 
   // UI toggle
@@ -407,6 +421,7 @@ function setupListeners() {
     switch (action) {
       case 'new-tab': newTab(currentMode); break;
       case 'open-external': openExternalPicker(); break;
+      case 'open-web': openWebPicker(); break;
       case 'close-tab': if (activeId) closeTab(activeId); break;
       case 'saved':
         setStatus('ready', '保存しました');
@@ -711,6 +726,133 @@ function renderExternalList() {
   });
 }
 
+// ── Web タブ ────────────────────────────────────────────────
+// koach-os(Alfred)・claude.ai・chatgpt.com をこのアプリの中のタブとして開く。
+// 会話の中身を読むのではなく「窓を1つにまとめる」ためのもの。Claude.app や
+// ChatGPT.app を別に立ち上げずに済む(本人: デスクトップアプリをいくつも開きたくない)。
+// ログインは partition=persist:web に残るので次回も入ったまま。
+// ⚠️ 端末タブ(tabs)とは別の Map。activeId(声や入力欄の宛先)は端末のまま変えない。
+const webTabs = new Map();
+let activeWebId = null;
+const WEB_PRESETS = [
+  { label: 'Alfred (koach-os)', url: 'https://koach-os.vercel.app/', note: '司令塔。話しかける・予定・判断待ち' },
+  { label: 'Claude', url: 'https://claude.ai/', note: 'Cowork や普段のチャット' },
+  { label: 'ChatGPT', url: 'https://chatgpt.com/', note: 'Astra など Web の会話' },
+  { label: 'Fleet View', url: 'http://127.0.0.1:7373/', note: '従業員と割り振り(bash run.sh が要る)' },
+];
+// Electron のままの UA だと Google のログインが「安全でないブラウザ」と弾く。Chrome として名乗る
+const WEB_UA = String((typeof navigator !== 'undefined' && navigator.userAgent) || '').replace(/ ?Electron\/[\d.]+/, '').replace(/ ?Ariya[^ ]*\/[\d.]+/, '').replace(/ ?claude-code-desktop\/[\d.]+/, '');
+
+function openWebPicker() {
+  const el = document.getElementById('web-picker');
+  const box = document.getElementById('web-presets');
+  box.innerHTML = '';
+  for (const p of WEB_PRESETS) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.innerHTML = `${esc(p.label)}<small>${esc(p.note)}</small>`;
+    b.addEventListener('click', () => { closeWebPicker(); addWebTab({ url: p.url, title: p.label }); });
+    box.appendChild(b);
+  }
+  el.classList.remove('hidden');
+  const f = document.getElementById('web-url'); f.value = ''; f.focus();
+}
+function closeWebPicker() { document.getElementById('web-picker').classList.add('hidden'); }
+
+function saveWebTabs() {
+  window.api.saveWebTabs([...webTabs.values()].map((w) => ({ id: w.id, url: w.url, title: w.title })));
+}
+async function restoreWebTabs() {
+  let rows = [];
+  try { rows = await window.api.loadWebTabs(); } catch (_) { rows = []; }
+  const keep = activeId;
+  for (const r of rows) addWebTab({ id: r.id, url: r.url, title: r.title, silent: true });
+  if (keep && tabs.has(keep)) switchTab(keep);
+}
+
+function addWebTab({ id, url, title, silent }) {
+  if (!/^https?:\/\//i.test(url || '')) return null;
+  // 同じ URL のタブが既にあればそこへ
+  for (const [wid, w] of webTabs) if (w.url === url) { if (!silent) switchWebTab(wid); return wid; }
+  const wid = id || `w_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+  let host = url; try { host = new URL(url).host; } catch (_) {}
+  const w = { id: wid, url, title: title || host };
+
+  const tabEl = document.createElement('div');
+  tabEl.className = 'tab web';
+  tabEl.dataset.wid = wid;
+  tabEl.innerHTML = `<span class="tab-icon">WW</span><span class="tname">${esc(w.title)}</span><span class="tab-badge"></span><span class="tclose">&times;</span>`;
+  document.getElementById('tabs').appendChild(tabEl);
+
+  const pane = document.createElement('div');
+  pane.className = 'pane web';
+  const bar = document.createElement('div');
+  bar.className = 'web-bar';
+  bar.innerHTML = `<button data-act="back" title="戻る">‹</button><button data-act="fwd" title="進む">›</button><button data-act="reload" title="再読み込み">↻</button><span class="web-url" title="${esc(url)}">${esc(url)}</span><button data-act="ext" title="いつものブラウザで開く">⧉</button>`;
+  pane.appendChild(bar);
+  const view = document.createElement('webview');
+  view.setAttribute('src', url);
+  view.setAttribute('partition', 'persist:web');
+  view.setAttribute('allowpopups', '');
+  view.setAttribute('useragent', WEB_UA);
+  pane.appendChild(view);
+  document.getElementById('terminal-container').appendChild(pane);
+
+  bar.addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    try {
+      if (b.dataset.act === 'back') view.goBack();
+      else if (b.dataset.act === 'fwd') view.goForward();
+      else if (b.dataset.act === 'reload') view.reload();
+      else if (b.dataset.act === 'ext') window.api.openExternal ? window.api.openExternal(w.url) : window.open(w.url);
+    } catch (_) {}
+  });
+  view.addEventListener('page-title-updated', (e) => {
+    w.title = (e.title || w.title).slice(0, 80);
+    tabEl.querySelector('.tname').textContent = w.title;
+    saveWebTabs();
+  });
+  view.addEventListener('did-navigate', (e) => {
+    w.url = e.url; bar.querySelector('.web-url').textContent = e.url; bar.querySelector('.web-url').title = e.url;
+    saveWebTabs();
+  });
+  view.addEventListener('did-navigate-in-page', (e) => {
+    if (e.isMainFrame) { w.url = e.url; bar.querySelector('.web-url').textContent = e.url; saveWebTabs(); }
+  });
+
+  tabEl.addEventListener('click', (e) => { if (!e.target.closest('.tclose')) switchWebTab(wid); });
+  tabEl.querySelector('.tclose').addEventListener('click', (e) => { e.stopPropagation(); closeWebTab(wid); });
+
+  Object.assign(w, { tabEl, pane, view });
+  webTabs.set(wid, w);
+  saveWebTabs();
+  if (!silent) switchWebTab(wid);
+  return wid;
+}
+
+function switchWebTab(wid) {
+  const w = webTabs.get(wid); if (!w) return;
+  activeWebId = wid;
+  tabs.forEach((t) => { t.tabEl.classList.remove('active'); t.pane.classList.remove('active'); });
+  webTabs.forEach((x, xid) => { const on = xid === wid; x.tabEl.classList.toggle('active', on); x.pane.classList.toggle('active', on); });
+  document.getElementById('status-cwd').textContent = w.url;
+  setTimeout(() => { try { w.view.focus(); } catch (_) {} }, 50);
+}
+
+function closeWebTab(wid) {
+  const w = webTabs.get(wid); if (!w) return;
+  w.tabEl.remove(); w.pane.remove();
+  webTabs.delete(wid);
+  saveWebTabs();
+  if (activeWebId === wid) {
+    activeWebId = null;
+    const next = webTabs.keys().next();
+    if (!next.done) switchWebTab(next.value);
+    else if (activeId && tabs.has(activeId)) switchTab(activeId);
+    else if (tabs.size) switchTab(tabs.keys().next().value);
+  }
+}
+
 async function newTab(mode, cwd) {
   try {
     const session = await window.api.createSession({ mode: mode || 'claude', cwd });
@@ -908,6 +1050,8 @@ function addTab(session, replayBuffer, restoreInfo) {
 
 function switchTab(id) {
   activeId = id;
+  activeWebId = null;
+  webTabs.forEach((w) => { w.tabEl.classList.remove('active'); w.pane.classList.remove('active'); });
   tabs.forEach((t, tid) => {
     const on = tid === id;
     t.tabEl.classList.toggle('active', on);

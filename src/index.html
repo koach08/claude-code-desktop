@@ -21,6 +21,7 @@
         <button class="mode-btn" data-mode="gemini">Gemini</button>
         <button class="mode-btn" data-mode="grok">Grok</button>
         <button class="mode-btn" data-mode="shell">Terminal</button>
+        <button class="mode-btn" data-mode="web" id="web-mode-btn" title="Alfred(koach-os)・Claude・ChatGPT をこの中のタブで開く (Cmd+Shift+W)">Web</button>
       </div>
       <button id="engine-suggest-btn" title="やりたいことからエンジンを判定">&#128256;</button>
       <div id="ui-toggle">
@@ -652,6 +653,22 @@
   <script src="realtime.js"></script>
   <script src="voice-chat.js"></script>
   <script src="renderer.js"></script>
+  <!-- Web タブ: サイトをこのアプリの中のタブとして開く(アプリを何個も開かないため) -->
+  <div id="web-picker" class="hidden" role="dialog" aria-label="Web をタブで開く">
+    <div class="ext-box" style="width:min(520px,92vw)">
+      <div class="ext-head">
+        <strong>Web をタブで開く</strong>
+        <span style="flex:1"></span>
+        <button id="web-close" title="閉じる">×</button>
+      </div>
+      <p class="ext-note">サイトをこのアプリの中のタブとして開きます。ログインはこのアプリの中に残ります(次回も入ったまま)。Claude.app や ChatGPT.app を別に開かなくて済みます。</p>
+      <div id="web-presets" class="web-presets"></div>
+      <form id="web-url-form" class="web-url-form">
+        <input id="web-url" type="text" placeholder="https://… を貼って Enter" autocomplete="off" spellcheck="false" />
+        <button type="submit">開く</button>
+      </form>
+    </div>
+  </div>
   <!-- 他のアプリで進めた会話を、ここのタブとして続けるための一覧 -->
   <div id="external-picker" class="hidden" role="dialog" aria-label="他のアプリの会話を開く">
     <div class="ext-box">

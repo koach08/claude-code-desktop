@@ -50,6 +50,9 @@ contextBridge.exposeInMainWorld('api', {
   boardSnapshot: () => ipcRenderer.invoke('board-snapshot'),
   // 他のアプリ(Claude デスクトップ / Codex Desktop / ChatGPT Work)の会話一覧
   listExternalConversations: () => ipcRenderer.invoke('list-external-conversations'),
+  openExternal: (url) => ipcRenderer.invoke('open-external-url', url),
+  loadWebTabs: () => ipcRenderer.invoke('load-web-tabs'),
+  saveWebTabs: (rows) => ipcRenderer.invoke('save-web-tabs', rows),
 
   // 裏方ワーカー(タブを開かずにエンジンを走らせる)
   workerStart: (opts) => ipcRenderer.invoke('worker-start', opts),
