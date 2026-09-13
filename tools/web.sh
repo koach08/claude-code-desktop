@@ -4,6 +4,7 @@
 #
 #   web.sh list                          開いている Web タブ
 #   web.sh open URL [題]                 タブで開く(同じ URL があればそれ)
+#   web.sh import                        Brave の ChatGPT ログインを取り込む(画面にキーチェーンの許可が出る)
 #   web.sh ask "文" [auto|chatgpt|claude] 作業に応じて ChatGPT/Claude に振って送る(auto が既定)
 #   web.sh reply ID                      最後の返事(busy なら書いている途中)
 #   web.sh wait ID [秒]                  返事が書き終わるまで待って出す
@@ -26,6 +27,7 @@ cmd="$1"; shift || true
 case "$cmd" in
   list)    curl "${H[@]}" "$BASE/web" ;;
   open)    curl "${H[@]}" -X POST "$BASE/web" -d "$(j url "$1" title "${2:-}")" ;;
+  import)  curl "${H[@]}" -X POST "$BASE/web/import-brave" -d '{}' ;;
   ask)     curl "${H[@]}" -X POST "$BASE/web/ask" -d "$(j text "$1" engine "${2:-auto}")" ;;
   reply)   curl "${H[@]}" "$BASE/web/$1/reply" ;;
   wait)    id="$1"; n="${2:-120}"; i=0

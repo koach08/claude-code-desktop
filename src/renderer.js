@@ -283,6 +283,7 @@ function setupListeners() {
     });
   });
   document.getElementById('web-close').addEventListener('click', () => closeWebPicker());
+  document.getElementById('web-import-brave').addEventListener('click', () => importBraveChatgpt());
   // 制御窓(Claude Code など)から「この URL を開け」「このタブを閉じろ」
   if (window.api.onOpenWebUrl) window.api.onOpenWebUrl(({ url, title }) => addWebTab({ url, title }));
   if (window.api.onCloseWebTab) window.api.onCloseWebTab(({ wid }) => closeWebTab(wid));
@@ -792,15 +793,28 @@ function closeWebPicker() { document.getElementById('web-picker').classList.add(
 // Brave のログイン(chatgpt.com/openai.com)をこのアプリへ取り込み、ChatGPT のタブを開く。
 // Google の埋め込みログイン拒否を避けるため、ログイン操作ではなく「ログイン済み」を移す。
 async function importBraveChatgpt() {
-  setStatus('working', 'Brave から ChatGPT のログインを取り込み中(キーチェーンの許可を求められます)…');
+  // ⚠️ 画面の下の細い帯(setStatus)だけだと本人が気づかない。押したボタンの場所に出す。
+  const btn = document.getElementById('web-import-brave');
+  const note = btn && btn.parentElement.querySelector('small');
+  const say = (msg, bad) => {
+    setStatus(bad ? 'error' : 'ready', msg);
+    if (note) { note.textContent = msg; note.style.color = bad ? 'var(--red, #f7768e)' : 'var(--green, #9ece6a)'; }
+  };
+  if (btn) { btn.disabled = true; btn.textContent = '取り込み中…'; }
+  if (note) { note.textContent = 'Mac が「キーチェーンにアクセスしようとしています」と聞いてきたら、Mac のパスワードを入れて「許可」を押してください。'; note.style.color = ''; }
+  setStatus('working', 'Brave から ChatGPT のログインを取り込み中…');
+
   let r;
   try { r = await window.api.importBraveChatgpt(); }
-  catch (e) { r = { ok: false, error: String(e && e.message || e) }; }
+  catch (e) { r = { ok: false, error: String((e && e.message) || e) }; }
+
+  if (btn) { btn.disabled = false; btn.textContent = 'Brave から ChatGPT のログインを取り込む'; }
   if (r && r.ok) {
-    setStatus('ready', `取り込み完了(${r.ok || r.set || 0} 件)。ChatGPT を開きます`);
+    say(`取り込めました(${r.set} 件)。ChatGPT のタブを開きます。まだログイン画面が出るときは、もう一度このボタンを押してください。`);
+    closeWebPicker();
     addWebTab({ url: 'https://chatgpt.com/', title: 'ChatGPT' });
   } else {
-    setStatus('error', `取り込めませんでした: ${(r && r.error) || '不明'}（Brave にログインしているか確認）`);
+    say(`取り込めませんでした: ${(r && r.error) || '不明'}。Brave で ChatGPT にログインしているか確認してください。`, true);
   }
 }
 

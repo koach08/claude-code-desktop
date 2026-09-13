@@ -230,6 +230,17 @@ function startControlServer(deps) {
           return send(res, 200, { ok: true, id });
         }
 
+        // Brave の ChatGPT ログインを取り込む。本人がメニューやボタンを探せなかったので、
+        // Claude Code(tools/web.sh import)からも起こせるようにする。
+        // ⚠️ 実行すると macOS がキーチェーンの許可を画面に出す。本人が画面の前にいるときだけ意味がある。
+        if (req.method === 'POST' && parts[1] === 'import-brave' && parts.length === 2) {
+          if (!web.importBrave) return send(res, 503, { error: 'この版には取り込みがありません(差し替えが要ります)' });
+          log('web import-brave 要求');
+          const r = await web.importBrave();
+          log(`web import-brave → ${JSON.stringify(r).slice(0, 120)}`);
+          return send(res, 200, r);
+        }
+
         // 作業に応じてどのチャットに投げるか決めて、投げる {text, engine?: 'auto'|'chatgpt'|'claude', submit?: true}
         //   auto: engine-judge が astra なら ChatGPT、claude なら Claude。codex/gemini/grok なら Web には投げず判定だけ返す
         //   ⚠️ EGAKU は judge が claude 固定なので ChatGPT には行かない

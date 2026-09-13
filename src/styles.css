@@ -1271,6 +1271,12 @@ body[data-ui="chat"] #mode-toggle { display: none; }
 .web-url-form { display: flex; gap: 6px; padding: 8px 12px 12px; }
 .web-url-form input { flex: 1; background: var(--bg, #1a1b26); color: inherit; border: 1px solid var(--border, #3b4261); border-radius: 4px; padding: 6px 8px; font-size: 13px; }
 .web-url-form button { background: none; border: 1px solid var(--border, #3b4261); color: inherit; border-radius: 4px; padding: 0 12px; cursor: pointer; }
+/* ChatGPT のログイン取り込み。メニューバーは見つけにくいのでここに置く */
+.web-import { padding: 0 12px 12px; border-top: 1px solid var(--border, #3b4261); margin-top: 2px; padding-top: 10px; }
+.web-import button { width: 100%; background: none; border: 1px solid var(--border, #3b4261); color: inherit; border-radius: 6px; padding: 9px 12px; cursor: pointer; font-size: 13px; text-align: left; }
+.web-import button:hover { background: rgba(65,72,104,.4); }
+.web-import button:disabled { opacity: .5; cursor: default; }
+.web-import small { display: block; margin-top: 6px; color: var(--fg2, #787c99); font-size: 11px; line-height: 1.5; }
 .tab.web .tab-icon { color: #e0af68; }
 .pane.web { padding: 0; }
 .pane.web.active { display: flex; flex-direction: column; }

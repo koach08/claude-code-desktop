@@ -667,6 +667,12 @@
         <input id="web-url" type="text" placeholder="https://… を貼って Enter" autocomplete="off" spellcheck="false" />
         <button type="submit">開く</button>
       </form>
+      <!-- ChatGPT は Google の埋め込みログイン拒否で中では入れない。Brave のログイン済みを移す。
+           ⚠️ メニューバーにも同じ項目があるが、本人が見つけられなかったのでここに出す(2026-09-12) -->
+      <div class="web-import">
+        <button type="button" id="web-import-brave">Brave から ChatGPT のログインを取り込む</button>
+        <small>ChatGPT は Google の画面がこの中では使えません。Brave で入っている状態をここへ移します(Mac がパスワードを聞いてきたら許可)。</small>
+      </div>
     </div>
   </div>
   <!-- 他のアプリで進めた会話を、ここのタブとして続けるための一覧 -->

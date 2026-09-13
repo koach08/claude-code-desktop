@@ -1740,7 +1740,9 @@ ipcMain.handle('import-brave-chatgpt', async () => {
       session,
       log: (line) => { try { fs.appendFileSync(path.join(SESSIONS_DIR, 'brave-import.log'), `${new Date().toISOString()} ${line}\n`); } catch (_) {} },
     });
-    return { ok: true, ...r };
+    // ⚠️ `...r` を展開すると r.ok(取り込めた件数) が ok:true を数値で上書きし、
+    //    0 件のとき成功なのに失敗扱いになる。名前を分けて返す。
+    return { ok: true, set: r.ok, skip: r.skip, total: r.total };
   } catch (e) {
     return { ok: false, error: String(e.message || e) };
   }
@@ -2089,6 +2091,18 @@ function startControl() {
           if (!webTabContents.has(String(wid)) || !mainWindow || mainWindow.isDestroyed()) return false;
           mainWindow.webContents.send('close-web-tab', { wid: String(wid) });
           return true;
+        },
+        // Brave のログイン取り込み(制御窓からも起こせるように)。中身は ipcMain と同じ道具。
+        importBrave: async () => {
+          try {
+            const { session } = require('electron');
+            const braveImport = require('./src/brave-cookie-import');
+            const r = await braveImport.importBraveChatgpt({
+              session,
+              log: (line) => { try { fs.appendFileSync(path.join(SESSIONS_DIR, 'brave-import.log'), `${new Date().toISOString()} ${line}\n`); } catch (_) {} },
+            });
+            return { ok: true, set: r.ok, skip: r.skip, total: r.total };
+          } catch (e) { return { ok: false, error: String(e.message || e) }; }
         },
         judge: (task) => judgeEngine(task),
         bridge: webBridge,
