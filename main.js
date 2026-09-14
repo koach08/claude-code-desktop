@@ -1923,7 +1923,39 @@ app.on('open-url', (event, url) => {
 // タブを開く口は出していない。create-session の中身を外から呼ぶには electron の
 // 内部 API に触ることになり、版が上がると黙って壊れるため。開くのは手でよい。
 const { startControlServer } = require('./src/control-server');
+const screenLib = require('./src/screen');
 let controlServer = null;
+
+// 目の記録。⚠️ どのアプリのどの窓を撮ったかは必ず残す。あとから「何を見られたか」を辿れるように
+const SCREEN_LOG = path.join(os.homedir(), '.claude-code-app', 'control.log');
+function screenLog(line) {
+  try { fs.appendFileSync(SCREEN_LOG, `${new Date().toISOString()} ${line}\n`); } catch (_) {}
+}
+const screenLimiter = screenLib.createLimiter();
+
+// いま前面にあるアプリと窓の名前。⚠️ 文字を埋め込まない固定のスクリプトを渡す
+const FRONTMOST_SCRIPT = `
+tell application "System Events"
+  set p to first application process whose frontmost is true
+  set appName to name of p
+  try
+    set winName to name of front window of p
+  on error
+    set winName to ""
+  end try
+end tell
+return appName & "\n" & winName
+`;
+function frontmostWindow() {
+  return new Promise((resolve, reject) => {
+    const { execFile } = require('child_process');
+    execFile('osascript', ['-e', FRONTMOST_SCRIPT], { timeout: 5000 }, (err, stdout) => {
+      if (err) return reject(new Error(err.message));
+      const [appName = '', winName = ''] = String(stdout || '').split('\n');
+      resolve({ app: appName.trim(), title: winName.trim() });
+    });
+  });
+}
 
 // 窓から走らせた裏方ワーカーの出力を溜める。renderer へ送る経路とは別に持つ
 // (窓から呼ばれたときは、見ている画面が無いこともあるため)。
@@ -1990,6 +2022,37 @@ function startControl() {
           output: j.output.slice(-20000),
         };
       },
+
+      // 目。⚠️ 判断 (許すか・どの窓か) は src/screen.js が持つ。ここは OS を触るだけ
+      captureScreen: () => screenLib.capture({
+        limiter: screenLimiter,
+        log: screenLog,
+        frontmost: frontmostWindow,
+        getSources: async ({ width }) => {
+          const { desktopCapturer } = require('electron');
+          // ⚠️ types に 'screen' を入れない。画面全体を撮れる道を作らないため
+          return desktopCapturer.getSources({
+            types: ['window'],
+            thumbnailSize: { width, height: Math.round(width * 0.75) },
+            fetchWindowIcons: false,
+          }).then((list) => list.map((x) => ({
+            id: x.id, name: x.name, toPNG: () => x.thumbnail.toPNG(),
+          })));
+        },
+      }),
+
+      enableScreen: (on) => screenLib.enable({
+        log: screenLog,
+        confirm: async (message) => {
+          // ⚠️ ここが最後の関門。画面 (ブラウザ) の「はい」では開かない。
+          //    目の前の Mac に出る窓を、本人の指で押させる
+          const r = await dialog.showMessageBox(mainWindow || undefined, {
+            type: 'warning', buttons: ['やめる', '許可する'], defaultId: 0, cancelId: 0,
+            title: '画面を見せる', message: '画面を見せますか', detail: message,
+          });
+          return r.response === 1;
+        },
+      }, on),
     });
   } catch (e) {
     console.error('control server failed:', e.message);

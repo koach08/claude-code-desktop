@@ -54,6 +54,8 @@ function startControlServer(deps) {
     closeSession,        // async (id) => void
     runWorker,           // async ({engine, task, cwd, write, model, timeoutMs}) => {ok, jobId}
     workerResult,        // (jobId) => {done, output, code} | null
+    captureScreen,       // async () => {png_base64, app, title} | {error}
+    enableScreen,        // async (on) => {enabled}   ⚠️ Mac のダイアログを経由する
   } = deps;
 
   // ⚠️ 以前は起動ごとに作り直していて、koach-os に貼った合言葉が再起動のたびに切れた(本人)。
@@ -176,6 +178,28 @@ function startControlServer(deps) {
         await closeSession(parts[1]);
         log(`close ${parts[1]}`);
         return send(res, 200, { ok: true });
+      }
+
+      // いま前面にある窓を 1 枚だけ撮る。⚠️ 画面全体を撮る口は用意しない。
+      //    既定は閉じていて、開けるのは下の /screen/enable (Mac のダイアログ) だけ。
+      if (req.method === 'GET' && parts[0] === 'screen' && parts.length === 1) {
+        if (!captureScreen) return send(res, 501, { error: 'この版には目がありません' });
+        // ⚠️ 止め札が置いてあるときは撮らない。「止めてある」の意味を書き込みだけに限らない
+        if (writesBlocked()) {
+          return send(res, 423, { error: '止めてあります (~/.claude-code-app/control-off)' });
+        }
+        const shot = await captureScreen();
+        if (shot && shot.error) return send(res, 403, shot);
+        return send(res, 200, shot);
+      }
+
+      // 目を開ける / 閉じる。⚠️ 開けるときは Mac にダイアログが出る。
+      //    画面 (ブラウザ) の「はい」だけでは開かない
+      if (req.method === 'POST' && parts[0] === 'screen' && parts[1] === 'enable') {
+        if (!enableScreen) return send(res, 501, { error: 'この版には目がありません' });
+        const r = await enableScreen(body.on !== false);
+        log(`screen enable=${body.on !== false} -> ${r && r.enabled}`);
+        return send(res, 200, r);
       }
 
       // タブを開かずにエンジンを走らせる
