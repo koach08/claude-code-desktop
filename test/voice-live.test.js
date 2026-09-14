@@ -94,7 +94,9 @@ test('黙ったら、押さなくても送られる', async () => {
   assert.strictEqual(await vc.startLive(), true);
   assert.strictEqual(vc.state, 'recording');
 
-  await utter(400, 1200);          // 0.4 秒話して 1.2 秒黙る
+  // ⚠️ 0.45 秒 (MIN_SPEECH_SEC) より短い声は捨てられ、静けさは 1.5 秒 (silenceMs) 要る。
+  //    以前の 0.4 秒 / 1.2 秒は、息継ぎで切られる実測を受けて閾値を上げたあと合わなくなっていた
+  await utter(700, 1800);          // 0.7 秒話して 1.8 秒黙る
   await wait(300);
 
   assert.ok(log.spoken.length >= 1, '返事が読み上げられていない');

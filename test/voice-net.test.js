@@ -104,3 +104,39 @@ test('送るファイル名は中身に合わせる', () => {
   assert.strictEqual(VN.nameFor('audio/ogg'), 'audio.ogg');
   assert.strictEqual(VN.nameFor(''), 'audio.webm');
 });
+
+test('道具を渡すと Claude に tools として届き、呼び出しが calls で返る', async () => {
+  const f = fake([['api.anthropic.com', ok({ content: [
+    { type: 'text', text: '見てみます。' },
+    { type: 'tool_use', id: 'tu1', name: 'list_tabs', input: {} },
+  ] })]]);
+  const net = VN.create({ fetchImpl: f, getKey: () => 'sk-ant', hubUrl: HUB });
+  const tools = [{ type: 'function', name: 'list_tabs', description: '一覧', parameters: { type: 'object', properties: {} } }];
+  const r = await net.reply([{ role: 'user', content: '何が開いてる' }], { tools });
+  const body = JSON.parse(f.calls[0].opt.body);
+  assert.strictEqual(body.tools[0].name, 'list_tabs');
+  assert.ok(body.tools[0].input_schema, 'Claude の形 (input_schema) になっていない');
+  assert.match(body.system, /道具の使い方/);
+  assert.strictEqual(r.calls[0].id, 'tu1');
+  assert.strictEqual(r.reply, '見てみます。');
+});
+
+test('道具の結果 (steps) は tool_result として会話に足される', async () => {
+  const f = fake([['api.anthropic.com', ok({ content: [{ type: 'text', text: '2 個です。' }] })]]);
+  const net = VN.create({ fetchImpl: f, getKey: () => 'sk-ant', hubUrl: HUB });
+  const tools = [{ type: 'function', name: 'list_tabs', description: '一覧', parameters: { type: 'object', properties: {} } }];
+  const steps = [{ assistant: [{ type: 'tool_use', id: 'tu1', name: 'list_tabs', input: {} }], results: [{ id: 'tu1', output: { tabs: [] } }] }];
+  await net.reply([{ role: 'user', content: '何が開いてる' }], { tools, steps });
+  const body = JSON.parse(f.calls[0].opt.body);
+  assert.strictEqual(body.messages.length, 3);
+  assert.strictEqual(body.messages[1].role, 'assistant');
+  assert.strictEqual(body.messages[2].content[0].type, 'tool_result');
+  assert.strictEqual(body.messages[2].content[0].tool_use_id, 'tu1');
+});
+
+test('道具が無いときの指示は「どのタブか」を聞き返さず、【渡す】で返すよう書いてある', () => {
+  assert.match(VN.HANDOFF_GUIDE, /どのタブですか」とは聞き返さない/);
+  assert.match(VN.HANDOFF_GUIDE, /【渡す】/);
+  assert.match(VN.TOOL_GUIDE, /current が true/);
+  assert.ok(!/どのタブに渡すか聞き返して/.test(VN.VOICE_SYSTEM));
+});

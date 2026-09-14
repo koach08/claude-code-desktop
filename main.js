@@ -1056,8 +1056,8 @@ ipcMain.handle('realtime-token', async () => {
 ipcMain.handle('voice-transcribe', async (_e, { audioBuffer, mimeType }) =>
   voiceNet().transcribe(Buffer.from(audioBuffer), mimeType));
 
-ipcMain.handle('voice-reply', async (_e, { messages, context, provider, model }) =>
-  voiceNet().reply(messages || [], { context, provider, model }));
+ipcMain.handle('voice-reply', async (_e, { messages, context, provider, model, tools, steps }) =>
+  voiceNet().reply(messages || [], { context, provider, model, tools, steps }));
 
 ipcMain.handle('voice-tts', async (_e, { text, voice }) => {
   const r = await voiceNet().tts(text, { voice });

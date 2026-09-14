@@ -88,6 +88,10 @@
   const ENGINES = [
     { re: /(あすとら|アストラ|astra)/i, provider: 'openai', model: 'gpt-6-astra', label: 'Astra' },
     { re: /(じーぴーてぃー|gpt|オープンエーアイ|openai|おーぷんえーあい)/i, provider: 'openai', model: '', label: 'OpenAI' },
+    // 考える側を重くしたいとき。⚠️ 重いほど返事は遅い (実測 haiku 0.9 秒 / sonnet 2.5 秒)
+    { re: /(おーぱす|オーパス|opus)/i, provider: 'claude', model: 'claude-opus-5', label: 'Opus' },
+    { re: /(そねっと|ソネット|sonnet)/i, provider: 'claude', model: 'claude-sonnet-5', label: 'Sonnet' },
+    { re: /(はいく|ハイク|haiku)/i, provider: 'claude', model: 'claude-haiku-4-5-20251001', label: 'Haiku' },
     { re: /(くろーど|クロード|claude|あんそろぴっく)/i, provider: 'claude', model: '', label: 'Claude' },
     { re: /(じぇみに|ジェミニ|gemini|じぇみない)/i, provider: 'gemini', model: '', label: 'Gemini' },
     { re: /(ぐろっく|グロック|grok)/i, provider: 'grok', model: '', label: 'Grok' },
@@ -137,6 +141,19 @@
     return /(この|いまの|今の|開いてる|現在の)(タブ|たぶ)|ここ(で|に)/.test(String(text || ''));
   }
 
+  // 操作として読むのは、これより短い一言だけ。
+  // ⚠️ 長い話の中に「どのタブ」「開いてる」が混じっただけで一覧に化けていた（実測。
+  //    スライドの相談をしている最中に「21 つ開いています。s_1789…」と読み上げた）。
+  //    長い話は会話に回し、相手のモデルが聞いて溜める。
+  const SHORT_MAX = 40;
+  function isShort(text) { return String(text || '').trim().length <= SHORT_MAX; }
+
+  // いま見ているタブ。渡し先を言わなかったときの既定。
+  function activeTab(tabs, ctx) {
+    const t = (tabs || []).find((x) => x && String(x.id) === String(ctx.activeId || ''));
+    return t && !t.exited ? t : null;
+  }
+
   // ── 読み取りの本体 ──────────────────────────────────────────
   // ⚠️ 迷ったら talk に倒す。会話のつもりの一言が端末で走るほうが害が大きい。
   //    kind が 'work' と 'close' のときだけ confirm を true にする。
@@ -146,6 +163,9 @@
     const tabs = ctx.tabs || [];
 
     if (SAY.hush.test(t)) return { kind: 'hush', why: '黙るように言われました' };
+
+    // ⚠️ ここから下は短い一言だけ。長い話は会話に回す（理由は isShort の上）。
+    if (!isShort(t)) return { kind: 'talk', why: '長い話なので会話にしました' };
 
     const eng = readEngine(t);
     if (eng) return { kind: 'engine', ...eng, why: 'エンジンの切り替え' };
@@ -172,13 +192,26 @@
       return { kind: 'close', tab: target.tab, confirm: true, why: 'タブを閉じる' };
     }
 
-    // 作業の言い方が入っているなら、渡し先を探す
+    // 作業の言い方が入っているなら、渡し先を探す。
+    // ⚠️ 渡し先を言わなかったら「いま見ているタブ」。聞き返さない。
+    //    本人は見ているタブの話をしている（実測: スライドのタブを開いたまま
+    //    「スライドを直して」と言い続け、こちらは「どのタブか」と 8 回聞き返した）。
+    //    名指しが当たらないときも同じ。復唱でタブの名前を言うので、違えば「いいえ」で止まる。
     if (WORK.test(t)) {
-      const target = saysCurrent(t)
-        ? { ok: true, tab: tabs.find((x) => String(x.id) === String(ctx.activeId)) }
-        : resolveTab(pickTabPhrase(t), tabs);
+      const cur = activeTab(tabs, ctx);
+      let target;
+      if (saysCurrent(t)) target = { ok: !!cur, tab: cur };
+      else {
+        const phrase = pickTabPhrase(t);
+        target = phrase ? resolveTab(phrase, tabs) : { ok: false };
+        // 2 つ以上当たるときだけは決められないので聞く
+        if (!target.ok && target.candidates) {
+          return { kind: 'ask', why: target.reason, candidates: target.candidates, task: t };
+        }
+        if (!target.ok) target = { ok: !!cur, tab: cur };
+      }
       if (!target.ok || !target.tab) {
-        return { kind: 'ask', why: target.reason || 'どのタブに渡しますか', candidates: target.candidates, task: t };
+        return { kind: 'ask', why: '渡せるタブが開いていません', task: t };
       }
       return { kind: 'work', tab: target.tab, task: t, confirm: true, why: '作業の引き渡し' };
     }
@@ -239,7 +272,7 @@
   const API = {
     norm, variants, basename, resolveTab, readEngine, parse,
     makeConfirmer, describe, ENGINES, CONFIRM_TTL_MS,
-    setAliases, getAliases,
+    setAliases, getAliases, isShort, SHORT_MAX, activeTab,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = API;
   else global.VoiceCommand = API;

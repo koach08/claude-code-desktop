@@ -154,3 +154,17 @@ test('道具の説明と話し方の指示に、決まりが書いてある', ()
   assert.match(RT.INSTRUCTIONS, /です・ます調/);
   assert.match(RT.INSTRUCTIONS, /名前を口に出す/);
 });
+
+test('渡し先を省くと、いま見ているタブに渡す (名前を出して尋ねてから)', async () => {
+  const d = deps();
+  d.getActiveId = () => 'b';
+  const s = scene();
+  const lst = await RT.runTool('list_tabs', {}, d, s.gate);
+  assert.ok(lst.tabs.find((t) => t.name === 'midori-os').current);
+  s.honnin('スライドを直して');
+  s.alfred('midori-os に渡します。よろしいですか。');
+  s.honnin('はい');
+  const r = await RT.runTool('send_to_tab', { task: 'スライドを直す', confirmed: true }, d, s.gate);
+  assert.strictEqual(r.sent_to, 'midori-os');
+  assert.deepStrictEqual(d.log.sent.map((x) => x.id), ['b']);
+});

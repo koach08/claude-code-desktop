@@ -161,3 +161,30 @@ test('一瞬の音の断片は捨てるが、短い返事は捨てない', () =>
   for (const t of ['おっ', 'あっ', 'ん', '。']) assert.strictEqual(V.isPhantom(t), true, t);
   for (const t of ['はい', 'いいえ', 'やめて', 'エガクのタブで']) assert.strictEqual(V.isPhantom(t), false, t);
 });
+
+test('相手が返した【渡す】を、耳に聞かせる文と端末に入れる文に分ける', () => {
+  const r = V.splitHandoff('まとめました。\n【渡す】\n先頭に今日のゴールを入れる\n【ここまで】');
+  assert.strictEqual(r.speech, 'まとめました。');
+  assert.strictEqual(r.task, '先頭に今日のゴールを入れる');
+  assert.strictEqual(r.to, '');
+});
+
+test('締めを落として返しても末尾まで取る。渡す先の名指しも拾う', () => {
+  const r = V.splitHandoff('【渡す先】AOZORA\nどうぞ。\n【渡す】\nテストを直す');
+  assert.strictEqual(r.task, 'テストを直す');
+  assert.strictEqual(r.to, 'AOZORA');
+  assert.strictEqual(r.speech, 'どうぞ。');
+});
+
+test('印が無ければ丸ごと声', () => {
+  const r = V.splitHandoff('はい、そうです。');
+  assert.strictEqual(r.speech, 'はい、そうです。');
+  assert.strictEqual(r.task, '');
+});
+
+test('道具の行は相手に送らない (API は user/assistant しか受けない)', () => {
+  const out = V.forSending([
+    { role: 'user', content: 'a' }, { role: 'tool', content: 'list_tabs → {}' }, { role: 'assistant', content: 'b' },
+  ]);
+  assert.deepStrictEqual(out.map((x) => x.role), ['user', 'assistant']);
+});

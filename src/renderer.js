@@ -3337,12 +3337,15 @@ async function setupVoiceChat() {
     },
 
     // ⚠️ engine は声で切り替わる。指定が無ければ速いモデルが既定 (重いと会話が途切れる)
-    converse: async (messages, context, engine) =>
+    converse: async (messages, context, engine, extra) =>
       window.api.voiceReply({
         messages,
         context,
         provider: (engine && engine.provider) || '',
         model: (engine && engine.model) || '',
+        // 手 (道具) と、道具を回した往復。voice-chat が組む
+        tools: (extra && extra.tools) || null,
+        steps: (extra && extra.steps) || [],
       }),
 
     // ⚠️ 渡すのは既に開いている Claude Code のタブ。改行を付けて実行させる
@@ -3357,8 +3360,14 @@ async function setupVoiceChat() {
         .replace(/\x1b\[[0-9;?]*[a-zA-Z]|\x1b\][^\x07]*\x07/g, '');
     },
 
+    // ⚠️ タブの名前と場所は t.session に入っている (t.name ではない)。
+    //    ここを間違えていたので全タブが名無しになり、声は ID を読み上げ、
+    //    名指しは一度も当たらず「どのタブか」を聞き返し続けた (2026-09-15 実測)。
     listTabs: () => [...tabs.entries()].map(([id, t]) => ({
-      id, name: t.name || '', cwd: t.cwd || '', exited: !!t.exited,
+      id,
+      name: (t.session && t.session.name) || '',
+      cwd: (t.session && t.session.cwd) || '',
+      exited: !!t.ended,
     })),
 
     // ── アプリそのものの操作 ──
@@ -3470,9 +3479,14 @@ async function setupVoiceChat() {
         return t;
       },
       yenCap: VOICE_YEN_CAP,
+      // ⚠️ 名前と場所は t.session (上の節約側と同じ理由)
       listTabs: () => [...tabs.entries()].map(([id, t]) => ({
-        id, name: t.name || '', cwd: t.cwd || '', exited: !!t.exited,
+        id,
+        name: (t.session && t.session.name) || '',
+        cwd: (t.session && t.session.cwd) || '',
+        exited: !!t.ended,
       })),
+      getActiveId: () => activeId,
       openTab: async (mode) => {
         const sn = await newTab(mode || 'claude');
         return sn ? { id: sn.id, name: sn.name || mode } : null;
@@ -3521,6 +3535,22 @@ async function setupVoiceChat() {
   // 前回選んだ声の相手を画面に出す
   const el = document.getElementById('voice-engine');
   if (el) el.textContent = voiceChat.engine.label || 'Claude';
+
+  // 強弱。押すたびに Haiku → Sonnet → Opus と回る (声で「オーパスで」と言っても同じ)。
+  // ⚠️ 重いほど返事は遅い (実測 haiku 0.9 秒 / sonnet 2.5 秒)。既定は Haiku。
+  const STRENGTH = [
+    { provider: 'claude', model: 'claude-haiku-4-5-20251001', label: 'Haiku' },
+    { provider: 'claude', model: 'claude-sonnet-5', label: 'Sonnet' },
+    { provider: 'claude', model: 'claude-opus-5', label: 'Opus' },
+  ];
+  el?.addEventListener('click', () => {
+    const cur = voiceChat.engine;
+    const i = STRENGTH.findIndex((x) => x.model === cur.model);
+    const next = STRENGTH[(i + 1) % STRENGTH.length];
+    voiceChat.setEngine(next);
+    voiceNotice(`${next.label} が答えます。${next.label === 'Haiku' ? '速くて安い' : next.label === 'Sonnet' ? '少し待つが考えが深い' : '遅いがいちばん深い'}。`);
+  });
+  if (el) el.title = '声の相手。押すと Haiku → Sonnet → Opus と強さが変わります。「ソネットで」「アストラで」と言っても変わります';
 
   // 前回の続きを読み戻す
   const n = voiceChat.restore();

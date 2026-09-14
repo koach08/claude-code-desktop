@@ -31,6 +31,12 @@
     ? global.VoiceVad
     : require('./voice-vad');
 
+  // 手。即応側と同じ道具と関門を使う (作りを 2 つにしない)。
+  const RT = (typeof global !== 'undefined' && global.RealtimeTools)
+    ? global.RealtimeTools
+    : require('./realtime-tools');
+  const TOOL_ROUNDS = 6;     // 1 回の発話で道具を回す上限
+
   const HISTORY_KEY = 'ariya.voice.history';
   const MAX_KEEP = 200;          // 保存しておく往復の数
   const BARGE_GAP_MS = 250;      // 読み上げを止めてから録りはじめるまでの間
@@ -82,6 +88,17 @@
     const guard = V.makeSendGuard();
     // ⚠️ 取り違えたまま実行しないための関門。閉じる/渡すは必ずここを通す。
     const confirmer = VC.makeConfirmer();
+    // 相手が道具で閉じる/渡すときの関門 (声で名前を出して尋ね、本人が返事した事実だけで通す)
+    const gate = RT.createGate();
+    const toolDeps = {
+      listTabs, openTab, switchTab, closeTab, sendToTab, readTab,
+      getActiveId: () => (getActiveId ? getActiveId() : ''),
+      getHandoff: () => (handoff && handoff.tabId) || '',
+      setHandoff: (tabId, task) => {
+        const t = listTabs().find((x) => String(x.id) === String(tabId));
+        handoff = { tabId, cwd: t ? t.cwd : '', task, at: Date.now() };
+      },
+    };
 
     // 声の返事を作るエンジン。既定は Claude。声で切り替えられる。
     let engine = { provider: '', model: '', label: '' };
@@ -343,8 +360,8 @@
         if (!live.length) return respond('開いているタブはありません。');
         const names = live.map(tabName);
         const head = names.slice(0, 6).join('、');
-        const more = names.length > 6 ? `、ほか ${names.length - 6} つ` : '';
-        return respond(`${names.length} つ開いています。${head}${more}です。`);
+        const more = names.length > 6 ? `、ほか ${names.length - 6} 個` : '';
+        return respond(`${names.length} 個開いています。${head}${more}です。`);
       }
 
       if (cmd.kind === 'open') {
@@ -369,7 +386,7 @@
       if (cmd.kind === 'ask') {
         const cand = cmd.candidates && cmd.candidates.length
           ? ` ${cmd.candidates.slice(0, 4).join('、')}のどれですか。` : '';
-        return respond(`${cmd.why}。${cand || 'どのタブか言ってください。'}`);
+        return respond(`${cmd.why}。${cand || 'タブの名前で言ってください。'}`);
       }
 
       // 閉じる・渡す は復唱して確かめる
@@ -414,6 +431,7 @@
       guard.begin(text);
 
       push('user', text);
+      gate.heardUser(text);
       setState(V.nextState('transcribing', 'got_text'));   // thinking
 
       try {
@@ -433,19 +451,67 @@
 
         // 3) 会話。⚠️ 会話側のモデルに手は無い。せめて実物（開いているタブ）は渡す。
         //    渡さないと「確認してみます」とだけ言って何もしない返事になる（実測）。
+        //    いま見ているタブは名前と直近の画面まで渡す。本人はそのタブの話をしている。
         let context = '';
+        const cur = VC.activeTab(listTabs(), { activeId: getActiveId ? getActiveId() : '' });
         try {
           const live = listTabs().filter((t) => !t.exited);
           if (live.length) context += `開いているタブ: ${live.map(tabName).join('、')}\n`;
         } catch (_) {}
+        if (cur) {
+          context += `いま見ているタブ: ${tabName(cur)}（渡し先を言われなければここに渡す）\n`;
+          try {
+            const t = tail(await readTab(cur.id));
+            if (t) context += `そのタブの直近の画面:\n${t.slice(-1500)}\n`;
+          } catch (_) {}
+        }
         if (handoff && handoff.tabId) {
           try {
             context += `渡してある作業: ${handoff.task}\n直近の様子:\n${tail(await readTab(handoff.tabId))}`;
           } catch (_) {}
         }
 
-        const res = await converse(V.forSending(history), context, engine);
-        const reply = (res && res.reply) ? String(res.reply) : '返事が来ませんでした。';
+        // 相手に手を持たせる。道具を呼んできたら回して、結果を返し、文になるまで続ける。
+        // ⚠️ 端末に文字が入るのは runTool の send_to_tab だけで、そこは関門 (gate) を通る。
+        const msgs = V.forSending(history);
+        const steps = [];
+        let res = null;
+        for (let round = 0; round < TOOL_ROUNDS; round += 1) {
+          res = await converse(msgs, context, engine, { tools: RT.TOOLS, steps });
+          const calls = (res && Array.isArray(res.calls)) ? res.calls : [];
+          if (!calls.length) break;
+          const results = [];
+          for (const c of calls) {
+            let out;
+            try { out = await RT.runTool(c.name, c.input || {}, toolDeps, gate); }
+            catch (e) { out = { error: String((e && e.message) || e).slice(0, 160) }; }
+            push('tool', `${c.name} → ${JSON.stringify(out).slice(0, 160)}`);
+            results.push({ id: c.id, output: out });
+          }
+          steps.push({ assistant: res.assistant, results });
+        }
+        const reply = (res && res.reply) ? String(res.reply)
+          : (steps.length ? '済みました。' : '返事が来ませんでした。');
+        gate.assistantSaid(reply);
+
+        // 4) 手が無い相手 (hub 経由) が「渡す文」を作っていたら、復唱して「はい」を待つ。
+        //    ⚠️ ここでも端末には入れない。入るのは runIntent だけ。
+        const ho = V.splitHandoff(reply);
+        if (ho.task) {
+          let target = cur;
+          if (ho.to) {
+            const r = VC.resolveTab(ho.to, listTabs());
+            if (r.ok) target = r.tab;
+          }
+          if (!target) {
+            await respond(`${ho.speech} 渡せるタブが開いていません。`, { kind: 'talk' });
+            return;
+          }
+          const q = confirmer.ask({ kind: 'work', tab: target, task: ho.task });
+          // 画面と履歴には読み上げた文を残す。渡す文そのものは task に添えて画面で見られるようにする
+          await respond(`${ho.speech} ${q}`.trim(), { kind: 'talk', task: ho.task });
+          return;
+        }
         await respond(reply, { kind: 'talk' });
       } catch (e) {
         setState('idle');

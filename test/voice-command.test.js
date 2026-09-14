@@ -105,10 +105,45 @@ test('このタブ、と言われたら今のタブに渡す', () => {
   assert.strictEqual(r.tab.id, 'c');
 });
 
-test('渡し先が決まらない作業依頼は実行せず聞き返す', () => {
+test('渡し先を言わない作業依頼は、いま見ているタブに渡す（聞き返さない）', () => {
+  // ⚠️ 本人は見ているタブの話をしている。「どのタブか」を 8 回聞き返した実測から
   const r = C.parse('テストして', ctx);
+  assert.strictEqual(r.kind, 'work');
+  assert.strictEqual(r.tab.id, 'c');
+  assert.strictEqual(r.confirm, true, '既定に倒すぶん、復唱の確認は必ず通す');
+});
+
+test('名指しが当たらないときも、いま見ているタブに倒す', () => {
+  // 「スライドに目的を入れて」の「スライド」はタブ名ではない。復唱で名前を言うので違えば止まる
+  const r = C.parse('スライドに目的を入れて追加して', ctx);
+  assert.strictEqual(r.kind, 'work');
+  assert.strictEqual(r.tab.id, 'c');
+});
+
+test('見ているタブが無ければ聞き返す', () => {
+  const r = C.parse('テストして', { tabs: TABS, activeId: '' });
   assert.strictEqual(r.kind, 'ask');
   assert.strictEqual(r.task, 'テストして');
+});
+
+test('長い話は、中に「どのタブ」「開いてる」が混じっても会話にする', () => {
+  // ⚠️ 実測: スライドの相談の途中でこれが一覧に化けて「21 つ開いています。s_1789…」と読んだ
+  const t = 'そういう作業を入れてもらえますか? どのタブのスライドに対してってして、タブっていうかスライドね、授業スライドの話してる今。';
+  assert.strictEqual(C.parse(t, ctx).kind, 'talk');
+  const u = '目的や背景を説明するページを追加して欲しいですか? どのタブのスライドっていう日本語が全然わかんないんだけど、私が今お話ししているのは授業スライドの話です。';
+  assert.strictEqual(C.parse(u, ctx).kind, 'talk');
+  assert.ok(!C.isShort(t));
+});
+
+test('短い一言なら操作として読む', () => {
+  assert.strictEqual(C.parse('いま何のタブが開いてる', ctx).kind, 'list');
+  assert.strictEqual(C.parse('黙って', ctx).kind, 'hush');
+});
+
+test('強弱は声で切り替えられる', () => {
+  assert.strictEqual(C.parse('オーパスで', ctx).model, 'claude-opus-5');
+  assert.strictEqual(C.parse('ソネットにして', ctx).model, 'claude-sonnet-5');
+  assert.strictEqual(C.parse('ハイクに戻して', ctx).label, 'Haiku');
 });
 
 test('タブを閉じるのは必ず確認を通す', () => {

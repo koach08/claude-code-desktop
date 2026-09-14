@@ -80,11 +80,11 @@
       parameters: {
         type: 'object',
         properties: {
-          tab: { type: 'string' },
-          task: { type: 'string', description: '渡す依頼の文' },
+          tab: { type: 'string', description: 'タブの名前。省略するといま見ているタブ' },
+          task: { type: 'string', description: '渡す依頼の文。本人の話を全部まとめた書き言葉' },
           confirmed: { type: 'boolean', description: '本人が承知したあとだけ true' },
         },
-        required: ['tab', 'task', 'confirmed'],
+        required: ['task', 'confirmed'],
       },
     },
   ];
@@ -102,6 +102,10 @@
 
 道具の使い方:
 - タブのことを聞かれたら list_tabs で実際に見てから答える。憶測で言わない
+- **渡し先を言われなければ、いま見ているタブ (list_tabs で current が true) に渡す。
+  「どのタブですか」とは聞き返さない。** 本人は見ているタブの話をしている
+- 本人は何回かに分けて話す。途中は一言で受けて聞いて溜め、頼まれたら全部まとめて
+  1 つの依頼文にして渡す。同じ確認を繰り返さない
 - 開く・切り替える・読む は、そのまま実行してよい
 - **閉じる・作業を渡す は、先に「どのタブに」「何を」するかを名前を出して言い、
   返事を待つ。** 返事を聞いてから confirmed を true にして呼ぶ
@@ -193,14 +197,20 @@
       return { error: r.reason, candidates: r.candidates };
     };
 
+    const activeId = deps.getActiveId ? String(deps.getActiveId() || '') : '';
     if (name === 'list_tabs') {
       return {
         tabs: tabs.filter((t) => !t.exited).map((t) => ({
           name: t.name || VC.basename(t.cwd) || String(t.id),
           place: VC.basename(t.cwd || ''),
+          current: String(t.id) === activeId,
         })),
       };
     }
+
+    // 「今のタブ」「このタブ」や省略は、いま見ているタブ
+    const cur = VC.activeTab(tabs, { activeId });
+    const wantsCurrent = (phrase) => !phrase || /^(この|今の|いまの|現在の)?(タブ|たぶ)?$/.test(String(phrase).trim());
 
     if (name === 'open_tab') {
       const t = await deps.openTab(a.mode || 'claude');
@@ -215,7 +225,8 @@
     }
 
     if (name === 'read_tab') {
-      const id = a.tab ? (findTab(a.tab).tab || {}).id : (deps.getHandoff && deps.getHandoff());
+      const id = a.tab && !wantsCurrent(a.tab) ? (findTab(a.tab).tab || {}).id
+        : ((deps.getHandoff && deps.getHandoff()) || (cur && cur.id));
       if (!id) return { error: '読む先がありません' };
       const text = await deps.readTab(id);
       const lines = String(text || '').split('\n').filter((x) => x.trim()).slice(-12);
@@ -223,7 +234,14 @@
     }
 
     // ⚠️ 関門にかける前に渡し先を解く。尋ねた文にその名前が入っていたかを見るため。
-    const found = a.tab ? findTab(a.tab) : {};
+    //    渡し先が無いか「今のタブ」なら、いま見ているタブ。
+    let found = {};
+    if (wantsCurrent(a.tab)) found = cur ? { tab: cur } : { error: '渡せるタブが開いていません' };
+    else {
+      found = findTab(a.tab);
+      // 名指しが当たらないときも、いま見ているタブに倒す (復唱で名前を言うので違えば止まる)
+      if (found.error && !found.candidates && cur) found = { tab: cur };
+    }
     if (found.error) return found;
     const targetName = found.tab ? (found.tab.name || VC.basename(found.tab.cwd) || found.tab.id) : a.tab;
 

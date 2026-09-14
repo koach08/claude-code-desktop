@@ -136,7 +136,8 @@ const SEND_TURNS = 12;
 
 function forSending(history) {
   return (history || [])
-    .filter((h) => h && h.role && h.content)
+    // ⚠️ 'tool' の行は画面に見せるためのもの。API には user/assistant しか渡せない
+    .filter((h) => h && (h.role === 'user' || h.role === 'assistant') && h.content)
     .slice(-SEND_TURNS)
     .map((h) => ({ role: h.role, content: String(h.content) }));
 }
@@ -185,8 +186,28 @@ function chunksForSpeech(text) {
   return out;
 }
 
+// ── 相手が作った「渡す文」を取り出す ──────────────────────────
+// 声の相手は自分では実行しない。話を聞いて溜め、頼まれたら渡す文を
+//   【渡す】…【ここまで】
+// の形で返す（指示文は voice-net.js の VOICE_SYSTEM）。ここで取り出して、
+// 耳に聞かせる文と、端末に入れる文とに分ける。
+// 【渡す先】名前 が付いていればそのタブ。無ければ今見ているタブ（呼ぶ側が決める）。
+// ⚠️ 締めの【ここまで】を落として返すことがあるので、無ければ末尾まで。
+const HANDOFF_RE = /【渡す】\s*([\s\S]*?)\s*(?:【ここまで】|$)/;
+const HANDOFF_TO_RE = /【渡す先】\s*([^\n【]+)/;
+
+function splitHandoff(reply) {
+  const r = String(reply || '');
+  const m = r.match(HANDOFF_RE);
+  if (!m) return { speech: r.trim(), task: '', to: '' };
+  const to = ((r.match(HANDOFF_TO_RE) || [])[1] || '').trim();
+  const speech = r.replace(HANDOFF_RE, '').replace(HANDOFF_TO_RE, '').trim();
+  return { speech, task: m[1].trim(), to };
+}
+
 const API = {
   STATES, LABEL, nextState, canRecord, onMicPress, chunksForSpeech, MIN_CHUNK,
+  splitHandoff,
   isPhantom, PHANTOM, MIN_SPEECH_SEC,
   makeSendGuard, DUP_WINDOW_MS,
   classify, checkTarget, forSending, SEND_TURNS,
