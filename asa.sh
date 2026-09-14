@@ -22,7 +22,9 @@ echo "━━━ 2/3 中身の確認 ━━━"
 ASAR="$HERE/dist/mac-arm64/Ariya Bridge.app/Contents/Resources/app.asar"
 if [ ! -f "$ASAR" ]; then echo "❌ ビルド結果が見つかりません: $ASAR"; exit 1; fi
 TMPD=$(mktemp -d)
-npx --yes @electron/asar extract-file "$ASAR" src/index.html > "$TMPD/index.html" 2>/dev/null || true
+# ⚠️ extract-file は標準出力に出さず、カレントに basename で書く。
+#    `> file` にリダイレクトすると空ファイルができて、いつも「見当たりません」になる(2026-09-15)。
+( cd "$TMPD" && npx --yes @electron/asar extract-file "$ASAR" src/index.html >/dev/null 2>&1 ) || true
 if [ -s "$TMPD/index.html" ] && grep -q "web-import-brave" "$TMPD/index.html"; then
   echo "✓ ChatGPT のログイン取り込みボタンが入っています"
 else
