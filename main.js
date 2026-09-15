@@ -2098,6 +2098,20 @@ function startControl() {
       captureScreen: () => screenLib.capture({
         limiter: screenLimiter,
         log: screenLog,
+        // ⚠️ 撮ったことを目に見える形で知らせる。記録に残るだけだと、
+        //    撮られた瞬間が分からない。macOS 自身も収録の印を出すが、
+        //    それは「何かが撮った」しか言わない。こちらは「どの窓を」まで言える
+        announce: (appName, title) => {
+          try {
+            const { Notification } = require('electron');
+            if (!Notification.isSupported()) return;
+            new Notification({
+              title: '画面を 1 枚見せました',
+              body: `${appName}${title ? ` / ${title}` : ''}`,
+              silent: true,
+            }).show();
+          } catch (_) { /* 通知が出せなくても撮影は成立している */ }
+        },
         frontmost: frontmostWindow,
         getSources: async ({ width }) => {
           const { desktopCapturer } = require('electron');

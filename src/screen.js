@@ -120,7 +120,7 @@ function isSelf(appName, windowTitle) {
 
 /**
  * 1 枚撮る。
- * deps: { getSources, frontmost, log, limiter, readFile }
+ * deps: { getSources, frontmost, log, limiter, readFile, announce }
  *   getSources: async ({width}) => [{id, name, toPNG(): Buffer}]
  *   frontmost:  async () => ({app, title})
  */
@@ -164,6 +164,9 @@ async function capture(deps) {
   if (png.length > 8_000_000) return { error: '絵が大きすぎます' };
 
   deps.log(`screen 撮影 app=${appName} 窓=${title} bytes=${png.length}`);
+  // ⚠️ 撮ったことを目に見える形で知らせる。記録に残るだけだと、撮られた瞬間が
+  //    分からない。知らせに失敗しても撮影は成立しているので、握りつぶす
+  try { if (deps.announce) deps.announce(appName, title); } catch (_) { /* 続ける */ }
   // ⚠️ ディスクに書かない。ここで返して終わり
   return { png_base64: png.toString('base64'), app: appName, title, bytes: png.length };
 }

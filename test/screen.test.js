@@ -176,3 +176,29 @@ test('AppleScript に文字を埋め込んでいない', () => {
   // ⚠️ 窓の名前をスクリプトに差し込むと、名前の中身で別の命令になりうる
   assert.ok(!/FRONTMOST_SCRIPT[^;]*\$\{/.test(mainSrc), 'AppleScript に値を差し込んでいる');
 });
+
+test('撮ったことを知らせている', async () => {
+  const told = [];
+  const [d] = deps({ announce: (app, title) => told.push([app, title]) });
+  await screen.capture(d);
+  assert.deepStrictEqual(told, [['Preview', '論文.pdf']], '撮ったのに知らせていない');
+});
+
+test('知らせに失敗しても撮影は成立する', async () => {
+  const [d] = deps({ announce: () => { throw new Error('通知が出せない'); } });
+  const r = await screen.capture(d);
+  assert.ok(r.png_base64, '知らせに失敗したせいで撮影ごと落ちている');
+});
+
+test('断ったときは知らせない', async () => {
+  const told = [];
+  const [d] = deps({ frontmost: async () => ({ app: '1Password', title: 'Vault' }),
+                     announce: () => told.push(1) });
+  await screen.capture(d);
+  assert.deepStrictEqual(told, [], '撮っていないのに知らせている');
+});
+
+test('知らせる口を main.js が渡している', () => {
+  assert.match(mainSrc, /announce:\s*\(appName, title\)/);
+  assert.match(mainSrc, /画面を 1 枚見せました/);
+});
