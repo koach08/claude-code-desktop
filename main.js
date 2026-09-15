@@ -1924,6 +1924,23 @@ app.on('open-url', (event, url) => {
 // 内部 API に触ることになり、版が上がると黙って壊れるため。開くのは手でよい。
 const { startControlServer } = require('./src/control-server');
 const screenLib = require('./src/screen');
+const { planIsolation, folderPreamble, spoken: isolationSpoken } = require('./src/isolate');
+const { worktreeRoot } = require('./src/worktree');
+
+// git を叩く小さな口。⚠️ 引数は配列で渡す (文字を連結してコマンドを作らない)
+function gitIn(at, args) {
+  const { execFileSync } = require('child_process');
+  return execFileSync('git', args, { cwd: at, encoding: 'utf-8', maxBuffer: 32 * 1024 * 1024 });
+}
+function isGitRepo(dir) {
+  try { return gitIn(dir, ['rev-parse', '--is-inside-work-tree']).trim() === 'true'; }
+  catch (_) { return false; }
+}
+// 畳む。⚠️ 差分を取り終えてから呼ぶこと
+function tidyWorktree(repo, plan) {
+  try { gitIn(repo, plan.removeArgs); } catch (_) {}
+  try { gitIn(repo, plan.deleteBranchArgs); } catch (_) {}
+}
 let controlServer = null;
 
 // 目の記録。⚠️ どのアプリのどの窓を撮ったかは必ず残す。あとから「何を見られたか」を辿れるように
@@ -1977,10 +1994,42 @@ function startControl() {
       },
 
       runWorker: async ({ engine, task, cwd, write, model, timeoutMs }) => {
+        // ⚠️ 書き込む作業は、元の場所から切り離してから渡す。
+        //    git のリポジトリなら worktree、そうでなければ新しい作業フォルダ。
+        //    切り離せないなら **断る**。元の場所で直接書かせない
+        const target = cwd || os.homedir();
+        let iso;
+        try {
+          iso = planIsolation({ cwd: target, label: task, write: !!write, isGitRepo: isGitRepo(target) });
+        } catch (e) {
+          return { ok: false, error: `切り離せませんでした: ${String(e.message || e).split('\n')[0]}` };
+        }
+        if (iso.kind === 'refuse') return { ok: false, error: iso.reason };
+
+        let runCwd = iso.dir;
+        let runTask = task;
+        let cleanup = null;
+        if (iso.kind === 'worktree') {
+          try {
+            fs.mkdirSync(worktreeRoot(), { recursive: true });
+            gitIn(target, iso.plan.addArgs);
+            cleanup = iso.plan;
+          } catch (e) {
+            // ⚠️ 隔離に失敗したら書かせない。元のリポジトリで直接書くより、断るほうがよい
+            return { ok: false, error: `作業ツリーを作れませんでした: ${String(e.message || e).split('\n')[0]}。`
+                                      + ' 既に同名の枝があるかもしれません' };
+          }
+        } else if (iso.kind === 'folder') {
+          try { fs.mkdirSync(iso.dir, { recursive: true }); }
+          catch (e) { return { ok: false, error: `作業フォルダを作れませんでした: ${e.message}` }; }
+          runTask = folderPreamble(iso.readFrom, iso.dir) + task;
+        }
+
         let spec;
         try {
-          spec = buildCommand(engine, task, { cwd: cwd || os.homedir(), write: !!write, model });
+          spec = buildCommand(engine, runTask, { cwd: runCwd, write: !!write, model });
         } catch (err) {
+          if (cleanup) tidyWorktree(target, cleanup);
           return { ok: false, error: String(err.message || err) };
         }
         const env = { ...shellEnv };
@@ -1992,7 +2041,8 @@ function startControl() {
           }
         }
         const jobId = `c_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-        const job = { done: false, output: '', engine, task, startedAt: Date.now() };
+        const job = { done: false, output: '', engine, task, startedAt: Date.now(),
+                      isolation: iso.kind, workDir: runCwd, note: iso.note || '' };
         controlJobs.set(jobId, job);
         // 溜めすぎない。古いものから捨てる
         while (controlJobs.size > CONTROL_JOB_MAX) {
@@ -2006,12 +2056,29 @@ function startControl() {
           {
             // ⚠️ runProcess は {which, text} を渡す。文字列扱いすると [object Object] が並ぶ(実測)
             onOutput: (d) => { job.output = (job.output + (typeof d === 'string' ? d : (d && d.text) || '')).slice(-200000); },
-            onDone: (r) => { job.done = true; job.code = r.code; job.ms = Date.now() - job.startedAt; },
+            onDone: (r) => {
+              job.done = true; job.code = r.code; job.ms = Date.now() - job.startedAt;
+              // ⚠️ 畳む前に差分を取る。取り忘れると成果物が消える
+              if (cleanup) {
+                try {
+                  gitIn(cleanup.dir, cleanup.stageArgs);
+                  job.diff = String(gitIn(cleanup.dir, cleanup.diffArgs) || '').slice(0, 60000);
+                  const patch = path.join(worktreeRoot(), `${path.basename(cleanup.dir)}.patch`);
+                  if (job.diff.trim()) { fs.writeFileSync(patch, job.diff); job.patch = patch; }
+                } catch (e) { job.diffError = String(e.message || e).split('\n')[0]; }
+                tidyWorktree(target, cleanup);
+              }
+            },
           },
         );
-        if (handle.failed) { controlJobs.delete(jobId); return { ok: false, error: '起動できなかった' }; }
+        if (handle.failed) {
+          controlJobs.delete(jobId);
+          if (cleanup) tidyWorktree(target, cleanup);
+          return { ok: false, error: '起動できなかった' };
+        }
         job.cancel = handle.cancel;
-        return { ok: true, jobId, engine, bin: spec.bin, write: spec.write, cwd: spec.cwd };
+        return { ok: true, jobId, engine, bin: spec.bin, write: spec.write, cwd: spec.cwd,
+                 isolation: iso.kind, note: iso.note || '', spoken: isolationSpoken(iso) };
       },
 
       workerResult: (jobId) => {
@@ -2020,6 +2087,10 @@ function startControl() {
         return {
           done: j.done, code: j.code, ms: j.ms, engine: j.engine,
           output: j.output.slice(-20000),
+          // 切り離した回は、どこで何をしたかを返す。⚠️ patch を当てるのは人間
+          isolation: j.isolation || '', work_dir: j.workDir || '', note: j.note || '',
+          patch: j.patch || '', diff_lines: j.diff ? j.diff.split('\n').length : 0,
+          diff_error: j.diffError || '',
         };
       },
 

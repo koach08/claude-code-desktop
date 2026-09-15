@@ -63,8 +63,12 @@ function planWorktree(repo, label, stamp = Date.now()) {
     // 成果物を消してしまう。先に add -A して index 経由で取る。
     // index を汚すが、作業ツリーごと畳むので元のリポジトリには残らない。
     stageArgs: ['add', '-A'],
-    diffArgs: ['diff', '--no-color', '--cached', 'HEAD'],
-    statusArgs: ['status', '--porcelain'],
+    // ⚠️ core.quotepath=false を付ける。既定だと日本語のファイル名が
+    //    "\346\216\210\346\245\255.md" のような 8 進表記で出る。差分を読むのは
+    //    機械だけではない (本人が patch を見て当てるかどうかを決める)。
+    //    「第3回.md」が読めないと、何が作られたのか分からない (実測 2026-09-15)。
+    diffArgs: ['-c', 'core.quotepath=false', 'diff', '--no-color', '--cached', 'HEAD'],
+    statusArgs: ['-c', 'core.quotepath=false', 'status', '--porcelain'],
   };
 }
 
@@ -72,7 +76,7 @@ function planWorktree(repo, label, stamp = Date.now()) {
 // マージではなく patch にするのは、人間が中身を見てから当てられるようにするため。
 function planPatch(plan, outDir) {
   const file = path.join(outDir || worktreeRoot(), `${path.basename(plan.dir)}.patch`);
-  return { file, args: ['diff', '--no-color', 'HEAD'] };
+  return { file, args: ['-c', 'core.quotepath=false', 'diff', '--no-color', 'HEAD'] };
 }
 
 module.exports = { planWorktree, planPatch, safeLabel, worktreeRoot };
