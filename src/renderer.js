@@ -3332,7 +3332,7 @@ async function setupVoiceChat() {
 
     // 良い声で読む。Mac 内蔵の声は素っ気ないので、鍵があるときはこちらを使う
     tts: async (text) => {
-      const r = await window.api.voiceTts({ text, voice: 'nova' });
+      const r = await window.api.voiceTts({ text });   // 声の既定は voice-net.js (marin)
       return (r && r.audio) ? { audio: r.audio, mime: r.mime } : { error: (r && r.error) || 'tts' };
     },
 

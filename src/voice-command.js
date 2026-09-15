@@ -18,7 +18,9 @@
       .replace(/[Ａ-Ｚａ-ｚ０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0))
       .replace(/[ァ-ヶ]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0x60))
       .toLowerCase()
-      .replace(/[\s　・,.。、_\-/]+/g, '');
+      // ⚠️ タブ名は台帳で「ariya bridge updateしたい…」と切り詰められている。「…」を残すと
+      //    声で名前を言っても一致せず、関門が本物の確認まで弾く (2026-09-15 実測)
+      .replace(/[\s　・,.。、_\-/…]+/g, '');
   }
 
   // 綴りとカタカナを繋ぐ表。

@@ -168,3 +168,63 @@ test('渡し先を省くと、いま見ているタブに渡す (名前を出し
   assert.strictEqual(r.sent_to, 'midori-os');
   assert.deepStrictEqual(d.log.sent.map((x) => x.id), ['b']);
 });
+
+test('台帳で切り詰められた名前「…」でも、声の名指しが当たる', async () => {
+  // ⚠️ 実測: 22 本全部のタブ名に「…」が付いていて、本物の確認まで弾いていた
+  const d = deps();
+  d.listTabs = () => [{ id: 'z', name: 'ariya bridge updateしたい…', cwd: '/x/ariya', exited: false }];
+  const s = scene();
+  s.honnin('音声を自然にして');
+  s.alfred('ariya bridge updateしたい に渡します。よろしいですか。');
+  s.honnin('お願いします');
+  const r = await RT.runTool('send_to_tab', { tab: 'ariya bridge updateしたい', task: '音声を自然に', confirmed: true }, d, s.gate);
+  assert.strictEqual(r.sent_to, 'ariya bridge updateしたい…');
+});
+
+test('1 回目を止めたあと本人が答えれば、依頼文を言い換えていても通る', async () => {
+  // ⚠️ 鍵に task を入れていたので、2 回目の言い換えで「別の用件」扱いになり永久に通らなかった
+  const d = deps();
+  const s = scene();
+  s.honnin('テストして');
+  const r1 = await RT.runTool('send_to_tab', { tab: 'AOZORA', task: 'テストを走らせる', confirmed: true }, d, s.gate);
+  assert.strictEqual(r1.sent, false);
+  assert.match(r1.reason, /まだ渡していません/);
+  s.alfred('AOZORA に渡します。よろしいですか。');
+  s.honnin('はい');
+  const r2 = await RT.runTool('send_to_tab', { tab: 'AOZORA', task: 'テストを実行して結果を報告', confirmed: true }, d, s.gate);
+  assert.strictEqual(r2.sent_to, 'AOZORA');
+});
+
+test('渡し先がいま見ているタブなら「このタブに渡します」でも名指しとして通る', async () => {
+  const d = deps();
+  d.getActiveId = () => 'a';
+  const s = scene();
+  s.honnin('スライドを直して');
+  s.alfred('いま見ているタブに渡します。よろしいですか。');
+  s.honnin('よろしいです');
+  const r = await RT.runTool('send_to_tab', { task: 'スライドを直す', confirmed: true }, d, s.gate);
+  assert.strictEqual(r.sent_to, 'AOZORA');
+});
+
+test('会話の最初の一手で止めても待ちを記録し、本人の返事で通る', async () => {
+  const d = deps();
+  const s = scene();
+  s.honnin('テストして');                     // まだ Alfred は何も言っていない
+  const r1 = await RT.runTool('send_to_tab', { tab: 'AOZORA', task: 'テスト', confirmed: true }, d, s.gate);
+  assert.strictEqual(r1.sent, false);
+  s.alfred('AOZORA に渡します。よろしいですか。');
+  s.honnin('よろしいです');
+  const r2 = await RT.runTool('send_to_tab', { tab: 'AOZORA', task: 'テスト', confirmed: true }, d, s.gate);
+  assert.strictEqual(r2.sent_to, 'AOZORA');
+});
+
+test('長いタブ名は一部を口にしていれば名指しと見る', async () => {
+  const d = deps();
+  d.listTabs = () => [{ id: 'z', name: '授業のスライド作成を再開したい…', cwd: '/x/slides', exited: false }];
+  const s = scene();
+  s.honnin('スライドを見て');
+  s.alfred('スライド作成のタブにチェックを頼みます。よろしいですか？');
+  s.honnin('よろしいです');
+  const r = await RT.runTool('send_to_tab', { tab: '授業のスライド作成を再開したい', task: '見る', confirmed: true }, d, s.gate);
+  assert.strictEqual(r.sent_to, '授業のスライド作成を再開したい…');
+});

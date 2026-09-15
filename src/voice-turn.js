@@ -205,9 +205,43 @@ function splitHandoff(reply) {
   return { speech, task: m[1].trim(), to };
 }
 
+// ── 渡した作業の見張り ────────────────────────────────────────
+// ハンズフリーで回すには、渡したあと本人がタブを見に行かなくて済む必要がある。
+// 「終わった」は端末からは直接分からないので、こちらで確かめられる事実で決める:
+//   渡してから画面が動いた (何か出力した) / そのあと静かになった (QUIET_MS 以上) /
+//   末尾が入力待ちの形 (❯ や › で終わる、または人を呼ぶ選択肢) 。
+// ⚠️ 「静か」だけで決めると、考え込んでいる間 (スピナーは出力を出す) は大丈夫だが、
+//    長いビルドの待ちで誤報する。末尾の入力待ちを併用する。
+const WATCH_QUIET_MS = 12000;      // これだけ画面が動かなければ「手が止まった」
+const WATCH_MAX_MS = 20 * 60000;   // これ以上は見張らない (本人に「まだ動いています」と言って降りる)
+const WATCH_POLL_MS = 4000;
+const PROMPT_TAIL = /[❯›>]\s*$|\?\s*$|(はい|Yes|yes)\s*[\/／]\s*(いいえ|No|no)/;
+
+function makeWatch(now = () => Date.now()) {
+  let start = 0; let base = ''; let last = ''; let changedAt = 0; let moved = false;
+  return {
+    begin(tail) { start = now(); base = String(tail || ''); last = base; changedAt = start; moved = false; },
+    // 新しい末尾を渡す。'done' / 'stuck' / 'timeout' / null
+    feed(tail) {
+      const t = String(tail || '');
+      const n = now();
+      if (t !== last) { last = t; changedAt = n; if (t !== base) moved = true; return null; }
+      if (n - start > WATCH_MAX_MS) return 'timeout';
+      if (!moved) return null;                                  // まだ何も出ていない
+      if (n - changedAt < WATCH_QUIET_MS) return null;
+      return PROMPT_TAIL.test(t.trimEnd().slice(-120)) ? 'done' : 'stuck';
+    },
+    get tail() { return last; },
+  };
+}
+
+// 「渡しました」と言い切っている文か。渡っていないときにこれを言わせないために使う。
+const CLAIMS_SENT = /(渡しました|渡し終え|送りました|送信しました|投げました)/;
+function claimsSent(text) { return CLAIMS_SENT.test(String(text || '')); }
+
 const API = {
   STATES, LABEL, nextState, canRecord, onMicPress, chunksForSpeech, MIN_CHUNK,
-  splitHandoff,
+  splitHandoff, claimsSent, makeWatch, WATCH_QUIET_MS, WATCH_MAX_MS, WATCH_POLL_MS,
   isPhantom, PHANTOM, MIN_SPEECH_SEC,
   makeSendGuard, DUP_WINDOW_MS,
   classify, checkTarget, forSending, SEND_TURNS,

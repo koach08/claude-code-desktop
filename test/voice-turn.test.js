@@ -188,3 +188,28 @@ test('道具の行は相手に送らない (API は user/assistant しか受け�
   ]);
   assert.deepStrictEqual(out.map((x) => x.role), ['user', 'assistant']);
 });
+
+test('見張り: 動いて→静かになって→入力待ちなら done、静かでも入力待ちでなければ stuck', () => {
+  let t = 0;
+  const w = V.makeWatch(() => t);
+  w.begin('❯ ');
+  t += 1000; assert.strictEqual(w.feed('❯ '), null, '何も出ていないうちは黙る');
+  t += 1000; assert.strictEqual(w.feed('やっています'), null);
+  t += V.WATCH_QUIET_MS + 1; assert.strictEqual(w.feed('やっています'), 'stuck');
+  const w2 = V.makeWatch(() => t);
+  w2.begin('❯ ');
+  t += 1000; w2.feed('直しました\n❯ ');
+  t += V.WATCH_QUIET_MS + 1; assert.strictEqual(w2.feed('直しました\n❯ '), 'done');
+});
+
+test('見張り: 長すぎれば timeout', () => {
+  let t = 0;
+  const w = V.makeWatch(() => t);
+  w.begin('');
+  t += V.WATCH_MAX_MS + 1; assert.strictEqual(w.feed(''), 'timeout');
+});
+
+test('「渡しました」の言い切りを見分ける', () => {
+  assert.ok(V.claimsSent('AOZORA に渡しました。'));
+  assert.ok(!V.claimsSent('AOZORA に渡します。よろしいですか。'));
+});

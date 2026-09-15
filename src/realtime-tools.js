@@ -129,9 +129,27 @@
   const ASKING = /(よろしい|いいです|ますか|ますが|しますか|渡します|閉じます|でしょうか|\?|？)/;
   const REFUSED = /(いいえ|いや|違う|ちがう|やめ|止め|だめ|駄目|キャンセル|中止|やっぱり|あとで|後で)/;
 
-  function keyOf(name, args) {
-    return `${name}:${String((args && args.tab) || '')}:${String((args && args.task) || '')}`;
+  // ⚠️ task を鍵に入れない。モデルは 2 回目の呼び出しで依頼文を言い換えるので、
+  //    入れると「同じ用件」と認められず、本人が「お願いします」と言っても弾かれた (実測)。
+  // 名前の一部 (5 文字以上の連なり) を口にしていれば名指しと見る。
+  // 台帳のタブ名は「授業のスライド作成を再開したい…」のように長く、声では
+  // 「スライド作成のタブ」と縮めて言う (実測)。全文一致だけだと本物の確認まで弾く。
+  const CHUNK = 5;
+  function sharesChunk(said, name) {
+    const n = String(name || '');
+    if (n.length < CHUNK) return false;
+    for (let i = 0; i + CHUNK <= n.length; i += 1) {
+      if (said.includes(n.slice(i, i + CHUNK))) return true;
+    }
+    return false;
   }
+
+  function keyOf(name, args) {
+    return `${name}:${String((args && args.tab) || '')}`;
+  }
+
+  // 尋ねた文が「いま見ているタブ」を指す言い方
+  const SAYS_CURRENT = /(いま|今)(見て|みて)いるタブ|(この|今の|いまの)タブ|ここに渡し/;
 
   function createGate(opts = {}) {
     const now = opts.now || (() => Date.now());
@@ -148,18 +166,22 @@
       clear() { pending = null; },
 
       // target には、名前を解いたあとの渡し先を渡す (尋ねた文に入っているか見る)
-      check(name, args, target) {
+      // isCurrent: 渡し先がいま見ているタブなら、「このタブに渡します」も名指しとして認める
+      check(name, args, target, isCurrent) {
         if (!DANGEROUS.has(name)) return { ok: true };
         const key = keyOf(name, args);
 
         if (!args || args.confirmed !== true) {
           pending = { key, userAt: lastUser.at };
-          return { ok: false, needsConfirm: true, reason: '先に、何をするかを声に出して伝えて、本人の返事を待ってください。' };
+          return { ok: false, needsConfirm: true, reason: 'まだ渡していません。先に、タブの名前を出して何をするかを声で伝え、本人の返事を待ってください。「渡しました」と言わないこと。' };
         }
 
         // 本人が、こちらが喋ったあとに声を出しているか
+        // ⚠️ ここでも待ちを記録する。会話の最初の一手で止めたときに記録が無く、
+        //    そのあと本人が「よろしい」と言っても通らず、2 回聞き返していた (実測)
         if (!(lastUser.at > lastAssistant.at) || !lastAssistant.at) {
-          return { ok: false, needsConfirm: true, reason: '本人の返事をまだ聞いていません。尋ねて、返事を待ってください。' };
+          pending = { key, userAt: lastUser.at };
+          return { ok: false, needsConfirm: true, reason: 'まだ渡していません。本人の返事をまだ聞いていません。尋ねて、返事を待ってください。「渡しました」と言わないこと。' };
         }
         // 断られていないか
         if (REFUSED.test(lastUser.text)) {
@@ -172,12 +194,13 @@
 
         // 声で尋ねた流儀。尋ねた文に渡し先の名前と、尋ねる言い方が要る
         const said = VC.norm(lastAssistant.text);
-        const named = target ? VC.variants(target).some((v) => v && said.includes(v)) : false;
+        const named = (target ? VC.variants(target).some((v) => v && (said.includes(v) || sharesChunk(said, v))) : false)
+          || (!!isCurrent && SAYS_CURRENT.test(lastAssistant.text));
         const viaVoice = named && ASKING.test(lastAssistant.text);
 
         if (!viaPending && !viaVoice) {
           pending = { key, userAt: lastUser.at };
-          return { ok: false, needsConfirm: true, reason: `${target || 'どのタブか'} を名前で言って、何をするかを尋ねてから、返事を待ってください。` };
+          return { ok: false, needsConfirm: true, reason: `まだ渡していません。「${target || 'そのタブ'} に渡します。よろしいですか」と名前を出して尋ね、返事を待ってください。「渡しました」と言わないこと。` };
         }
         pending = null;
         return { ok: true };
@@ -245,9 +268,11 @@
     if (found.error) return found;
     const targetName = found.tab ? (found.tab.name || VC.basename(found.tab.cwd) || found.tab.id) : a.tab;
 
-    const gated = gate.check(name, a, targetName);
+    const isCurrent = !!(cur && found.tab && String(found.tab.id) === String(cur.id));
+    const gated = gate.check(name, a, targetName, isCurrent);
     if (!gated.ok) {
       return {
+        sent: false,
         needs_confirmation: !gated.refused,
         refused: !!gated.refused,
         reason: gated.reason,

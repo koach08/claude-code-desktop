@@ -229,3 +229,36 @@ test('タブの一覧は外に聞かずに答える', async () => {
   await say(vc, 'いま何のタブが開いてる');
   assert.ok(log.said.some((s) => s.includes('AOZORA')));
 });
+
+test('関門で止まったのに「渡しました」と言ったら、こちらが尋ね直しに差し替える', async () => {
+  // ⚠️ 実測 11:22: needs_confirmation が返ったのに「渡しました」と言い、本人は渡ったと思った
+  const converse = toolConverse([
+    { calls: [{ id: 't1', name: 'send_to_tab', input: { task: '音声を自然に', confirmed: true } }] },
+    { reply: 'Ariya Bridge に渡しました。' },
+  ]);
+  const { vc, log } = make({ converse });
+  await say(vc, '音声を自然にしてほしいって伝えて');
+  assert.strictEqual(log.sent.length, 0);
+  const last = log.said[log.said.length - 1];
+  assert.match(last, /まだ渡していません/);
+  assert.match(last, /よろしいですか/);
+  assert.ok(!/渡しました/.test(last));
+});
+
+test('渡したあと見張り、手が止まったら結果を声で返す', async () => {
+  let tail = '作業中…';
+  const calls = [];
+  const converse = async (msgs, ctx, engine, extra) => {
+    calls.push(msgs[msgs.length - 1].content);
+    if (/渡した作業/.test(msgs[msgs.length - 1].content)) return { ok: true, reply: '14 枚目のメモを学生向けに直しました。残りはありません。' };
+    return { ok: true, reply: '会話の返事です。', calls: [] };
+  };
+  const { vc, log } = make({ converse, readTab: async () => tail });
+  await say(vc, 'アオゾラのタブでテストして');
+  await say(vc, 'はい');
+  assert.strictEqual(vc.watching, 'a');
+  // 画面が動いて、止まって、入力待ちになる
+  tail = '作業中…\n直しました\n❯ ';
+  await new Promise((r) => setTimeout(r, 30));
+  assert.ok(!log.said.some((s) => /アオゾラ|AOZORA から/.test(s) && /14 枚目/.test(s)), '静かになる前に報告してはいけない');
+});
