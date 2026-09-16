@@ -3171,86 +3171,66 @@ async function testChatConnection() {
 // ══════════════════════════════════════════════════
 // ── Voice Input (Whisper) ──
 // ══════════════════════════════════════════════════
+// 🎤 は入力欄に文字を入れるだけ。以前は ⏹ を押してから丸ごと文字にしていたので、
+// 長く話すほど押したあとの待ちが伸びた。いまは黙った所で区切って順に足す
+// (src/voice-dictate.js)。区切りの見極めは 💬 と同じ voice-vad.js。
 
-let voiceRecorder = null;
-let voiceChunks = [];
-let voiceTargetInput = null; // which textarea to fill
+let voiceDictation = null;   // 録っている最中の書き取り。1 つだけ
 
 function setupVoiceButton(btnId, targetInputId) {
   const btn = document.getElementById(btnId);
   if (!btn) return;
   btn.addEventListener('click', () => {
-    if (voiceRecorder && voiceRecorder.state === 'recording') {
+    if (voiceDictation && voiceDictation.running) {
       stopVoiceRecording(btn, targetInputId);
-    } else {
+    } else if (!voiceDictation) {
       startVoiceRecording(btn, targetInputId);
     }
   });
 }
 
-async function startVoiceRecording(btn, targetInputId) {
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    voiceChunks = [];
-    voiceTargetInput = targetInputId;
-
-    voiceRecorder = new MediaRecorder(stream, {
-      mimeType: MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-        ? 'audio/webm;codecs=opus' : 'audio/webm',
-    });
-
-    voiceRecorder.ondataavailable = (e) => {
-      if (e.data.size > 0) voiceChunks.push(e.data);
-    };
-
-    voiceRecorder.onstop = async () => {
-      // Stop all tracks
-      stream.getTracks().forEach(t => t.stop());
-      btn.classList.remove('recording');
-      btn.classList.add('transcribing');
-      btn.textContent = '...';
-
-      const blob = new Blob(voiceChunks, { type: voiceRecorder.mimeType });
-      const arrayBuffer = await blob.arrayBuffer();
-
-      try {
-        const result = await window.api.hubTranscribe({
-          audioBuffer: Array.from(new Uint8Array(arrayBuffer)),
-          mimeType: voiceRecorder.mimeType,
-        });
-
-        if (result.text) {
-          const input = document.getElementById(voiceTargetInput);
-          if (input) {
-            // Append to existing text
-            const existing = input.value;
-            input.value = existing ? existing + ' ' + result.text : result.text;
-            input.style.height = 'auto';
-            input.style.height = Math.min(input.scrollHeight, 200) + 'px';
-            input.focus();
-          }
-        } else if (result.error) {
-          console.error('Transcription error:', result.error);
-        }
-      } catch (e) {
-        console.error('Transcription failed:', e);
-      }
-
-      btn.classList.remove('transcribing');
-      btn.textContent = '\u{1F3A4}';
-    };
-
-    voiceRecorder.start();
-    btn.classList.add('recording');
-    btn.textContent = '\u{23F9}';
-  } catch (e) {
-    console.error('Microphone access denied:', e);
-  }
+// 入力欄の末尾に足す。前に文字があれば空白で繋ぐ
+function appendVoiceText(targetInputId, text) {
+  const input = document.getElementById(targetInputId);
+  if (!input) return;
+  const existing = input.value;
+  input.value = existing ? existing + ' ' + text : text;
+  input.style.height = 'auto';
+  input.style.height = Math.min(input.scrollHeight, 200) + 'px';
+  input.focus();
 }
 
-function stopVoiceRecording(btn, targetInputId) {
-  if (voiceRecorder && voiceRecorder.state === 'recording') {
-    voiceRecorder.stop();
+async function startVoiceRecording(btn, targetInputId) {
+  if (!window.VoiceDictate) return;
+  const d = window.VoiceDictate.create({
+    // ⚠️ hub 経由だと往復で 1.5 秒延びる。💬 と同じ直の口を使う (鍵が無ければ中で hub に落ちる)
+    transcribe: async (audioBuffer, mimeType) =>
+      window.api.voiceTranscribe({ audioBuffer, mimeType }),
+    onText: (text) => appendVoiceText(targetInputId, text),
+    onState: (state) => {
+      btn.classList.toggle('recording', state === 'recording');
+      btn.classList.toggle('transcribing', state === 'transcribing');
+      if (state === 'recording') btn.textContent = '\u{23F9}';
+      else if (state === 'transcribing') btn.textContent = d.running ? '\u{23F9}' : '...';
+      else btn.textContent = '\u{1F3A4}';
+    },
+    onNotice: (text) => console.warn('[voice]', text),
+    getUserMedia: (c) => navigator.mediaDevices.getUserMedia(c),
+    MediaRecorder,
+    AudioContext: window.AudioContext || window.webkitAudioContext,
+  });
+  voiceDictation = d;
+  const ok = await d.start();
+  if (!ok) { voiceDictation = null; btn.textContent = '\u{1F3A4}'; }
+}
+
+async function stopVoiceRecording(btn, targetInputId) {
+  const d = voiceDictation;
+  if (!d) return;
+  try { await d.stop(); } finally {
+    if (voiceDictation === d) voiceDictation = null;
+    btn.classList.remove('recording', 'transcribing');
+    btn.textContent = '\u{1F3A4}';
   }
 }
 
