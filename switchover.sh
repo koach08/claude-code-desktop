@@ -55,6 +55,29 @@ if ! codesign --verify --strict "$SRC" 2>/dev/null; then
 fi
 NEWVER=$(/usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" "$SRC/Contents/Info.plist" 2>/dev/null)
 OLDVER=$(/usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" "$DST/Contents/Info.plist" 2>/dev/null)
+
+# --- 格下げの番人 ---------------------------------------------------------
+# 枝を間違えてビルドすると、古い版が「点検OK」と言われて入る。main は 1.6.1 で、
+# 操作窓も目も入っていない。土台は feat/multi-engine-relay (1.7.5) の方。
+# 気づくのは差し替えが終わって起動してから、つまり手遅れになってからなので、
+# 番号が下がる差し替えはここで止める。
+#
+# 戻したいときは意図を明示してもらう:  ALLOW_DOWNGRADE=1 zsh switchover.sh
+if [ -n "$OLDVER" ] && [ -n "$NEWVER" ] && [ "$OLDVER" != "$NEWVER" ]; then
+  # sort -V で並べて、先頭が新しい方なら「下がっている」。
+  if [ "$(printf '%s\n%s\n' "$OLDVER" "$NEWVER" | sort -V | head -1)" = "$NEWVER" ]; then
+    if [ "${ALLOW_DOWNGRADE:-0}" != "1" ]; then
+      echo "⚠ 版が下がります: $OLDVER → $NEWVER。差し替えは行わず中止しました。" >&2
+      echo "  枝を間違えていませんか。main は 1.6.1 で、操作窓も目も入っていません。" >&2
+      echo "  土台は feat/multi-engine-relay (1.7.5) です。" >&2
+      echo "" >&2
+      echo "  いま出ている枝:  $(git -C "$HERE" rev-parse --abbrev-ref HEAD 2>/dev/null || echo '(git 管理外)')" >&2
+      echo "  承知のうえで戻すなら:  ALLOW_DOWNGRADE=1 zsh \"$SELF\"" >&2
+      exit 5
+    fi
+    echo "⚠ 版が下がりますが、ALLOW_DOWNGRADE=1 なので続けます: $OLDVER → $NEWVER"
+  fi
+fi
 echo "点検OK: $OLDVER → $NEWVER"
 
 echo "0) 差し替え前のタブ台帳を退避..."
