@@ -11,6 +11,7 @@
 
 const OPENAI = 'https://api.openai.com/v1';
 const ANTHROPIC = 'https://api.anthropic.com/v1';
+const ELEVEN = 'https://api.elevenlabs.io/v1';
 
 // 耳で聞くので短くする。hub 側の CONVERSE_SYSTEM と揃えてある。
 // ⚠️ 片方だけ直すと、直で喋ったときと hub 経由で喋ったときで口調が変わる。
@@ -65,6 +66,14 @@ const VOICE_SYSTEM = `${VOICE_BASE}\n\n${HANDOFF_GUIDE}`;
 //    marin は会話に近い。声が無い (400) ときだけ nova に落ちる。
 const DEFAULT_VOICE = 'marin';
 const FALLBACK_VOICE = 'nova';
+
+// ElevenLabs。鍵 (ELEVENLABS_API_KEY) があるときはこちらが一番手。
+// ⚠️ 声は ELEVENLABS_VOICE_ID で選ぶ。無ければ Sarah (英語圏の声だが多言語モデルで日本語も話す)。
+//    日本語ネイティブの声は Voice Library から自分の口座に足して、その ID を env.txt に書く。
+//    flash_v2_5 は会話向けの低遅延モデル。language_code で日本語だと明示する。
+const ELEVEN_DEFAULT_VOICE_ID = 'EXAVITQu4vr4xnSDxMaL';
+const ELEVEN_MODEL = 'eleven_flash_v2_5';
+const ELEVEN_VOICE_SETTINGS = { stability: 0.45, similarity_boost: 0.8, style: 0.35, use_speaker_boost: true };
 const VOICE_STYLE = '日本語で、隣にいる相棒に話しかける調子。読み上げではなく会話。自然な抑揚をつけ、大事な語は少し強く、文末は落とす。句読点で軽く間を取り、語尾を柔らかく。早口にしない。';
 
 
@@ -245,9 +254,41 @@ function create({ fetchImpl, getKey, hubUrl, hubSecret }) {
 
   // ── 読み上げ ────────────────────────────────────────────────
   // ⚠️ Mac 内蔵の声は素っ気ないので使わない。鍵が無いときだけ画面側が内蔵に落ちる。
+  //
+  // 順番: ElevenLabs (鍵があれば) → OpenAI → (画面側で) 内蔵。
+  // ⚠️ marin でも「読み上げ調」が残ると言われた (2026-09-22)。声の質はここで決まる。
+  //    ElevenLabs が落ちても声が止まらないよう、必ず OpenAI に落とす。
+
+  async function ttsEleven(text) {
+    const k = key('ELEVENLABS_API_KEY');
+    if (!k) return null;
+    const voiceId = key('ELEVENLABS_VOICE_ID') || ELEVEN_DEFAULT_VOICE_ID;
+    try {
+      const res = await f(`${ELEVEN}/text-to-speech/${encodeURIComponent(voiceId)}?output_format=mp3_44100_128`, {
+        method: 'POST',
+        headers: { 'xi-api-key': k, 'Content-Type': 'application/json', Accept: 'audio/mpeg' },
+        body: JSON.stringify({
+          text: String(text || '').slice(0, 2000),
+          model_id: ELEVEN_MODEL,
+          language_code: 'ja',
+          voice_settings: ELEVEN_VOICE_SETTINGS,
+        }),
+      });
+      if (!res.ok) return { error: `elevenlabs ${res.status}: ${await res.text()}` };
+      const buf = new Uint8Array(await res.arrayBuffer());
+      if (!buf.length) return { error: 'elevenlabs empty' };
+      return { audio: buf, mime: 'audio/mpeg', via: 'elevenlabs' };
+    } catch (e) {
+      return { error: `elevenlabs ${e.message}` };
+    }
+  }
+
   async function tts(text, opts = {}) {
+    const el = await ttsEleven(text);
+    if (el && el.audio) return el;
+    // ⚠️ ここに来たのは ElevenLabs が無い/落ちたということ。理由は残して OpenAI へ
     const k = key('OPENAI_API_KEY');
-    if (!k) return { error: 'no-key' };
+    if (!k) return { error: (el && el.error) ? `no-key (${el.error})` : 'no-key' };
     const once = async (voice) => f(`${OPENAI}/audio/speech`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${k}`, 'Content-Type': 'application/json' },
@@ -264,7 +305,7 @@ function create({ fetchImpl, getKey, hubUrl, hubSecret }) {
       if (res.status === 400 && (opts.voice || DEFAULT_VOICE) !== FALLBACK_VOICE) res = await once(FALLBACK_VOICE);
       if (!res.ok) return { error: await res.text() };
       const buf = new Uint8Array(await res.arrayBuffer());
-      return { audio: buf, mime: 'audio/mpeg' };
+      return { audio: buf, mime: 'audio/mpeg', via: 'openai' };
     } catch (e) {
       return { error: e.message };
     }
@@ -273,4 +314,4 @@ function create({ fetchImpl, getKey, hubUrl, hubSecret }) {
   return { transcribe, reply, tts };
 }
 
-module.exports = { create, DEFAULT_VOICE, VOICE_STYLE, VOICE_SYSTEM, VOICE_BASE, TOOL_GUIDE, HANDOFF_GUIDE, DEFAULT_VOICE_ENGINE, DIRECT, nameFor };
+module.exports = { create, DEFAULT_VOICE, ELEVEN_DEFAULT_VOICE_ID, ELEVEN_MODEL, VOICE_STYLE, VOICE_SYSTEM, VOICE_BASE, TOOL_GUIDE, HANDOFF_GUIDE, DEFAULT_VOICE_ENGINE, DIRECT, nameFor };

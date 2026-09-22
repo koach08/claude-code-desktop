@@ -1062,7 +1062,8 @@ ipcMain.handle('voice-reply', async (_e, { messages, context, provider, model, t
 ipcMain.handle('voice-tts', async (_e, { text, voice }) => {
   const r = await voiceNet().tts(text, { voice });
   // ⚠️ Uint8Array のまま返す。base64 にすると 1.3 倍に膨らむ
-  return r.audio ? { audio: r.audio, mime: r.mime } : { error: r.error || 'tts failed' };
+  //    via はどの声が鳴ったか (elevenlabs / openai)。落ちた理由の切り分けに使う
+  return r.audio ? { audio: r.audio, mime: r.mime, via: r.via } : { error: r.error || 'tts failed' };
 });
 
 // 音声の履歴。⚠️ localStorage は再インストールや退避で消えるので、

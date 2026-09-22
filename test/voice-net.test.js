@@ -91,6 +91,57 @@ test('読み上げは音の中身を返す。鍵が無ければそう言う', as
   assert.strictEqual((await net2.tts('やあ')).error, 'no-key');
 });
 
+test('ElevenLabs の鍵があれば読み上げはそちらが一番手', async () => {
+  const f = fake([
+    ['api.elevenlabs.io', () => ({ ok: true, arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer })],
+    ['audio/speech', ok({})],
+  ]);
+  const keys = { ELEVENLABS_API_KEY: 'xi-test', ELEVENLABS_VOICE_ID: 'voice123', OPENAI_API_KEY: 'sk' };
+  const net = VN.create({ fetchImpl: f, getKey: (n) => keys[n] || '', hubUrl: HUB });
+  const r = await net.tts('こんばんは');
+  assert.strictEqual(r.via, 'elevenlabs');
+  assert.strictEqual(r.mime, 'audio/mpeg');
+  assert.strictEqual(r.audio.length, 3);
+  // 鍵はヘッダで渡す。声は指定した ID、日本語だと明示、会話向けモデル
+  const c = f.calls.find((x) => String(x.url).includes('api.elevenlabs.io'));
+  assert.match(c.url, /text-to-speech\/voice123\?output_format=mp3/);
+  assert.strictEqual(c.opt.headers['xi-api-key'], 'xi-test');
+  const body = JSON.parse(c.opt.body);
+  assert.strictEqual(body.language_code, 'ja');
+  assert.strictEqual(body.model_id, VN.ELEVEN_MODEL);
+  // OpenAI は叩いていない
+  assert.ok(!f.calls.some((x) => String(x.url).includes('audio/speech')));
+});
+
+test('ElevenLabs が落ちたら OpenAI に落ちる。声が止まらない', async () => {
+  const f = fake([
+    ['api.elevenlabs.io', () => ({ ok: false, status: 401, text: async () => 'bad key' })],
+    ['audio/speech', ok({})],
+  ]);
+  const keys = { ELEVENLABS_API_KEY: 'xi-bad', OPENAI_API_KEY: 'sk' };
+  const net = VN.create({ fetchImpl: f, getKey: (n) => keys[n] || '', hubUrl: HUB });
+  const r = await net.tts('こんばんは');
+  assert.strictEqual(r.via, 'openai');
+  assert.ok(r.audio instanceof Uint8Array);
+});
+
+test('ElevenLabs の鍵が空なら今までどおり OpenAI。声の ID 未指定なら既定の声', async () => {
+  const f = fake([
+    ['api.elevenlabs.io', () => ({ ok: true, arrayBuffer: async () => new Uint8Array([9]).buffer })],
+    ['audio/speech', ok({})],
+  ]);
+  const net = VN.create({ fetchImpl: f, getKey: (n) => (n === 'OPENAI_API_KEY' ? 'sk' : ''), hubUrl: HUB });
+  const r = await net.tts('やあ');
+  assert.strictEqual(r.via, 'openai');
+  assert.ok(!f.calls.some((x) => String(x.url).includes('api.elevenlabs.io')));
+
+  const net2 = VN.create({ fetchImpl: f, getKey: (n) => (n === 'ELEVENLABS_API_KEY' ? 'xi' : ''), hubUrl: HUB });
+  const r2 = await net2.tts('やあ');
+  assert.strictEqual(r2.via, 'elevenlabs');
+  const c = f.calls.find((x) => String(x.url).includes('api.elevenlabs.io'));
+  assert.ok(c.url.includes(VN.ELEVEN_DEFAULT_VOICE_ID));
+});
+
 test('口調の指示は hub 側と同じ文言を使う', () => {
   // ⚠️ 片方だけ直すと、直と hub で口調が変わる
   assert.match(VN.VOICE_SYSTEM, /3 文まで/);
