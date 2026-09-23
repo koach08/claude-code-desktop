@@ -3605,8 +3605,18 @@ function esc(t) {
 // 勝手に束ねられて手入力が要らない。koach-os の PLACES と Fleet View の roster.json も
 // 同じフォルダで持っているので、三つの見え方が自然に揃う。
 
+// ⚠️ この表は Fleet View の `fleet.py` の PROJ_NAMES と**同じ順・同じ中身**にすること。
+//    ずれると、同じ仕事が二つの画面で違う名前で出て本人が探せなくなる。片方を直したら両方直す。
 const PROJ_NAMES = [
-  [/ai-studio/i, 'EGAKU AI'],
+  [/ai-studio|egaku-work|egaku-comfyui|egaku-diffus/i, 'EGAKU AI'],
+  [/\.claude\/projects/i, '記憶・設定'],
+  [/Mobile Documents|iCloud/i, '研究・資料'],
+  [/md集/i, '書きもの'],
+  [/北大_手元資料/i, '北大の資料'],
+  [/koach-english/i, 'Koach English'],
+  [/urban-lexicon/i, 'Urban Lexicon'],
+  [/souji/i, 'souji'],
+  [/fleet-view/i, 'Fleet View'],
   [/koach-os-app-live/i, 'koach-os'],
   [/claude-code-desktop/i, 'Ariya Bridge'],
   [/(eng-learning-platform|english-platform)/i, 'Gengo Dojo'],
