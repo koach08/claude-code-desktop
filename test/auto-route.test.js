@@ -32,7 +32,7 @@ test('Claude のモデルは別名で持つ(版を固定しない)', () => {
     assert.ok(/^[a-z]+$/.test(m), `別名であること: ${m}`);
   }
   assert.strictEqual(EFFORT_MODELS.claude.light, 'haiku');
-  assert.strictEqual(EFFORT_MODELS.claude.deep, 'opus');
+  assert.strictEqual(EFFORT_MODELS.claude.deep, 'fable');   // 最上位(Mythos)
 });
 
 test('ターミナルと画面操作には自動で回さない', () => {

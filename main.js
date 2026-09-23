@@ -56,7 +56,11 @@ const GROK_MODEL = 'xai/grok-4.6';
 // (CLI が現行最上位 Opus = Opus 5 を自動解決) の 1M コンテキスト版。バージョン固定に
 // すると新 Opus が出るたび書き換えが要るため、エイリアス + [1m] で最新へ自動追従する。
 // 上位ティア Fable 5 は輸出規制で非公開。
-const CLAUDE_MODEL = 'opus[1m]';
+// 既定は最上位(Mythos クラス)。2026-09-23 に実測: `claude -p --model fable` も
+// `claude-fable-5-1` も応答する。**公開停止になったのは Fable 5 で、5.1 は現役**。
+// 別名で持つので、次に上位が出ても書き換え不要。
+// ⚠️ 1M コンテキストが要る作業だけは opus[1m] を明示する(別名に [1m] は付かない)。
+const CLAUDE_MODEL = 'fable';
 // 判定から渡してよいモデルの別名。ここに無い文字列は無視して既定に戻す
 // (画面から任意の文字列が --model に入るのを防ぐ)。版は書かない=別名は常に最新を指す。
 const CLAUDE_MODEL_ALLOW = new Set(['haiku', 'sonnet', 'opus', 'opus[1m]', 'fable']);
