@@ -84,7 +84,7 @@ const EFFORT_SIGNALS = [
 // エンジン × エフォート → 渡すモデル。空文字は「CLI の既定に任せる」。
 // ⚠️ ここを埋めるときは必ず**別名**で。版番号を書くと更新のたびに腐る。
 const EFFORT_MODELS = {
-  claude: { light: 'haiku', normal: 'sonnet', deep: 'fable' },   // deep は最上位(Mythos)
+  claude: { light: 'haiku', normal: 'sonnet', deep: 'opus' },   // ⚠️ 9/23 本人の指摘で fable → opus。黙って既定を変えない
   codex:  { light: '', normal: '', deep: '' },          // codex は CLI 既定に任せる(版を固定しない)
   gemini: { light: 'gemini-flash-latest', normal: '', deep: 'gemini-pro-latest' },
   grok:   { light: '', normal: '', deep: '' },

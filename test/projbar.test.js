@@ -8,39 +8,43 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 
-// renderer.js は画面用なので丸ごとは読めない。projectOf の定義だけ取り出して評価する
+// renderer.js は画面用なので丸ごとは読めない。projectOf だけ取り出して評価する
 const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
-const names = src.slice(src.indexOf('const PROJ_NAMES'), src.indexOf('function renderProjbar'));
-const projectOf = new Function(`${names}; return projectOf;`)();
+const fnSrc = src.slice(src.indexOf('function projectOf'), src.indexOf('// 会話の一覧を作り直す'));
+const projectOf = new Function(`const PROJ_LABELS = {}; ${fnSrc}; return projectOf;`)();
+// 呼び名の表はテスト用の架空のもの。⚠️ 本物の呼び名はソースにもテストにも書かない(公開リポジトリ)
+const L = { 'app-one': 'アプリ1', 'app-two': 'アプリ2' };
 
-test('アプリのフォルダは本人の呼び名になる', () => {
-  assert.strictEqual(projectOf({ cwd: '/Users/koachmedia/Desktop/アプリ開発プロジェクト/ai-studio' }).name, 'EGAKU AI');
-  assert.strictEqual(projectOf({ cwd: '/Users/koachmedia/Desktop/アプリ開発プロジェクト/koach-os-app-live/frontend' }).name, 'koach-os');
-  assert.strictEqual(projectOf({ cwd: '/Users/koachmedia/Desktop/アプリ開発プロジェクト/claude-code-desktop' }).name, 'Ariya Bridge');
+test('表にあるフォルダは呼び名になる', () => {
+  assert.strictEqual(projectOf({ cwd: '/Users/u/work/app-one' }, L).name, 'アプリ1');
+  assert.strictEqual(projectOf({ cwd: '/Users/u/work/app-two' }, L).name, 'アプリ2');
 });
 
 test('同じプロジェクトの下の階層も同じ塊に入る', () => {
-  const a = projectOf({ cwd: '/Users/koachmedia/Desktop/アプリ開発プロジェクト/ai-studio' });
-  const b = projectOf({ cwd: '/Users/koachmedia/Desktop/アプリ開発プロジェクト/ai-studio/backend/app' });
-  assert.strictEqual(a.key, b.key);
+  assert.strictEqual(projectOf({ cwd: '/Users/u/work/app-one' }, L).key, projectOf({ cwd: '/Users/u/work/app-one/backend/src' }, L).key);
 });
 
 test('ホーム直下と空は「その他」にまとめる(ばらけさせない)', () => {
-  for (const cwd of ['', '~', '/Users/koachmedia']) {
-    assert.strictEqual(projectOf({ cwd }).name, 'その他', `cwd=${cwd}`);
-  }
-  assert.strictEqual(projectOf({}).name, 'その他');
+  for (const cwd of ['', '~', '/Users/u']) assert.strictEqual(projectOf({ cwd }, L).name, 'その他', `cwd=${cwd}`);
+  assert.strictEqual(projectOf({}, L).name, 'その他');
 });
 
-test('知らないフォルダはフォルダ名で束ねる(捨てない)', () => {
-  const p = projectOf({ cwd: '/Users/koachmedia/Desktop/なにか新しい箱' });
-  assert.strictEqual(p.name, 'なにか新しい箱');
+test('表に無いフォルダはフォルダ名で束ねる(捨てない)', () => {
+  assert.strictEqual(projectOf({ cwd: '/Users/u/work/なにか新しい箱' }, L).name, 'なにか新しい箱');
 });
 
 test('末尾のスラッシュで別の塊にならない', () => {
-  const a = projectOf({ cwd: '/Users/koachmedia/Desktop/アプリ開発プロジェクト/ichimai' });
-  const b = projectOf({ cwd: '/Users/koachmedia/Desktop/アプリ開発プロジェクト/ichimai/' });
-  assert.strictEqual(a.key, b.key);
+  assert.strictEqual(projectOf({ cwd: '/Users/u/work/app-one' }, L).key, projectOf({ cwd: '/Users/u/work/app-one/' }, L).key);
+});
+
+test('ソースに個人の呼び名を書いていない(公開リポジトリ)', () => {
+  // 手元の表にある本物の呼び名が、ソースに漏れていないこと
+  let local = {};
+  try { local = JSON.parse(fs.readFileSync(path.join(require('os').homedir(), '.claude-code-app', 'project-labels.json'), 'utf8')); } catch (_) { /* CI など表が無い所では飛ばす */ }
+  // このリポジトリ自身の道具の名前は元から公開されている
+  const own = new Set(['Ariya Bridge', 'Fleet View', 'CC Desktop', 'Code Harness']);
+  const leaked = [...new Set(Object.values(local))].filter(v => !own.has(v) && v.length >= 3 && /[^\x00-\x7f]|[A-Z]/.test(v) && src.includes(v));
+  assert.deepStrictEqual(leaked, [], `ソースに呼び名が入っている: ${leaked.join(', ')}`);
 });
 
 // ── 入力欄と音声ボタン(2026-09-23) ────────────────────────────

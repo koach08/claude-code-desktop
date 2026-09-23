@@ -3594,7 +3594,7 @@ function esc(t) {
 }
 
 // ── 左メニュー: プロジェクトで束ねた会話 (2026-09-23) ──────────────────
-// 本人: 「タブ形式が見にくい。ChatGPT や Claude のように左メニューで選ぶ。EGAKU など
+// 本人: 「タブ形式が見にくい。ChatGPT や Claude のように左メニューで選ぶ。
 //        複数タブでやっているものはプロジェクトで包む。Fleet View とも関連付けやすくなる」
 //
 // ⚠️ **タブ要素(.tab)は作り直さない。**左へ移して縦に見せているだけ。
@@ -3605,36 +3605,34 @@ function esc(t) {
 // 勝手に束ねられて手入力が要らない。koach-os の PLACES と Fleet View の roster.json も
 // 同じフォルダで持っているので、三つの見え方が自然に揃う。
 
-// ⚠️ この表は Fleet View の `fleet.py` の PROJ_NAMES と**同じ順・同じ中身**にすること。
-//    ずれると、同じ仕事が二つの画面で違う名前で出て本人が探せなくなる。片方を直したら両方直す。
-const PROJ_NAMES = [
-  [/ai-studio|egaku-work|egaku-comfyui|egaku-diffus/i, 'EGAKU AI'],
-  [/\.claude\/projects/i, '記憶・設定'],
-  [/Mobile Documents|iCloud/i, '研究・資料'],
-  [/md集/i, '書きもの'],
-  [/北大_手元資料/i, '北大の資料'],
-  [/koach-english/i, 'Koach English'],
-  [/urban-lexicon/i, 'Urban Lexicon'],
-  [/souji/i, 'souji'],
-  [/fleet-view/i, 'Fleet View'],
-  [/koach-os-app-live/i, 'koach-os'],
-  [/claude-code-desktop/i, 'Ariya Bridge'],
-  [/(eng-learning-platform|english-platform)/i, 'Gengo Dojo'],
-  [/seminar-portfolio/i, '演習ポートフォリオ'],
-  [/授業準備|fall2026|授業サイト/i, '授業準備'],
-  [/(crypto|stock)-trader/i, '自動売買'],
-  [/ichimai/i, 'ichimai'],
-  [/investment-app/i, 'investment-app'],
-  [/hiphop-book/i, '単著(ヒップホップ)'],
-  [/english_assessment/i, '発音評価'],
-  [/Documents/i, '研究・資料'],
-];
+// ⚠️ プロジェクトの呼び名は**ソースに書かない**。このリポジトリは公開で、呼び名を並べると
+//    (匿名で運営しているものと、実名の仕事が一つの表に並んで)本人が特定できる組み合わせになる。
+//    9/23 に一度ここへ直書きしてしまい、push 前に気づいて外した。
+//    呼び名は手元の ~/.claude-code-app/project-labels.json(フォルダ名 → 呼び名)に置き、main から受け取る。
+let PROJ_LABELS = {};
+function loadProjLabels() {
+  try {
+    if (window.api && window.api.projectLabels) {
+      Promise.resolve(window.api.projectLabels()).then((m) => {
+        PROJ_LABELS = (m && typeof m === 'object') ? m : {};
+        renderProjbar();
+      }).catch(() => {});
+    }
+  } catch (_) { /* 表が無くてもフォルダ名で束ねる */ }
+}
 
-function projectOf(session) {
+function projectOf(session, labels) {
+  const map = labels || PROJ_LABELS;
   const cwd = String((session && session.cwd) || '').replace(/\/+$/, '');
-  if (!cwd || cwd === '~' || cwd === '/Users/koachmedia') return { key: 'home', name: 'その他' };
-  for (const [re, name] of PROJ_NAMES) if (re.test(cwd)) return { key: name, name };
-  const base = cwd.split('/').filter(Boolean).pop() || 'その他';
+  const parts = cwd.split('/').filter(Boolean);
+  // ホーム直下や空は「その他」にまとめる(ばらけさせない)
+  if (!cwd || cwd === '~' || parts.length <= 2 && parts[0] === 'Users') return { key: 'その他', name: 'その他' };
+  // 深いフォルダから順に表を引く(下の階層も同じプロジェクトに入る)
+  for (let i = parts.length - 1; i >= 0; i -= 1) {
+    const label = map[parts[i]];
+    if (label) return { key: label, name: label };
+  }
+  const base = parts[parts.length - 1] || 'その他';
   return { key: base, name: base };
 }
 
@@ -3697,12 +3695,21 @@ function renderProjbarSwitch() {
   let off = false;
   try { off = localStorage.getItem('ariya:projbar') === 'off'; } catch (_) { off = false; }
   document.body.dataset.projbar = off ? 'off' : 'on';
-  const collapse = document.getElementById('sb-collapse');
-  if (collapse) collapse.addEventListener('click', () => {
+  // ⚠️ しまう口だけあって戻す口が無く、一度「‹」を押すと二度と出せなかった(2026-09-23 本人の画面で実際に起きた)。
+  //    上のバーの ☰ と Cmd+B で、どちらの向きにも切り替えられるようにする
+  const toggle = () => {
     const now = document.body.dataset.projbar === 'off' ? 'on' : 'off';
     document.body.dataset.projbar = now;
     try { localStorage.setItem('ariya:projbar', now); } catch (_) { /* 保存できなくても動く */ }
     tabs.forEach(t => { try { t.fit.fit(); } catch (_) {} });
+    if (now === 'on') renderProjbar();
+  };
+  const collapse = document.getElementById('sb-collapse');
+  if (collapse) collapse.addEventListener('click', toggle);
+  const reopen = document.getElementById('projbar-open');
+  if (reopen) reopen.addEventListener('click', toggle);
+  document.addEventListener('keydown', (e) => {
+    if (e.metaKey && !e.shiftKey && !e.altKey && (e.key === 'b' || e.key === 'B')) { e.preventDefault(); toggle(); }
   });
   const add = document.getElementById('sb-new');
   if (add) add.addEventListener('click', () => { newTab(currentMode); });
@@ -3712,6 +3719,7 @@ function renderProjbarSwitch() {
       document.querySelectorAll('.sb-eng').forEach(x => x.classList.toggle('active', x === b));
     });
   });
+  loadProjLabels();
   // 起動直後はまだタブが無いことがあるので、少し置いてから一度描く
   setTimeout(renderProjbar, 600);
 })();

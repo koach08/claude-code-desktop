@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('api', {
   // クリップボードの画像をファイルに落としてパスを返す(無ければ '')
   saveClipboardImage: () => ipcRenderer.invoke('save-clipboard-image'),
   createSession: (opts) => ipcRenderer.invoke('create-session', opts || {}),
+  projectLabels: () => ipcRenderer.invoke('project-labels'),
   switchMode: (sessionId, newMode) => ipcRenderer.invoke('switch-mode', { sessionId, newMode }),
   sendInput: (sessionId, input) => ipcRenderer.invoke('send-input', { sessionId, input }),
   resizeTerminal: (sessionId, cols, rows) => ipcRenderer.invoke('resize-terminal', { sessionId, cols, rows }),

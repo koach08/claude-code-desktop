@@ -64,7 +64,8 @@ const GROK_MODEL = process.env.GROK_MODEL || 'xai/grok-4.6';
 // `claude-fable-5-1` も応答する。**公開停止になったのは Fable 5 で、5.1 は現役**。
 // 別名で持つので、次に上位が出ても書き換え不要。
 // ⚠️ 1M コンテキストが要る作業だけは opus[1m] を明示する(別名に [1m] は付かない)。
-const CLAUDE_MODEL = 'fable';
+// ⚠️ 9/23 本人「勝手に Fable になってる」。既定は Opus(別名なので最新の Opus を指す)。Fable は選んだときだけ
+const CLAUDE_MODEL = 'opus';
 // 判定から渡してよいモデルの別名。ここに無い文字列は無視して既定に戻す
 // (画面から任意の文字列が --model に入るのを防ぐ)。版は書かない=別名は常に最新を指す。
 const CLAUDE_MODEL_ALLOW = new Set(['haiku', 'sonnet', 'opus', 'opus[1m]', 'fable']);
@@ -338,6 +339,9 @@ function loadProjectLabels() {
   }
   return projectLabelCache;
 }
+
+// 左メニューの束ね方にも同じ表を使う。⚠️ 名前をソース(公開リポジトリ)に書かないため
+ipcMain.handle('project-labels', () => loadProjectLabels());
 
 // Derive a friendly, project-aware tab name from the working directory.
 // Known project folders map to readable labels; otherwise the folder basename is used.

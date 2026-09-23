@@ -24,7 +24,7 @@ body {
 }
 /* macOS traffic lights spacing */
 #drag-region { width: 72px; flex-shrink: 0; }
-#tabs, #new-tab-btn, #open-external-btn, #engine-suggest-btn, #mode-toggle, #ui-toggle, #settings-btn,
+#projbar-open, #tabs, #new-tab-btn, #open-external-btn, #engine-suggest-btn, #mode-toggle, #ui-toggle, #settings-btn,
 .tab, .mode-btn, .ui-btn {
   -webkit-app-region: no-drag;
 }
@@ -1392,3 +1392,9 @@ body:not([data-projbar="off"]) #tabs { display: none; }
 /* Builder の「おまかせ / 一緒に作る」は箱の外に出す(箱の中だと入力欄が狭くなる) */
 #builder-input-row { flex-wrap: wrap; }
 #builder-dev-toggle { flex-basis: 100%; margin: 2px 0 4px; }
+
+/* しまった左メニューを戻すボタン(2026-09-23)。⚠️ これが無くて、一度しまうと二度と出せなかった */
+#projbar-open { display: none; -webkit-app-region: no-drag; margin: 0 4px 0 8px; padding: 3px 9px;
+  border-radius: 6px; border: 1px solid var(--border); background: var(--bg1); color: var(--fg); cursor: pointer; font-size: 13px; }
+#projbar-open:hover { border-color: var(--accent); }
+body[data-projbar="off"] #projbar-open { display: inline-block; }
