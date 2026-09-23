@@ -51,7 +51,11 @@ function scrubInheritedClaudeEnv(env) {
 scrubInheritedClaudeEnv(shellEnv);
 // Grok コーディングレーンの既定モデル。grok-4.6 = xAI の現行最上位。
 // TUI 内で /models から grok-build-0.1（速い・安いコーディング特化）等へ切替可。
-const GROK_MODEL = 'xai/grok-4.6';
+// ⚠️ ここだけ版が固定されている。xAI には alias(latest)が無く、モデル ID を直に書くしかない
+//    (2026-09-23 実測: 公式ドキュメントの現行は grok-4.6。4.7 は報道のみで ID が確認できない)。
+//    だから **環境変数で上書きできる**ようにしてある。新しいのが出たら GROK_MODEL=xai/grok-4.7 を
+//    入れるだけでよく、アプリを作り直さなくてよい。他のレーンは別名なので勝手に新しくなる。
+const GROK_MODEL = process.env.GROK_MODEL || 'xai/grok-4.6';
 // Claude Code レーンで起動時に渡すモデル。'opus[1m]' = 最新 Opus への公式エイリアス
 // (CLI が現行最上位 Opus = Opus 5 を自動解決) の 1M コンテキスト版。バージョン固定に
 // すると新 Opus が出るたび書き換えが要るため、エイリアス + [1m] で最新へ自動追従する。
