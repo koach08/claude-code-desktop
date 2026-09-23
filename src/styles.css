@@ -1289,3 +1289,79 @@ body[data-ui="chat"] #mode-toggle { display: none; }
 .web-bar .web-url { flex: 1; font-size: 11.5px; opacity: .7; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 6px; }
 .pane.web webview { flex: 1; width: 100%; height: 100%; display: flex; background: #fff; }
 body[data-ui="agent"] .pane.web { display: none; }
+
+/* ── 左メニュー(プロジェクトで束ねた会話) 2026-09-23 ──────────────────
+   本人: 「タブ形式が見にくい。ChatGPT や Claude のように左メニューで選ぶ。
+   EGAKU など複数タブでやっているものはプロジェクトで包む」
+   ⚠️ タブ要素(.tab)は消していない。左へ移して縦に見せているだけ。
+      消すと badge・閉じる・アクティブ表示の既存処理が全部壊れる。 */
+#shell { display: flex; flex: 1; min-height: 0; }
+#shell > #main { flex: 1; min-width: 0; }
+
+#projbar {
+  width: 232px; flex: none; display: flex; flex-direction: column;
+  background: var(--bg0); border-right: 1px solid var(--border);
+  font-size: 12px; user-select: none;
+}
+body[data-projbar="off"] #projbar { display: none; }
+/* 左メニューを出している間は、上の横タブをしまう(同じものが二重に見えるのを防ぐ) */
+body:not([data-projbar="off"]) #tabs { display: none; }
+
+#sb-head { display: flex; gap: 4px; padding: 8px; border-bottom: 1px solid var(--border); }
+#sb-new {
+  flex: 1; padding: 7px 10px; border-radius: 7px; border: 1px solid var(--border);
+  background: var(--bg1); color: var(--fg); cursor: pointer; font-size: 12px; font-weight: 600;
+}
+#sb-new:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+#sb-collapse {
+  width: 26px; border-radius: 7px; border: 1px solid var(--border);
+  background: transparent; color: var(--fg2); cursor: pointer;
+}
+#sb-collapse:hover { color: var(--fg); }
+
+#sb-engines { display: flex; flex-wrap: wrap; gap: 3px; padding: 7px 8px; border-bottom: 1px solid var(--border); }
+.sb-eng {
+  padding: 3px 8px; border-radius: 999px; border: 1px solid var(--border);
+  background: transparent; color: var(--fg2); cursor: pointer; font-size: 11px;
+}
+.sb-eng:hover { color: var(--fg); }
+.sb-eng.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+#sb-projects { flex: 1; overflow-y: auto; padding: 5px 0 10px; }
+#sb-projects::-webkit-scrollbar { width: 7px; }
+#sb-projects::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+.proj { margin: 2px 6px 6px; }
+.proj > summary {
+  list-style: none; cursor: pointer; display: flex; align-items: center; gap: 6px;
+  padding: 5px 7px; border-radius: 6px; color: var(--fg2);
+  font-size: 11px; font-weight: 700; letter-spacing: .02em;
+}
+.proj > summary::-webkit-details-marker { display: none; }
+.proj > summary:hover { background: rgba(65,72,104,.3); color: var(--fg); }
+.proj > summary::before { content: "▸"; font-size: 9px; opacity: .6; transition: transform .12s; }
+.proj[open] > summary::before { transform: rotate(90deg); }
+.proj-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.proj-count { opacity: .5; font-weight: 500; }
+.proj-live { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex: none; }
+
+/* 左に来たときのタブ。横タブ用の指定を上書きする */
+#projbar .tab {
+  display: flex; align-items: center; gap: 6px; width: auto;
+  margin: 1px 4px 1px 14px; padding: 6px 8px; border-radius: 6px;
+  border-top: none !important; max-width: none; min-width: 0;
+}
+#projbar .tab.active { background: var(--bg2); color: var(--fg); padding-top: 6px; }
+#projbar .tab .tname { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#projbar .tab .tclose { opacity: 0; }
+#projbar .tab:hover .tclose { opacity: .5; }
+
+#sb-foot { border-top: 1px solid var(--border); padding: 7px 8px 9px; }
+#sb-switch-label { font-size: 10px; color: var(--fg2); margin-bottom: 5px; }
+#sb-switch { display: flex; flex-wrap: wrap; gap: 3px; }
+#sb-switch button {
+  padding: 3px 7px; border-radius: 5px; border: 1px solid var(--border);
+  background: transparent; color: var(--fg2); cursor: pointer; font-size: 11px;
+}
+#sb-switch button:hover { color: var(--fg); border-color: var(--accent); }
+#sb-switch button.active { background: var(--bg2); color: var(--fg); border-color: var(--accent); }

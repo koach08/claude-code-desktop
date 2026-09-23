@@ -48,6 +48,29 @@
       <button id="agent-add-shell" class="agent-add-btn secondary">+ Terminal</button>
     </div>
 
+    <!-- Shell: 左メニュー + 本体 -->
+    <div id="shell">
+
+    <!-- 左メニュー: プロジェクトで束ねた会話 (2026-09-23) -->
+    <aside id="projbar">
+      <div id="sb-head">
+        <button id="sb-new" title="新しい会話 (Cmd+T)">＋ 新しい会話</button>
+        <button id="sb-collapse" title="左メニューをしまう">‹</button>
+      </div>
+      <div id="sb-engines" title="ここで選んだエンジンで新しい会話が開きます">
+        <button class="sb-eng active" data-eng="claude">Claude</button>
+        <button class="sb-eng" data-eng="codex">Codex</button>
+        <button class="sb-eng" data-eng="gemini">Gemini</button>
+        <button class="sb-eng" data-eng="grok">Grok</button>
+        <button class="sb-eng" data-eng="shell">端末</button>
+      </div>
+      <div id="sb-projects"></div>
+      <div id="sb-foot">
+        <div id="sb-switch-label">この会話のエンジンを変える</div>
+        <div id="sb-switch"></div>
+      </div>
+    </aside>
+
     <!-- Main Area -->
     <div id="main">
       <!-- Terminal -->
@@ -359,6 +382,7 @@
         </div>
       </div>
     </div>
+    </div><!-- /#shell -->
 
     <!-- Status Bar -->
     <div id="statusbar">

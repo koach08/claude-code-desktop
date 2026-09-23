@@ -711,9 +711,11 @@ async function switchSessionMode(newMode) {
 
   // Update Map key
   tabs.delete(activeId);
+  if (typeof renderProjbar === 'function') renderProjbar();
   forgetTail(activeId);
   activeId = result.newId;
   tabs.set(result.newId, tab);
+  if (typeof renderProjbar === 'function') renderProjbar();
 
   updateStatusMode(newMode);
   saveTabState();
@@ -1120,6 +1122,7 @@ function addTab(session, replayBuffer, restoreInfo) {
     b.classList.toggle('active', b.dataset.mode === session.mode);
   });
   currentMode = session.mode;
+  if (typeof renderProjbarSwitch === 'function') renderProjbarSwitch();
   updateStatusMode(session.mode);
 }
 
@@ -3588,3 +3591,116 @@ function esc(t) {
   el.textContent = t;
   return el.innerHTML;
 }
+
+// ── 左メニュー: プロジェクトで束ねた会話 (2026-09-23) ──────────────────
+// 本人: 「タブ形式が見にくい。ChatGPT や Claude のように左メニューで選ぶ。EGAKU など
+//        複数タブでやっているものはプロジェクトで包む。Fleet View とも関連付けやすくなる」
+//
+// ⚠️ **タブ要素(.tab)は作り直さない。**左へ移して縦に見せているだけ。
+//    作り直すと badge・閉じる・アクティブ表示・モード切替の追従が全部壊れる(既存処理は
+//    tabEl を直接握っている)。ここがこの実装でいちばん大事な決めごと。
+//
+// プロジェクトの単位は **作業フォルダ(cwd)**。本人はアプリごとにフォルダを分けているので、
+// 勝手に束ねられて手入力が要らない。koach-os の PLACES と Fleet View の roster.json も
+// 同じフォルダで持っているので、三つの見え方が自然に揃う。
+
+const PROJ_NAMES = [
+  [/ai-studio/i, 'EGAKU AI'],
+  [/koach-os-app-live/i, 'koach-os'],
+  [/claude-code-desktop/i, 'Ariya Bridge'],
+  [/(eng-learning-platform|english-platform)/i, 'Gengo Dojo'],
+  [/seminar-portfolio/i, '演習ポートフォリオ'],
+  [/授業準備|fall2026|授業サイト/i, '授業準備'],
+  [/(crypto|stock)-trader/i, '自動売買'],
+  [/ichimai/i, 'ichimai'],
+  [/investment-app/i, 'investment-app'],
+  [/hiphop-book/i, '単著(ヒップホップ)'],
+  [/english_assessment/i, '発音評価'],
+  [/Documents/i, '研究・資料'],
+];
+
+function projectOf(session) {
+  const cwd = String((session && session.cwd) || '').replace(/\/+$/, '');
+  if (!cwd || cwd === '~' || cwd === '/Users/koachmedia') return { key: 'home', name: 'その他' };
+  for (const [re, name] of PROJ_NAMES) if (re.test(cwd)) return { key: name, name };
+  const base = cwd.split('/').filter(Boolean).pop() || 'その他';
+  return { key: base, name: base };
+}
+
+// 会話の一覧を作り直す。タブが増減・改名・フォルダ変更のたびに呼ぶ。
+function renderProjbar() {
+  const host = document.getElementById('sb-projects');
+  if (!host) return;
+  // 今どの塊が開いていたかを覚えておく(作り直しで閉じないように)
+  const openKeys = new Set([...host.querySelectorAll('.proj[open]')].map(d => d.dataset.key));
+  const groups = new Map();
+  tabs.forEach((t) => {
+    const p = projectOf(t.session);
+    if (!groups.has(p.key)) groups.set(p.key, { name: p.name, items: [] });
+    groups.get(p.key).items.push(t);
+  });
+  host.textContent = '';
+  // 会話の多い塊から上に。同数なら名前順
+  const sorted = [...groups.entries()].sort((a, b) =>
+    b[1].items.length - a[1].items.length || a[1].name.localeCompare(b[1].name, 'ja'));
+  for (const [key, g] of sorted) {
+    const d = document.createElement('details');
+    d.className = 'proj';
+    d.dataset.key = key;
+    // 初回は全部開く。2 回目からは本人が閉じた状態を守る
+    d.open = openKeys.size === 0 ? true : openKeys.has(key);
+    const live = g.items.some(t => !t.session.exited);
+    const sum = document.createElement('summary');
+    sum.innerHTML = `${live ? '<span class="proj-live"></span>' : ''}<span class="proj-name"></span><span class="proj-count">${g.items.length}</span>`;
+    sum.querySelector('.proj-name').textContent = g.name;
+    d.appendChild(sum);
+    for (const t of g.items) d.appendChild(t.tabEl);   // ⚠️ 移すだけ。作り直さない
+    host.appendChild(d);
+  }
+  renderProjbarSwitch();
+}
+
+// 今見ている会話のエンジンを変える口。上の #mode-toggle と同じ処理を呼ぶ(機能は減らさない)
+function renderProjbarSwitch() {
+  const host = document.getElementById('sb-switch');
+  if (!host) return;
+  const engines = [['claude', 'Claude'], ['codex', 'Codex'], ['gemini', 'Gemini'], ['grok', 'Grok'], ['shell', '端末']];
+  host.textContent = '';
+  const cur = tabs.get(activeId);
+  for (const [mode, label] of engines) {
+    const b = document.createElement('button');
+    b.textContent = label;
+    b.dataset.mode = mode;
+    if (cur && cur.session.mode === mode) b.classList.add('active');
+    b.addEventListener('click', () => { switchSessionMode(mode); });
+    host.appendChild(b);
+  }
+  // 新しい会話を開くときのエンジン
+  document.querySelectorAll('.sb-eng').forEach(x => x.classList.toggle('active', x.dataset.eng === currentMode));
+}
+
+(function initProjbar() {
+  // ⚠️ このファイルは test でも素読みされる(renderer-scripts-load.test.js)。
+  //    body や localStorage が無い場所で落ちないように、先に無ければ何もしない
+  if (typeof document === 'undefined' || !document.body) return;
+  let off = false;
+  try { off = localStorage.getItem('ariya:projbar') === 'off'; } catch (_) { off = false; }
+  document.body.dataset.projbar = off ? 'off' : 'on';
+  const collapse = document.getElementById('sb-collapse');
+  if (collapse) collapse.addEventListener('click', () => {
+    const now = document.body.dataset.projbar === 'off' ? 'on' : 'off';
+    document.body.dataset.projbar = now;
+    try { localStorage.setItem('ariya:projbar', now); } catch (_) { /* 保存できなくても動く */ }
+    tabs.forEach(t => { try { t.fit.fit(); } catch (_) {} });
+  });
+  const add = document.getElementById('sb-new');
+  if (add) add.addEventListener('click', () => { newTab(currentMode); });
+  document.querySelectorAll('.sb-eng').forEach(b => {
+    b.addEventListener('click', () => {
+      currentMode = b.dataset.eng;
+      document.querySelectorAll('.sb-eng').forEach(x => x.classList.toggle('active', x === b));
+    });
+  });
+  // 起動直後はまだタブが無いことがあるので、少し置いてから一度描く
+  setTimeout(renderProjbar, 600);
+})();
