@@ -587,6 +587,7 @@ function hideEnterHint() {
 function setUiMode(mode) {
   uiMode = mode;
   document.body.dataset.ui = mode;
+  if (typeof placeVoiceButton === 'function') placeVoiceButton();
   document.querySelectorAll('.ui-btn').forEach(b => {
     b.classList.toggle('active', b.dataset.ui === mode);
   });
@@ -3704,3 +3705,22 @@ function renderProjbarSwitch() {
   // 起動直後はまだタブが無いことがあるので、少し置いてから一度描く
   setTimeout(renderProjbar, 600);
 })();
+
+
+// ── 音声ボタンは 1 つだけ。今の入力欄の中へ移す (2026-09-23) ──────────
+// 本人: 「音声のやりとり、音声入力、チャットの入力もその方が分かりやすい」
+// それまで波形ボタン(音声モード)は端末の入力欄にしか無く、チャットに切り替えると消えていた。
+// ⚠️ ボタンは作り直さない(複製すると id が重なり、既存の handler が片方にしか付かない)。
+//    同じ要素を、今表示されている入力欄の中へ動かすだけ。
+function placeVoiceButton() {
+  const btn = document.getElementById('voice-talk-btn');
+  if (!btn) return;
+  const inChat = document.body.dataset.ui === 'chat';
+  const host = inChat ? document.getElementById('chat-compose')
+    : (document.body.dataset.ui === 'builder' ? document.getElementById('builder-input-row')
+      : document.getElementById('input-row'));
+  if (!host || btn.parentElement === host) return;
+  // 送信ボタンの手前に置く(ChatGPT と同じ並び: 文字 → マイク → 波形 → 送信)
+  const send = host.querySelector('#chat-send-btn, #send-btn, #builder-send-btn');
+  if (send) host.insertBefore(btn, send); else host.appendChild(btn);
+}

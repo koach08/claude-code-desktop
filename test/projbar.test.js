@@ -42,3 +42,30 @@ test('末尾のスラッシュで別の塊にならない', () => {
   const b = projectOf({ cwd: '/Users/koachmedia/Desktop/アプリ開発プロジェクト/ichimai/' });
   assert.strictEqual(a.key, b.key);
 });
+
+// ── 入力欄と音声ボタン(2026-09-23) ────────────────────────────
+// 本人「音声のやりとり、音声入力、チャットの入力もその方が分かりやすい」
+// ⚠️ 波形ボタン(音声モード)は **1 つしか無い**こと。複製すると id が重なり、
+//    既存の handler が片方にしか付かず「押しても何も起きない」になる。
+
+test('波形ボタン(音声モード)は画面に 1 つだけ', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'src', 'index.html'), 'utf8');
+  const hits = html.match(/id="voice-talk-btn"/g) || [];
+  assert.strictEqual(hits.length, 1, `voice-talk-btn が ${hits.length} 個ある`);
+});
+
+test('入力欄はモードごとに 1 つずつで、重複 id が無い', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'src', 'index.html'), 'utf8');
+  for (const id of ['prompt-input', 'chat-input', 'builder-prompt', 'input-row', 'chat-compose']) {
+    const hits = html.match(new RegExp(`id="${id}"`, 'g')) || [];
+    assert.strictEqual(hits.length, 1, `${id} が ${hits.length} 個`);
+  }
+});
+
+test('音声ボタンは今のモードの入力欄へ移す(作り直さない)', () => {
+  const src2 = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
+  const fn = src2.slice(src2.indexOf('function placeVoiceButton'));
+  assert.ok(/getElementById\('voice-talk-btn'\)/.test(fn), '既存のボタンを引いていない');
+  assert.ok(!/createElement\('button'\)/.test(fn.slice(0, 900)), 'ボタンを作り直している');
+  assert.ok(/insertBefore|appendChild/.test(fn), '移す処理が無い');
+});

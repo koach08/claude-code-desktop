@@ -1365,3 +1365,30 @@ body:not([data-projbar="off"]) #tabs { display: none; }
 }
 #sb-switch button:hover { color: var(--fg); border-color: var(--accent); }
 #sb-switch button.active { background: var(--bg2); color: var(--fg); border-color: var(--accent); }
+
+/* ── 入力欄をどのモードでも同じ形・同じ場所に (2026-09-23) ──────────────
+   本人: 「音声のやりとり、音声入力、チャットの入力などもその方が分かりやすい」
+   それまで入力欄が 3 つ(端末 / Builder / チャット)あり、形も場所も違った。
+   ⚠️ 要素は増やさない。見た目を揃え、音声ボタンだけをモードに応じて移す。 */
+#input-row, #builder-input-row {
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 16px; padding: 4px 4px 4px 14px;
+  align-items: flex-end; gap: 4px;
+  transition: border-color .2s, box-shadow .2s;
+}
+#input-row:focus-within, #builder-input-row:focus-within {
+  border-color: var(--accent); box-shadow: 0 0 0 3px rgba(122,162,247,.08);
+}
+#prompt-input, #builder-prompt {
+  background: transparent; border: none; border-radius: 0;
+  padding: 10px 0; min-height: 40px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Hiragino Sans', sans-serif;
+  font-size: 15px;
+}
+#prompt-input:focus, #builder-prompt:focus { border: none; box-shadow: none; }
+#send-btn, #builder-send-btn {
+  border-radius: 12px; align-self: flex-end; margin-bottom: 2px;
+}
+/* Builder の「おまかせ / 一緒に作る」は箱の外に出す(箱の中だと入力欄が狭くなる) */
+#builder-input-row { flex-wrap: wrap; }
+#builder-dev-toggle { flex-basis: 100%; margin: 2px 0 4px; }
