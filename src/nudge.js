@@ -26,6 +26,25 @@
   // judge   : judgeEngine() の戻り (engine/label/reason/confidence/hits)
   // current : いま開いているタブのエンジン ('claude'|'codex'|'gemini'|'grok'|'shell')
   // text    : 入力欄の中身
+  // 自動で回してよいか。2026-09-23 追加。
+  // ── なぜ ──
+  // 示唆を出すだけでは押されなかった(本人: 「わざわざそのアイコンをクリックして
+  // とかじゃなくてね」)。結果、全部 Claude Code のまま走ってトークンが尽きかけた。
+  // Enter を押した時点で、確信が高ければこちらで回す。
+  // ── 回さない線引き ──
+  //  - ターミナル向き: コマンドの自動実行は事故。入力欄に置くだけ(autoSend=false)。
+  //  - Astra(画面操作): 人の手が要るので自動で回さない。示唆だけ。
+  //  - 確信が high でないとき: 外すと本人が書いた指示が知らない場所へ行く。
+  //  - いまのタブと同じエンジン: 回す先が同じなので何もしない。
+  const NO_AUTO = new Set(['shell', 'astra']);
+  function shouldAutoRoute(judge, current) {
+    if (!judge || !judge.engine) return false;
+    if (judge.confidence !== 'high') return false;
+    if (judge.engine === current) return false;
+    if (NO_AUTO.has(judge.engine)) return false;
+    return true;
+  }
+
   function shouldNudge(judge, current, text) {
     const t = String(text || '').trim();
     if (t.length < MIN_CHARS) return { show: false, why: 'short' };
@@ -42,5 +61,5 @@
     };
   }
 
-  return { shouldNudge, MIN_CHARS };
+  return { shouldNudge, shouldAutoRoute, MIN_CHARS, NO_AUTO };
 });

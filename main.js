@@ -57,6 +57,9 @@ const GROK_MODEL = 'xai/grok-4.6';
 // すると新 Opus が出るたび書き換えが要るため、エイリアス + [1m] で最新へ自動追従する。
 // 上位ティア Fable 5 は輸出規制で非公開。
 const CLAUDE_MODEL = 'opus[1m]';
+// 判定から渡してよいモデルの別名。ここに無い文字列は無視して既定に戻す
+// (画面から任意の文字列が --model に入るのを防ぐ)。版は書かない=別名は常に最新を指す。
+const CLAUDE_MODEL_ALLOW = new Set(['haiku', 'sonnet', 'opus', 'opus[1m]', 'fable']);
 if (!IS_WIN) {
   try {
     const shell = IS_MAC ? '/bin/zsh' : '/bin/bash';
@@ -342,7 +345,7 @@ function deriveSessionName(cwd, mode) {
   return project + suffix;
 }
 
-ipcMain.handle('create-session', async (_event, { cwd, name, mode, restoreFromId, conversationId }) => {
+ipcMain.handle('create-session', async (_event, { cwd, name, mode, restoreFromId, conversationId, model }) => {
   const id = `s_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
   const nodePty = getPty();
   const sessionCwd = cwd || os.homedir();
@@ -350,12 +353,17 @@ ipcMain.handle('create-session', async (_event, { cwd, name, mode, restoreFromId
   const isRestore = !!(restoreFromId || conversationId);
 
   let cmd, args;
+  // ⚠️ 2026-09-23: ここは CLAUDE_MODEL(opus[1m]) 固定だった。つまり**タイポ直しでも
+  //    毎回 Opus の 1M で開いていた**。本人の「結果的に claude code のみを使っていて
+  //    トークンの上限が来そうだった」の直接の原因。判定した重さ(model)が来たらそれで開く。
+  //    別名(haiku/sonnet/opus)で渡すので、エンジンが新しくなっても勝手に最新を指す。
+  const claudeModel = CLAUDE_MODEL_ALLOW.has(String(model || '')) ? String(model) : CLAUDE_MODEL;
   if (sessionMode === 'claude') {
     cmd = IS_WIN ? 'claude.cmd' : 'claude';
     if (conversationId) {
-      args = ['--model', CLAUDE_MODEL, '--resume', conversationId];
+      args = ['--model', claudeModel, '--resume', conversationId];
     } else {
-      args = ['--model', CLAUDE_MODEL];
+      args = ['--model', claudeModel];
     }
   } else if (sessionMode === 'codex') {
     cmd = IS_WIN ? 'codex.cmd' : 'codex';

@@ -346,6 +346,13 @@ function setupListeners() {
   });
 
   // 示唆のボタン。渡す / このまま。
+  // 自動振り分けの入切
+  const autoRouteToggle = document.getElementById('auto-route-toggle');
+  if (autoRouteToggle) {
+    autoRouteToggle.checked = autoRouteOn;
+    autoRouteToggle.addEventListener('change', (e) => setAutoRoute(e.target.checked));
+  }
+
   const nudgeGo = document.getElementById('engine-nudge-go');
   const nudgeDismiss = document.getElementById('engine-nudge-dismiss');
   if (nudgeGo) nudgeGo.addEventListener('click', handoffToEngine);
@@ -1209,6 +1216,14 @@ let nudgeState = null;    // いま出している示唆
 // それだと 1 文字足しただけで照合が外れて即また出てくる(リレーの点検で見つかった)。
 // 入力を空にする(送信 or 消す)まで黙る、に変えてある。
 let nudgeMuted = false;
+// 自動振り分けの入切。既定は入(押さなくても回る)。⚙ から切れる。
+let autoRouteOn = (() => {
+  try { return localStorage.getItem('ariya:auto-route') !== 'off'; } catch (_) { return true; }
+})();
+function setAutoRoute(on) {
+  autoRouteOn = !!on;
+  try { localStorage.setItem('ariya:auto-route', on ? 'on' : 'off'); } catch (_) { /* 保存できなくても動く */ }
+}
 
 // いま開いているタブが何のエンジンか。currentMode は「次に開くタブ」の既定なので、
 // 判定にはタブ自身の mode を使う。
@@ -1261,8 +1276,8 @@ async function updateEngineNudge(text) {
 // 新しいタブをそのエンジンで開き、いま書いている指示をそのまま渡す。
 // ここが「タブを開かずに済ませる」の第一段。まだタブは開くが、
 // 開いて・選んで・打ち直す の3手が1クリックになる。
-async function handoffToEngine() {
-  const st = nudgeState;
+async function handoffToEngine(override) {
+  const st = override || nudgeState;
   const ta = document.getElementById('prompt-input');
   const text = ta.value.trim();
   if (!st || !text) return;
@@ -1274,7 +1289,8 @@ async function handoffToEngine() {
 
   let session;
   try {
-    session = await window.api.createSession({ mode: st.engine, cwd });
+    // ⚠️ model を渡す。渡さないと Claude タブは常に opus[1m] で開く(旧既定)。
+    session = await window.api.createSession({ mode: st.engine, cwd, model: st.model || undefined });
   } catch (err) {
     console.error('handoff: createSession failed', err);
     return;   // 入力は消さない。人間がそのまま送れる状態で残す。
@@ -1483,6 +1499,28 @@ async function send() {
     tab.term.write(`\r\n\x1b[33m[セッション終了済み] モードを切替えて再起動します...\x1b[0m\r\n`);
     switchSessionMode(currentMode);
     return;
+  }
+
+  // ── 自動振り分け(2026-09-23) ─────────────────────────────
+  // アイコンを押さなくても、Enter の時点で「どのエンジンで・どれだけ重い頭で」を決める。
+  // 黙って飛ばさない: 回したことと理由を必ずいまのタブに書く。
+  if (autoRouteOn && window.AriyaNudge) {
+    let judge = null;
+    try { judge = await window.api.suggestEngine(text); } catch (_) { judge = null; }
+    if (judge && window.AriyaNudge.shouldAutoRoute(judge, currentTabEngine())) {
+      hideEngineNudge();
+      if (tab) {
+        tab.term.write(`\r\n\x1b[36m[→ ${judge.label} に回しました]\x1b[0m `
+          + `\x1b[2m${(judge.hits || []).join('・')}／${judge.effortLabel || ''}`
+          + `${judge.model ? '・' + judge.model : ''}\x1b[0m\r\n`
+          + `\x1b[2m  自動で回さないようにするには ⚙ の「エンジンの自動振り分け」を切ってください\x1b[0m\r\n`);
+      }
+      history.push(text);
+      if (history.length > 100) history.shift();
+      histIdx = history.length;
+      await handoffToEngine({ engine: judge.engine, label: judge.label, model: judge.model || '', autoSend: true });
+      return;
+    }
   }
 
   history.push(text);
