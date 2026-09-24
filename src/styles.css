@@ -1141,12 +1141,22 @@ body[data-ui="chat"] #mode-toggle { display: none; }
 
 /* ── 音声で往復するときの帯 ──────────────────────────────── */
 /* 話していないときは畳んでおく。作業の邪魔をしない大きさに留める。 */
+/* ⚠️ 高さ固定(42vh)で、入力欄と合わせると下の半分以上が埋まり、動かせなかった(本人 2026-09-24)。
+   既定は小さめにして、上の端(#voice-resizer)で本人が好きな高さにする。高さは localStorage に残す */
 #voice-panel {
   border-top: 1px solid var(--bg3);
   background: var(--bg2);
-  max-height: 42vh;
+  height: 24vh; min-height: 70px; max-height: 85vh;
   display: flex; flex-direction: column;
+  flex-shrink: 0;
 }
+#voice-resizer {
+  height: 6px; margin-top: -3px; flex-shrink: 0;
+  cursor: row-resize; background: transparent;
+}
+#voice-resizer:hover, body.voice-resizing #voice-resizer { background: var(--accent, #7aa2f7); opacity: .6; }
+body.voice-resizing { cursor: row-resize; user-select: none; }
+#voice-log { flex: 1; min-height: 0; }
 #voice-panel.hidden { display: none; }
 
 #voice-bar {
@@ -1398,3 +1408,31 @@ body:not([data-projbar="off"]) #tabs { display: none; }
   border-radius: 6px; border: 1px solid var(--border); background: var(--bg1); color: var(--fg); cursor: pointer; font-size: 13px; }
 #projbar-open:hover { border-color: var(--accent); }
 body[data-projbar="off"] #projbar-open { display: inline-block; }
+
+/* 左メニューの右クリック: 束ね先を選ぶ (2026-09-24) */
+#proj-menu {
+  position: fixed; z-index: 9999; min-width: 200px; max-height: 70vh; overflow-y: auto;
+  background: var(--bg2); border: 1px solid var(--border); border-radius: 8px;
+  padding: 6px; display: flex; flex-direction: column; gap: 2px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.35); font-size: 12.5px;
+}
+#proj-menu .pm-head { color: var(--fg2); font-size: 11px; padding: 2px 6px 5px; }
+#proj-menu button {
+  text-align: left; background: transparent; color: var(--fg); border: none;
+  border-radius: 5px; padding: 5px 8px; cursor: pointer; font-size: 12.5px;
+}
+#proj-menu button:hover { background: var(--bg3); }
+#proj-menu button.cur { color: var(--accent, #7aa2f7); font-weight: 600; }
+#proj-menu button.pm-auto { color: var(--fg2); border-top: 1px solid var(--border); border-radius: 0; margin-top: 4px; }
+#proj-menu input {
+  margin-top: 4px; background: var(--bg); color: var(--fg); border: 1px solid var(--border);
+  border-radius: 5px; padding: 5px 8px; font-size: 12px; outline: none;
+}
+
+/* 左メニュー・右の欄の幅を変えるつまみ (2026-09-24) */
+.side-grip { width: 5px; flex: none; cursor: col-resize; background: transparent; margin: 0 -2px; position: relative; z-index: 5; }
+.side-grip:hover, body.side-resizing .side-grip { background: var(--accent, #7aa2f7); opacity: .6; }
+body.side-resizing { cursor: col-resize; user-select: none; }
+body[data-projbar="off"] #projbar-grip { display: none; }
+body[data-ui="advanced"] #sidebar-grip, body[data-ui="builder"] #sidebar-grip, body[data-ui="harness"] #sidebar-grip,
+body[data-ui="agent"] #sidebar-grip, body[data-ui="chat"] #sidebar-grip { display: none; }

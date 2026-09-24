@@ -59,6 +59,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   startAutoSave();
+  startTabClassify();
 });
 
 function startAutoSave() {
@@ -3433,6 +3434,36 @@ async function setupVoiceChat() {
   const panel = document.getElementById('voice-panel');
   const openPanel = () => { if (panel) panel.classList.remove('hidden'); };
 
+  // 会話欄の高さを上の端のドラッグで変える。⚠️ 以前は 42vh 固定で動かせなかった(本人 2026-09-24)
+  (() => {
+    const grip = document.getElementById('voice-resizer');
+    if (!panel || !grip) return;
+    const KEY = 'ariya:voicePanelHeight';
+    const refit = () => tabs.forEach(t => { try { t.fit.fit(); } catch (_) {} });
+    const clamp = (h) => Math.max(70, Math.min(Math.round(window.innerHeight * 0.85), Math.round(h)));
+    try { const saved = Number(localStorage.getItem(KEY)); if (saved > 0) panel.style.height = clamp(saved) + 'px'; } catch (_) {}
+    grip.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      const startY = e.clientY, startH = panel.getBoundingClientRect().height;
+      document.body.classList.add('voice-resizing');
+      const move = (ev) => { panel.style.height = clamp(startH + (startY - ev.clientY)) + 'px'; refit(); };
+      const up = () => {
+        document.removeEventListener('mousemove', move);
+        document.removeEventListener('mouseup', up);
+        document.body.classList.remove('voice-resizing');
+        try { localStorage.setItem(KEY, String(Math.round(panel.getBoundingClientRect().height))); } catch (_) {}
+        refit();
+      };
+      document.addEventListener('mousemove', move);
+      document.addEventListener('mouseup', up);
+    });
+    grip.addEventListener('dblclick', () => {
+      panel.style.height = '';
+      try { localStorage.removeItem(KEY); } catch (_) {}
+      refit();
+    });
+  })();
+
   // 💬 は「押さずに話す」の入り切り。⚠️ 押しっぱなしではなく、切るまで聞き続ける。
   const talkBtn = document.getElementById('voice-talk-btn');
   const paintLive = () => {
@@ -3636,6 +3667,147 @@ function projectOf(session, labels) {
   return { key: base, name: base };
 }
 
+// ── 中身で束ねる (2026-09-24) ──
+// 本人: 「その他に 32 個溜まって、そこから探している」。全タブを ~ から開くので cwd では
+// 全部その他に落ちていた。main が会話の記録から束ね先を判定する(src/project-classify.js)。
+// 優先: 本人が右クリックで移したもの > フォルダの表 > 中身の判定 > フォルダ名 > その他
+let TAB_CLASS = {};          // sessionId -> { project, source }
+function groupOf(session) {
+  const c = TAB_CLASS[session && session.id];
+  if (c && c.source === 'manual' && c.project) return { key: c.project, name: c.project };
+  const byCwd = projectOf(session);
+  if (byCwd.key !== 'その他' && PROJ_LABELS[String(session.cwd || '').split('/').filter(Boolean).pop()]) return byCwd;
+  if (c && c.project) return { key: c.project, name: c.project };
+  return byCwd;
+}
+async function refreshTabClass() {
+  if (!window.api || !window.api.classifyTabs) return;
+  let res;
+  try { res = await window.api.classifyTabs(); } catch (_) { return; }
+  if (!res || typeof res !== 'object') return;
+  let changed = false;
+  for (const [sid, c] of Object.entries(res)) {
+    const prev = TAB_CLASS[sid];
+    if (!prev || prev.project !== c.project || prev.source !== c.source) changed = true;
+    // 「Claude Code」のままだったタブに、題名か最初の依頼から付けた名前を映す
+    if (c.name) {
+      tabs.forEach((t) => {
+        if (t.session && t.session.id === sid) {
+          t.session.name = c.name;
+          const el = t.tabEl && t.tabEl.querySelector('.tname');
+          if (el) el.textContent = c.name;
+          changed = true;
+        }
+      });
+    }
+  }
+  TAB_CLASS = res;
+  if (changed) renderProjbar();
+}
+
+// 右クリックで束ね先を手で決める。一度決めたら自動判定より必ず勝つ
+let projMenuEl = null;
+function closeProjMenu() { if (projMenuEl) { projMenuEl.remove(); projMenuEl = null; } }
+async function openProjMenu(sid, x, y) {
+  closeProjMenu();
+  let names = [];
+  try { names = await window.api.projectNames(); } catch (_) { /* 候補なしでも新しい名前は付けられる */ }
+  const cur = TAB_CLASS[sid] || {};
+  const m = document.createElement('div');
+  m.id = 'proj-menu';
+  const head = document.createElement('div');
+  head.className = 'pm-head';
+  head.textContent = 'このタブを入れるプロジェクト';
+  m.appendChild(head);
+  const pick = async (project) => {
+    closeProjMenu();
+    const r = await window.api.assignProject(sid, project);
+    if (r && r.ok === false && r.error) setStatus('ended', r.error);
+    await refreshTabClass();
+    renderProjbar();
+  };
+  for (const n of names) {
+    const b = document.createElement('button');
+    b.textContent = n;
+    if (cur.project === n) b.classList.add('cur');
+    b.addEventListener('click', () => pick(n));
+    m.appendChild(b);
+  }
+  const input = document.createElement('input');
+  input.placeholder = '新しい名前を入れて Enter';
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && input.value.trim()) pick(input.value.trim());
+    if (e.key === 'Escape') closeProjMenu();
+  });
+  m.appendChild(input);
+  if (cur.source === 'manual') {
+    const back = document.createElement('button');
+    back.className = 'pm-auto';
+    back.textContent = '自動の判定に戻す';
+    back.addEventListener('click', () => pick(null));
+    m.appendChild(back);
+  }
+  document.body.appendChild(m);
+  const r = m.getBoundingClientRect();
+  m.style.left = Math.min(x, window.innerWidth - r.width - 8) + 'px';
+  m.style.top = Math.min(y, window.innerHeight - r.height - 8) + 'px';
+  projMenuEl = m;
+}
+// ⚠️ タイマーと登録は起動時(startAutoSave の隣)から呼ぶ。読み込んだだけで回り出すと、
+//    読み込み確認のテストが終わらなくなる(実際に踏んだ)
+// 左メニューと右のコマンド欄の幅を、境目のつまみで変える (2026-09-24 本人「window のわくも調整できるように」)
+// 幅は localStorage に残す。ダブルクリックで元の幅。⚠️ 起動時(startTabClassify の隣)から呼ぶ
+function makeSideGrip(target, { key, side, min, max }) {
+  if (!target || !target.parentElement) return;
+  const grip = document.createElement('div');
+  grip.className = 'side-grip';
+  grip.id = `${target.id}-grip`;
+  grip.title = 'ドラッグで幅を変える(ダブルクリックで戻す)';
+  // 左メニューはつまみを右に、右の欄はつまみを左に置く
+  target.parentElement.insertBefore(grip, side === 'left' ? target.nextSibling : target);
+  const refit = () => tabs.forEach(t => { try { t.fit.fit(); } catch (_) {} });
+  const clamp = (w) => Math.max(min, Math.min(Math.round(window.innerWidth * max), Math.round(w)));
+  try { const saved = Number(localStorage.getItem(key)); if (saved > 0) target.style.width = clamp(saved) + 'px'; } catch (_) {}
+  grip.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    const startX = e.clientX, startW = target.getBoundingClientRect().width;
+    document.body.classList.add('side-resizing');
+    const move = (ev) => {
+      const dx = ev.clientX - startX;
+      target.style.width = clamp(side === 'left' ? startW + dx : startW - dx) + 'px';
+      refit();
+    };
+    const up = () => {
+      document.removeEventListener('mousemove', move);
+      document.removeEventListener('mouseup', up);
+      document.body.classList.remove('side-resizing');
+      try { localStorage.setItem(key, String(Math.round(target.getBoundingClientRect().width))); } catch (_) {}
+      refit();
+    };
+    document.addEventListener('mousemove', move);
+    document.addEventListener('mouseup', up);
+  });
+  grip.addEventListener('dblclick', () => {
+    target.style.width = '';
+    try { localStorage.removeItem(key); } catch (_) {}
+    refit();
+  });
+}
+
+function startTabClassify() {
+  makeSideGrip(document.getElementById('projbar'), { key: 'ariya:projbarWidth', side: 'left', min: 150, max: 0.5 });
+  makeSideGrip(document.getElementById('sidebar'), { key: 'ariya:sidebarWidth', side: 'right', min: 160, max: 0.5 });
+  document.addEventListener('mousedown', (e) => { if (projMenuEl && !projMenuEl.contains(e.target)) closeProjMenu(); });
+  document.addEventListener('contextmenu', (e) => {
+    const tabEl = e.target.closest && e.target.closest('#sb-projects .tab');
+    if (!tabEl || !tabEl.dataset.sid) return;
+    e.preventDefault();
+    openProjMenu(tabEl.dataset.sid, e.clientX, e.clientY);
+  });
+  setTimeout(refreshTabClass, 1500);
+  setInterval(refreshTabClass, 20 * 1000);
+}
+
 // 会話の一覧を作り直す。タブが増減・改名・フォルダ変更のたびに呼ぶ。
 function renderProjbar() {
   const host = document.getElementById('sb-projects');
@@ -3644,7 +3816,7 @@ function renderProjbar() {
   const openKeys = new Set([...host.querySelectorAll('.proj[open]')].map(d => d.dataset.key));
   const groups = new Map();
   tabs.forEach((t) => {
-    const p = projectOf(t.session);
+    const p = groupOf(t.session);
     if (!groups.has(p.key)) groups.set(p.key, { name: p.name, items: [] });
     groups.get(p.key).items.push(t);
   });

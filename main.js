@@ -343,6 +343,84 @@ function loadProjectLabels() {
 // 左メニューの束ね方にも同じ表を使う。⚠️ 名前をソース(公開リポジトリ)に書かないため
 ipcMain.handle('project-labels', () => loadProjectLabels());
 
+// ── 左メニューの束ね先を、タブの中身から決める (2026-09-24) ──
+// 本人: 「その他に 32 個タブが溜まって、そこから探している」。cwd だけで束ねていたのが原因
+// (全タブ ~ から開くので全部その他)。判定そのものは src/project-classify.js。
+// 表は 3 つとも ~/.claude-code-app/ に置く(ソースに呼び名を書かない):
+//   project-labels.json   フォルダ名 → 呼び名(既存)
+//   project-keywords.json 呼び名 → 言葉の配列
+//   project-assign.json   会話ID → 呼び名(本人が右クリックで移したもの。必ず勝つ)
+const { classifyText, readHeadTail } = require('./src/project-classify');
+const classifyCache = new Map();   // conversationId -> { size, mtimeMs, result }
+function readLocalJson(name) {
+  try {
+    const v = JSON.parse(fs.readFileSync(path.join(SESSIONS_DIR, name), 'utf-8'));
+    return (v && typeof v === 'object' && !Array.isArray(v)) ? v : {};
+  } catch (_) { return {}; }
+}
+function classifyConversation(conversationId, cwd, tabName, tables) {
+  const file = path.join(os.homedir(), '.claude', 'projects', claudeProjectSlug(cwd || os.homedir()), `${conversationId}.jsonl`);
+  const st = fs.statSync(file);
+  const hit = classifyCache.get(conversationId);
+  if (hit && hit.size === st.size && hit.mtimeMs === st.mtimeMs && hit.tables === tables.stamp) return hit.result;
+  const result = classifyText({ ...readHeadTail(fs, file), tabName }, tables);
+  classifyCache.set(conversationId, { size: st.size, mtimeMs: st.mtimeMs, tables: tables.stamp, result });
+  return result;
+}
+const GENERIC_TAB_NAMES = new Set(['Claude Code', 'Codex', 'Gemini', 'Grok', 'Terminal']);
+function shortTitle(t) {
+  const x = String(t || '').replace(/\s+/g, ' ').trim();
+  return x.length > 22 ? x.slice(0, 22) + '…' : x;
+}
+ipcMain.handle('classify-tabs', () => {
+  projectLabelCache = null;                      // 表を書き換えたら再起動なしで効かせる
+  const labels = loadProjectLabels();
+  const keywords = readLocalJson('project-keywords.json');
+  const assign = readLocalJson('project-assign.json');
+  const tables = { labels, keywords, stamp: JSON.stringify([labels, keywords]).length + ':' + Object.keys(keywords).join('|') };
+  const out = {};
+  for (const [id, s] of sessions) {
+    if (!s) continue;
+    const cid = s.conversationId;
+    let project = null, source = null, renamed = null;
+    if (cid && assign[cid]) { project = String(assign[cid]); source = 'manual'; }
+    if (cid) {
+      try {
+        const r = classifyConversation(cid, s.cwd, s.name, tables);
+        if (!project && r.project) { project = r.project; source = 'auto'; }
+        // 新しいタブは「Claude Code」のまま名前が付かなかった。題名か最初の依頼から付ける
+        if (GENERIC_TAB_NAMES.has(s.name)) {
+          const t = shortTitle(r.aiTitle || r.firstPrompt);
+          if (t && t.length >= 4) { s.name = t; renamed = t; }
+        }
+      } catch (_) { /* 記録がまだ無い(打ち始める前)・読めない */ }
+    }
+    out[id] = { project, source, name: renamed };
+  }
+  return out;
+});
+
+// 右クリックで束ね先を手で決める。null で「自動に戻す」
+ipcMain.handle('assign-project', (_e, { sessionId, project }) => {
+  const s = sessions.get(sessionId);
+  if (!s || !s.conversationId) return { ok: false, error: 'まだ会話が始まっていないタブは移せません' };
+  const assign = readLocalJson('project-assign.json');
+  if (project) assign[s.conversationId] = String(project).slice(0, 40);
+  else delete assign[s.conversationId];
+  const file = path.join(SESSIONS_DIR, 'project-assign.json');
+  const tmp = file + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(assign, null, 2));
+  fs.renameSync(tmp, file);
+  return { ok: true };
+});
+
+// 束ね先の候補(右クリックの一覧)。フォルダの表と言葉の表に出てくる呼び名
+ipcMain.handle('project-names', () => {
+  projectLabelCache = null;
+  const names = new Set([...Object.values(loadProjectLabels()), ...Object.keys(readLocalJson('project-keywords.json'))]);
+  return [...names].filter(Boolean).sort((a, b) => a.localeCompare(b, 'ja'));
+});
+
 // Derive a friendly, project-aware tab name from the working directory.
 // Known project folders map to readable labels; otherwise the folder basename is used.
 function deriveSessionName(cwd, mode) {
@@ -2233,7 +2311,8 @@ app.on('web-contents-created', (_event, contents) => {
 
 app.whenReady().then(() => {
   setCrashFlag();
-  try { app.setAsDefaultProtocolClient(DEEP_LINK_SCHEME); } catch (_) {}
+  // ⚠️ 開発版(npm start)で登録すると、ariya:// を開くアプリが開発版にすり替わる。ビルドした版だけ
+  if (app.isPackaged) { try { app.setAsDefaultProtocolClient(DEEP_LINK_SCHEME); } catch (_) {} }
   try { setupWebSession(); } catch (e) { console.error('web session:', e.message); }
   createWindow();
   createMenu();
