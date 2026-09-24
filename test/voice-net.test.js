@@ -191,3 +191,11 @@ test('道具が無いときの指示は「どのタブか」を聞き返さず�
   assert.match(VN.TOOL_GUIDE, /current が true/);
   assert.ok(!/どのタブに渡すか聞き返して/.test(VN.VOICE_SYSTEM));
 });
+
+// 2026-09-24: Alfred と同じ読みの辞書を当てる。⚠️ 語はテスト用の架空のもの(公開リポジトリ)
+test('読みの辞書は長い語から当てる', () => {
+  const VN2 = require('../src/voice-net');
+  const got = VN2.applyYomi('あいう大学とあいう', { 'あいう大学': 'えおだいがく', 'あいう': 'かき' });
+  assert.strictEqual(got, 'えおだいがくとかき');
+  assert.strictEqual(VN2.applyYomi('そのまま', {}), 'そのまま');
+});

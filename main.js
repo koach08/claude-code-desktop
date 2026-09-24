@@ -1086,6 +1086,19 @@ ipcMain.handle('hub-converse', async (_e, { messages, context, provider, model }
 // ⚠️ hub を経由すると往復で約 1.5 秒延びる。実測は src/voice-net.js の頭に書いた。
 //    鍵が手元にあるときは直、無いときだけ hub に落ちる。
 const voiceNetMod = require('./src/voice-net');
+// Alfred と同じ読みの辞書 (Mac の定時処理が koach-os から写す)。更新時刻が変わったときだけ読み直す
+let yomiCache = { mtimeMs: -1, items: {} };
+function loadYomi() {
+  try {
+    const file = path.join(SESSIONS_DIR, 'yomi.json');
+    const st = fs.statSync(file);
+    if (st.mtimeMs !== yomiCache.mtimeMs) {
+      const d = JSON.parse(fs.readFileSync(file, 'utf-8'));
+      yomiCache = { mtimeMs: st.mtimeMs, items: (d && typeof d.items === 'object') ? d.items : {} };
+    }
+  } catch (_) { /* 無ければ辞書なしで読む */ }
+  return yomiCache.items;
+}
 function voiceNet() {
   const cfg = (() => {
     try {
@@ -1098,6 +1111,7 @@ function voiceNet() {
   return voiceNetMod.create({
     fetchImpl: fetch,
     getKey: readSecretKey,
+    getYomi: loadYomi,
     hubUrl: cfg.apiUrl,
     hubSecret: cfg.apiSecret,
   });

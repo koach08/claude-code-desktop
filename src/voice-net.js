@@ -72,7 +72,9 @@ const FALLBACK_VOICE = 'nova';
 //    日本語ネイティブの声は Voice Library から自分の口座に足して、その ID を env.txt に書く。
 //    flash_v2_5 は会話向けの低遅延モデル。language_code で日本語だと明示する。
 const ELEVEN_DEFAULT_VOICE_ID = 'EXAVITQu4vr4xnSDxMaL';
-const ELEVEN_MODEL = 'eleven_flash_v2_5';
+// ⚠️ flash_v2_5 + 英語圏の声 (Sarah) だと「反映」を「へんえい」と読むなど、漢字の読みが崩れた。
+//    Alfred (koach-os) と同じ eleven_v3 にそろえる (本人 2026-09-24: Alfred と聞き比べて v3 を選択)
+const ELEVEN_MODEL = 'eleven_v3';
 const ELEVEN_VOICE_SETTINGS = { stability: 0.45, similarity_boost: 0.8, style: 0.35, use_speaker_boost: true };
 const VOICE_STYLE = '日本語で、隣にいる相棒に話しかける調子。読み上げではなく会話。自然な抑揚をつけ、大事な語は少し強く、文末は落とす。句読点で軽く間を取り、語尾を柔らかく。早口にしない。';
 
@@ -98,7 +100,18 @@ function nameFor(mime) {
   return 'audio.webm';
 }
 
-function create({ fetchImpl, getKey, hubUrl, hubSecret }) {
+// 読みの辞書を当てる。辞書は Alfred と同じもの (~/.claude-code-app/yomi.json、Mac の定時処理が写す)。
+// ⚠️ 人の名前が入るので、公開しているこのソースには辞書を書かない。長い語から当てる
+//    (短い語が先に当たると、長い語の途中だけ置き換わって壊れる)。
+function applyYomi(text, dict) {
+  const keys = Object.keys(dict || {}).filter(Boolean).sort((a, b) => b.length - a.length);
+  if (!keys.length) return text;
+  const esc = (k) => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(keys.map(esc).join('|'), 'g');
+  return String(text || '').replace(re, (m) => dict[m] || m);
+}
+
+function create({ fetchImpl, getKey, hubUrl, hubSecret, getYomi }) {
   const f = fetchImpl;
   const key = (name) => (getKey ? String(getKey(name) || '') : '');
 
@@ -268,7 +281,7 @@ function create({ fetchImpl, getKey, hubUrl, hubSecret }) {
         method: 'POST',
         headers: { 'xi-api-key': k, 'Content-Type': 'application/json', Accept: 'audio/mpeg' },
         body: JSON.stringify({
-          text: String(text || '').slice(0, 2000),
+          text: applyYomi(String(text || '').slice(0, 2000), getYomi ? getYomi() : {}),
           model_id: ELEVEN_MODEL,
           language_code: 'ja',
           voice_settings: ELEVEN_VOICE_SETTINGS,
@@ -314,4 +327,4 @@ function create({ fetchImpl, getKey, hubUrl, hubSecret }) {
   return { transcribe, reply, tts };
 }
 
-module.exports = { create, DEFAULT_VOICE, ELEVEN_DEFAULT_VOICE_ID, ELEVEN_MODEL, VOICE_STYLE, VOICE_SYSTEM, VOICE_BASE, TOOL_GUIDE, HANDOFF_GUIDE, DEFAULT_VOICE_ENGINE, DIRECT, nameFor };
+module.exports = { create, applyYomi, DEFAULT_VOICE, ELEVEN_DEFAULT_VOICE_ID, ELEVEN_MODEL, VOICE_STYLE, VOICE_SYSTEM, VOICE_BASE, TOOL_GUIDE, HANDOFF_GUIDE, DEFAULT_VOICE_ENGINE, DIRECT, nameFor };
