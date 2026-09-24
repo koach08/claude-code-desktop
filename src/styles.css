@@ -1436,3 +1436,31 @@ body.side-resizing { cursor: col-resize; user-select: none; }
 body[data-projbar="off"] #projbar-grip { display: none; }
 body[data-ui="advanced"] #sidebar-grip, body[data-ui="builder"] #sidebar-grip, body[data-ui="harness"] #sidebar-grip,
 body[data-ui="agent"] #sidebar-grip, body[data-ui="chat"] #sidebar-grip { display: none; }
+
+/* ── 自分で立てるプロジェクト (2026-09-24) ── */
+#sb-head { flex-wrap: wrap; }
+#sb-newproj { flex-basis: 100%; order: 3; padding: 5px 10px; border-radius: 7px; border: 1px dashed var(--border);
+  background: transparent; color: var(--fg2); cursor: pointer; font-size: 12px; }
+#sb-newproj:hover { color: var(--fg); border-color: var(--accent); }
+.proj-act { display: none; margin-left: 2px; padding: 0 6px; border-radius: 5px; border: 1px solid var(--border);
+  background: transparent; color: var(--fg2); cursor: pointer; font-size: 11px; line-height: 17px; }
+.proj > summary:hover .proj-act, .proj.mine > summary .proj-act.always { display: inline-block; }
+.proj-act:hover { color: var(--fg); border-color: var(--accent); }
+.proj.mine > summary .proj-name::before { content: "◆ "; font-size: 9px; color: var(--accent); }
+.proj-empty { margin: 2px 6px 4px 22px; font-size: 11px; color: var(--fg2); opacity: .7; }
+#proj-dlg { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; z-index: 9999; }
+#proj-dlg[hidden] { display: none; }
+#proj-dlg .box { width: min(560px, 92vw); max-height: 86vh; overflow: auto; background: var(--bg1); border: 1px solid var(--border);
+  border-radius: 12px; padding: 16px 18px; color: var(--fg); font-size: 13px; }
+#proj-dlg h3 { margin: 0 0 10px; font-size: 15px; }
+#proj-dlg label { display: block; margin: 10px 0 4px; font-size: 12px; color: var(--fg2); }
+#proj-dlg input[type=text], #proj-dlg textarea { width: 100%; box-sizing: border-box; background: var(--bg0); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 7px; padding: 7px 9px; font-size: 13px; font-family: inherit; }
+#proj-dlg textarea { min-height: 170px; resize: vertical; line-height: 1.55; }
+#proj-dlg .row { display: flex; gap: 6px; align-items: center; }
+#proj-dlg .row input[type=text] { flex: 1; }
+#proj-dlg .note { font-size: 11px; color: var(--fg2); margin-top: 4px; line-height: 1.5; }
+#proj-dlg .btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+#proj-dlg button { padding: 6px 13px; border-radius: 7px; border: 1px solid var(--border); background: transparent; color: var(--fg); cursor: pointer; }
+#proj-dlg button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+#proj-dlg .err { color: #f7768e; font-size: 12px; margin-top: 8px; min-height: 1em; }

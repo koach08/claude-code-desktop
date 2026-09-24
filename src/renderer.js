@@ -936,6 +936,9 @@ async function newTab(mode, cwd) {
   try {
     const session = await window.api.createSession({ mode: mode || 'claude', cwd });
     addTab(session);
+    // ⚠️ 左メニューへの描き直しが addTab の外(別の tabs.set)にしか入っておらず、
+    //    プロジェクトの ＋ で開いた会話が塊に入らなかった(9/24 実測)。開いたら必ず描き直す
+    if (typeof renderProjbar === 'function') renderProjbar();
     return session;                 // 声から開いたとき、どれを開いたか返す
   } catch (err) {
     console.error('Session create failed:', err);
@@ -3672,9 +3675,104 @@ function projectOf(session, labels) {
 // 全部その他に落ちていた。main が会話の記録から束ね先を判定する(src/project-classify.js)。
 // 優先: 本人が右クリックで移したもの > フォルダの表 > 中身の判定 > フォルダ名 > その他
 let TAB_CLASS = {};          // sessionId -> { project, source }
+// ── 自分で立てるプロジェクト (2026-09-24) ──────────────────────────
+// 本人: 「ChatGPT や Claude, Grok のように、プロジェクトを立ててコンテクストを共有したい」
+// 中身は main 側(project-create)。一覧は ~/.claude-code-app/projects.json(「下ごしらえ」画面と同じ表)。
+let MY_PROJECTS = [];
+async function loadMyProjects() {
+  try {
+    if (!window.api || !window.api.projectsList) return;
+    const list = await window.api.projectsList();
+    MY_PROJECTS = Array.isArray(list) ? list.filter(x => x && x.name && x.path) : [];
+    renderProjbar();
+  } catch (_) { /* 一覧が読めなくても左メニューは動く */ }
+}
+function myProjectOf(session) {
+  const cwd = String((session && session.cwd) || '').replace(/\/+$/, '');
+  if (!cwd) return null;
+  let best = null;
+  for (const pj of MY_PROJECTS) {
+    const root = String(pj.path).replace(/\/+$/, '');
+    if ((cwd === root || cwd.startsWith(root + '/')) && (!best || root.length > best.path.length)) best = pj;
+  }
+  return best;
+}
+function projectDialog() {
+  let dlg = document.getElementById('proj-dlg');
+  if (dlg) return dlg;
+  dlg = document.createElement('div');
+  dlg.id = 'proj-dlg';
+  dlg.hidden = true;
+  dlg.innerHTML = `<div class="box">
+    <h3 class="t"></h3>
+    <div class="create-only">
+      <label>名前</label><input type="text" class="name" placeholder="例: 論文A、授業準備、新しいアプリ" maxlength="60">
+      <label>場所(フォルダ)</label>
+      <div class="row"><input type="text" class="dir" placeholder="空なら ~/Projects/名前 に新しく作ります"><button class="pick">既存のフォルダを選ぶ</button></div>
+      <div class="note">既にあるアプリのフォルダを選べば、そのフォルダがプロジェクトになります。</div>
+    </div>
+    <label>指示(このプロジェクトの会話で、毎回 AI に伝えておくこと)</label>
+    <textarea class="ins" placeholder="例: 授業スライドは原本の文言のまま。学生向けの文は「知ってる側」の口調にしない。"></textarea>
+    <div class="note">CLAUDE.md として保存されます。Codex と Gemini も同じ指示を読みます(Claude 限定のときは読ませません)。資料はフォルダの「資料」に置くと、全部の会話から見えます。</div>
+    <div class="create-only"><label style="display:flex;gap:6px;align-items:center;margin-top:10px"><input type="checkbox" class="conly"> Claude 限定(Codex・Gemini には指示を渡さない)</label></div>
+    <div class="err"></div>
+    <div class="btns"><button class="cancel">やめる</button><button class="primary ok"></button></div>
+  </div>`;
+  document.body.appendChild(dlg);
+  dlg.addEventListener('click', (e) => { if (e.target === dlg) dlg.hidden = true; });
+  dlg.querySelector('.cancel').addEventListener('click', () => { dlg.hidden = true; });
+  dlg.querySelector('.pick').addEventListener('click', async () => {
+    try { const f = await window.api.harnessPickFolder(); if (f) dlg.querySelector('.dir').value = (f.path || f); } catch (_) { /* 手で入れてもらう */ }
+  });
+  return dlg;
+}
+async function openProjectDialog(kind, pj) {
+  const dlg = projectDialog();
+  const err = dlg.querySelector('.err'); err.textContent = '';
+  const ins = dlg.querySelector('.ins');
+  dlg.querySelectorAll('.create-only').forEach(x => { x.hidden = kind !== 'create'; });
+  if (kind === 'create') {
+    dlg.querySelector('.t').textContent = '新しいプロジェクト';
+    dlg.querySelector('.ok').textContent = '作る';
+    dlg.querySelector('.name').value = ''; dlg.querySelector('.dir').value = ''; ins.value = '';
+    dlg.querySelector('.conly').checked = false;
+  } else {
+    dlg.querySelector('.t').textContent = `「${pj.name}」の指示`;
+    dlg.querySelector('.ok').textContent = '保存';
+    ins.value = '';
+    try { const r = await window.api.harnessReadClaudeMd(pj.path); ins.value = (r && r.content) || ''; } catch (_) { /* 空で開く */ }
+  }
+  const okBtn = dlg.querySelector('.ok');
+  const fresh = okBtn.cloneNode(true);          // 前回の押し先を外す
+  okBtn.replaceWith(fresh);
+  fresh.addEventListener('click', async () => {
+    err.textContent = '';
+    if (kind === 'create') {
+      const r = await window.api.projectCreate({
+        name: dlg.querySelector('.name').value, dir: dlg.querySelector('.dir').value,
+        instructions: ins.value, claudeOnly: dlg.querySelector('.conly').checked,
+      });
+      if (!r || !r.ok) { err.textContent = (r && r.error) || '作れませんでした'; return; }
+      dlg.hidden = true;
+      PROJ_LABELS = {};                          // 束ね方の表が増えたので読み直す
+      if (typeof loadProjLabels === 'function') loadProjLabels();
+      await loadMyProjects();
+    } else {
+      const r = await window.api.harnessWriteClaudeMd(pj.path, ins.value);
+      if (!r || r.success === false) { err.textContent = (r && r.error) || '保存できませんでした'; return; }
+      dlg.hidden = true;
+    }
+  });
+  dlg.hidden = false;
+  setTimeout(() => (kind === 'create' ? dlg.querySelector('.name') : ins).focus(), 30);
+}
+
 function groupOf(session) {
   const c = TAB_CLASS[session && session.id];
   if (c && c.source === 'manual' && c.project) return { key: c.project, name: c.project };
+  // 自分で立てたプロジェクトのフォルダの中で開いた会話は、そのプロジェクトに入れる(いちばん深く一致したもの)
+  const mine = myProjectOf(session);
+  if (mine) return { key: mine.name, name: mine.name };
   const byCwd = projectOf(session);
   if (byCwd.key !== 'その他' && PROJ_LABELS[String(session.cwd || '').split('/').filter(Boolean).pop()]) return byCwd;
   if (c && c.project) return { key: c.project, name: c.project };
@@ -3814,27 +3912,55 @@ function renderProjbar() {
   if (!host) return;
   // 今どの塊が開いていたかを覚えておく(作り直しで閉じないように)
   const openKeys = new Set([...host.querySelectorAll('.proj[open]')].map(d => d.dataset.key));
+  // 前回描いた塊。これに無い塊(= 新しくできた塊)は開いて出す(9/24: 作ったプロジェクトが閉じて出た)
+  const seenKeys = new Set([...host.querySelectorAll('.proj')].map(d => d.dataset.key));
+  const activeTab = tabs.get(activeId);
   const groups = new Map();
   tabs.forEach((t) => {
     const p = groupOf(t.session);
     if (!groups.has(p.key)) groups.set(p.key, { name: p.name, items: [] });
     groups.get(p.key).items.push(t);
   });
+  // 自分で立てたプロジェクトは、会話が 0 件でも左に残す(ChatGPT/Claude のプロジェクトと同じ)
+  for (const pj of MY_PROJECTS) if (!groups.has(pj.name)) groups.set(pj.name, { name: pj.name, items: [] });
   host.textContent = '';
-  // 会話の多い塊から上に。同数なら名前順
+  // 自分で立てたものを上に。その中と残りは、会話の多い順・名前順
+  const isMine = (k) => MY_PROJECTS.some(x => x.name === k);
   const sorted = [...groups.entries()].sort((a, b) =>
-    b[1].items.length - a[1].items.length || a[1].name.localeCompare(b[1].name, 'ja'));
+    (isMine(b[0]) - isMine(a[0])) || b[1].items.length - a[1].items.length || a[1].name.localeCompare(b[1].name, 'ja'));
   for (const [key, g] of sorted) {
     const d = document.createElement('details');
     d.className = 'proj';
     d.dataset.key = key;
     // 初回は全部開く。2 回目からは本人が閉じた状態を守る
-    d.open = openKeys.size === 0 ? true : openKeys.has(key);
+    d.open = openKeys.size === 0 ? true
+      : openKeys.has(key) || !seenKeys.has(key) || (!!activeTab && g.items.includes(activeTab));
     const live = g.items.some(t => !t.session.exited);
     const sum = document.createElement('summary');
     sum.innerHTML = `${live ? '<span class="proj-live"></span>' : ''}<span class="proj-name"></span><span class="proj-count">${g.items.length}</span>`;
     sum.querySelector('.proj-name').textContent = g.name;
+    const pj = MY_PROJECTS.find(x => x.name === key);
+    if (pj) {
+      d.classList.add('mine');
+      const act = (label, title, fn, always) => {
+        const b = document.createElement('button');
+        b.className = 'proj-act' + (always ? ' always' : '');
+        b.textContent = label; b.title = title;
+        // ⚠️ summary の中のボタンは、押すと開閉まで起きる。止める
+        b.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); fn(); });
+        sum.appendChild(b);
+      };
+      act('＋', pj.claudeOnly ? 'このプロジェクトで新しい会話(Claude 限定)' : `このプロジェクトで新しい会話(${currentMode})`,
+        () => newTab(pj.claudeOnly ? 'claude' : currentMode, pj.path), true);
+      act('指示', 'このプロジェクトの会話に毎回伝える指示を見る・直す', () => openProjectDialog('edit', pj));
+    }
     d.appendChild(sum);
+    if (!g.items.length) {
+      const e = document.createElement('div');
+      e.className = 'proj-empty';
+      e.textContent = 'まだ会話がありません。＋で始めます';
+      d.appendChild(e);
+    }
     for (const t of g.items) d.appendChild(t.tabEl);   // ⚠️ 移すだけ。作り直さない
     host.appendChild(d);
   }
@@ -3885,6 +4011,9 @@ function renderProjbarSwitch() {
   });
   const add = document.getElementById('sb-new');
   if (add) add.addEventListener('click', () => { newTab(currentMode); });
+  const addProj = document.getElementById('sb-newproj');
+  if (addProj) addProj.addEventListener('click', () => { openProjectDialog('create'); });
+  loadMyProjects();
   document.querySelectorAll('.sb-eng').forEach(b => {
     b.addEventListener('click', () => {
       currentMode = b.dataset.eng;

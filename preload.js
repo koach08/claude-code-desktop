@@ -8,6 +8,8 @@ contextBridge.exposeInMainWorld('api', {
   saveClipboardImage: () => ipcRenderer.invoke('save-clipboard-image'),
   createSession: (opts) => ipcRenderer.invoke('create-session', opts || {}),
   projectLabels: () => ipcRenderer.invoke('project-labels'),
+  projectsList: () => ipcRenderer.invoke('projects-list'),
+  projectCreate: (opts) => ipcRenderer.invoke('project-create', opts || {}),
   classifyTabs: () => ipcRenderer.invoke('classify-tabs'),
   assignProject: (sessionId, project) => ipcRenderer.invoke('assign-project', { sessionId, project }),
   projectNames: () => ipcRenderer.invoke('project-names'),

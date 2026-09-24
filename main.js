@@ -1514,6 +1514,73 @@ ipcMain.handle('hub-chat', async (_e, { provider, model, messages, system, tempe
   }
 });
 
+// ── 自分で立てるプロジェクト (2026-09-24) ─────────────────────────────
+// 本人: 「ChatGPT や Claude のように、プロジェクトを自分で立ち上げてコンテクストを共有したい」
+// ChatGPT/Claude のプロジェクトの中身は「名前・指示・資料」。Ariya ではそれを 1 つのフォルダに置く:
+//   指示 = CLAUDE.md(Claude Code が読む)。Codex は AGENTS.md、Gemini は GEMINI.md を自分で読むので、
+//          同じ中身を指す別名(シンボリックリンク)を置く。Claude 限定のプロジェクトには置かない
+//          (置くと他社のエンジンにも指示の中身が渡る)。
+//   資料 = フォルダの中の「資料/」。
+// ⚠️ プロジェクト名はこのソース(公開リポジトリ)に書かない。一覧は ~/.claude-code-app/projects.json。
+//    「下ごしらえ」画面のプロジェクト一覧と**同じ表・同じ形({name, path})**にする。二つの画面で同じものが見えるように。
+//    (PROJECTS_FILE は下の Harness の節で宣言している。呼ばれるのは起動後なので順番は問題ない)
+function readProjects() {
+  try {
+    const d = JSON.parse(fs.readFileSync(PROJECTS_FILE, 'utf-8'));
+    return Array.isArray(d) ? d.filter(x => x && x.name && x.path) : [];
+  } catch (_) { return []; }
+}
+function writeProjects(list) {
+  fs.mkdirSync(SESSIONS_DIR, { recursive: true });
+  fs.writeFileSync(PROJECTS_FILE, JSON.stringify(list, null, 2) + '\n', 'utf-8');
+}
+function safeProjectName(name) {
+  // フォルダ名に使えない字を落とす。日本語は残す
+  return String(name || '').trim().replace(/[\/\\:*?"<>|\x00-\x1f]/g, '').replace(/^\.+/, '').slice(0, 60);
+}
+ipcMain.handle('projects-list', () => readProjects());
+ipcMain.handle('project-create', (_e, { name, dir, instructions, claudeOnly }) => {
+  const nm = safeProjectName(name);
+  if (!nm) return { ok: false, error: '名前を入れてください' };
+  const list = readProjects();
+  if (list.some(x => x.name === nm)) return { ok: false, error: 'その名前のプロジェクトはもうあります' };
+  const home = os.homedir();
+  const target = path.resolve(dir && String(dir).trim() ? String(dir).trim().replace(/^~(?=\/|$)/, home) : path.join(home, 'Projects', nm));
+  // ⚠️ ホームの外やホームそのものには作らない(指示ファイルを変な場所に撒かない)
+  if (!target.startsWith(home + path.sep) || target === home) return { ok: false, error: 'ホームの中のフォルダにしてください' };
+  try {
+    fs.mkdirSync(target, { recursive: true });
+    fs.mkdirSync(path.join(target, '資料'), { recursive: true });
+    const cm = path.join(target, 'CLAUDE.md');
+    const text = String(instructions || '').trim();
+    if (text) {
+      // 既にある指示は消さない。上に足す
+      const prev = fs.existsSync(cm) ? fs.readFileSync(cm, 'utf-8') : '';
+      fs.writeFileSync(cm, prev ? `${text}\n\n${prev}` : `${text}\n`, 'utf-8');
+    } else if (!fs.existsSync(cm)) {
+      fs.writeFileSync(cm, `# ${nm}\n\n(このプロジェクトの会話で、毎回 AI に伝えておくこと)\n`, 'utf-8');
+    }
+    if (!claudeOnly) {
+      for (const alias of ['AGENTS.md', 'GEMINI.md']) {
+        const ap = path.join(target, alias);
+        if (!fs.existsSync(ap)) { try { fs.symlinkSync('CLAUDE.md', ap); } catch (_) { /* 作れなくても Claude は動く */ } }
+      }
+    }
+    list.push({ name: nm, path: target, claudeOnly: !!claudeOnly, created: new Date().toISOString() });
+    writeProjects(list);
+    // 左メニューの束ね方にも入れる(フォルダ名 → 呼び名)
+    try {
+      const lp = path.join(SESSIONS_DIR, 'project-labels.json');
+      const labels = fs.existsSync(lp) ? JSON.parse(fs.readFileSync(lp, 'utf-8')) : {};
+      const base = path.basename(target);
+      if (!labels[base]) { labels[base] = nm; fs.writeFileSync(lp, JSON.stringify(labels, null, 2) + '\n', 'utf-8'); projectLabelCache = null; }
+    } catch (_) { /* 束ね方に入らなくても、プロジェクトの一覧からは開ける */ }
+    return { ok: true, project: list[list.length - 1] };
+  } catch (e) {
+    return { ok: false, error: `作れませんでした: ${String(e.message || e).slice(0, 120)}` };
+  }
+});
+
 // ── Harness Engineering: CLAUDE.md ──
 ipcMain.handle('harness-read-claudemd', async (_e, { cwd }) => {
   const filePath = path.join(cwd, 'CLAUDE.md');
