@@ -52,7 +52,12 @@ const ENGINE_SIGNALS = [
   { e: 'grok', w: 3, why: 'Grok 指定', re: /grok|グロック|xai|opencode/i },
   // ── Claude Code: 品質・書き物・MCP ──
   { e: 'claude', w: 3, why: '設計/アーキテクチャ', re: /設計|アーキ|方式を(決|選)|技術選定|仕様(を)?(決|書|固)/ },
-  { e: 'claude', w: 3, why: '書き物', re: /記事|論文|note|ドキュメント|readme|メール|文章|コピー|販売文|シラバス|申請書/i },
+  // ⚠️ 「メール」を裸で拾うと、**メールを使った手続き**まで書き物になる。
+  //    「メールから添付をダウンロードして申請して」が 3-3 の同点になり、
+  //    同点は ENGINE_LABELS の並び順で claude が勝つため、画面操作なのに
+  //    Claude Code に送られていた (2026-09-25 に koach-os との突き合わせで発覚)。
+  //    koach-os 側は最初から「メールの文」と書いていた。そちらに合わせる。
+  { e: 'claude', w: 3, why: '書き物', re: /記事|論文|note|ドキュメント|readme|メール(の(文|文面)|を(書|下書|返))|文章|コピー|販売文|シラバス|申請書/i },
   { e: 'claude', w: 3, why: 'MCP連携が要る', re: /supabase|vercel|stripe|notion|wordpress|\bwp\b|gmail|canva|mcp/i },
   { e: 'claude', w: 2, why: '新規実装', re: /新規(の)?(実装|開発|作成)|ゼロから|新しく(作|足)|新機能/ },
   { e: 'claude', w: 2, why: 'デプロイ/出荷', re: /デプロイ|deploy|出荷|リリース|審査|ストア|公開する/i },
