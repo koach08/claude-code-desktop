@@ -126,10 +126,18 @@ test('壊れた履歴は落とす', () => {
 });
 
 // ── 読み上げの区切り ──────────────────────────────────────────
-test('先頭の一文だけ先に鳴らせるように切る', () => {
+test('先頭の一文だけ先に鳴らし、残りはまとめる（一文ずつだと抑揚が切れて機械的）', () => {
   const c = V.chunksForSpeech('3つ開いています。AOZORA、midori-os、ariya bridge です。どれを見ますか。');
-  assert.strictEqual(c.length, 3);
+  assert.strictEqual(c.length, 2);
   assert.strictEqual(c[0], '3つ開いています。');
+  assert.strictEqual(c[1], 'AOZORA、midori-os、ariya bridge です。どれを見ますか。');
+});
+
+test('長い返事は 300 字ほどで文の切れ目に区切る', () => {
+  const s = 'これは長めの文でテストのために書いています。'.repeat(30);
+  const c = V.chunksForSpeech(s);
+  assert.ok(c.length >= 3);
+  for (const x of c.slice(1)) assert.ok(x.length <= 330, `長すぎる: ${x.length}`);
 });
 
 test('短すぎる断片は次とくっつける（不自然に切れて聞こえるため）', () => {

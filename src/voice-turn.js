@@ -183,7 +183,18 @@ function chunksForSpeech(text) {
   if (out.length > 1 && out[out.length - 1].length < MIN_CHUNK) {
     out[out.length - 2] += out.pop();
   }
-  return out;
+  // ⚠️ 一文ずつ音にすると文ごとに抑揚が切れて機械的に聞こえた (2026-09-24、Alfred で同じ文を
+  //    「一文ずつ」と「まとめて」で作って本人が聞き比べ、まとめての方が自然)。
+  //    最初の一文だけ先に鳴らして待ち時間を保ち、残りは 300 字ほどまでまとめる
+  if (out.length <= 2) return out;
+  const merged = [out[0]];
+  let cur = '';
+  for (const p of out.slice(1)) {
+    if (cur && (cur + p).length > 300) { merged.push(cur); cur = ''; }
+    cur += p;
+  }
+  if (cur) merged.push(cur);
+  return merged;
 }
 
 // ── 相手が作った「渡す文」を取り出す ──────────────────────────
