@@ -4043,3 +4043,103 @@ function placeVoiceButton() {
   const send = host.querySelector('#chat-send-btn, #send-btn, #builder-send-btn');
   if (send) host.insertBefore(btn, send); else host.appendChild(btn);
 }
+
+
+// ── 過去の会話と画面 (2026-09-25) ─────────────────────────────────
+// 本人: 「今開いているタブも過去のものも、再起動後に resume できるように」「会話 ID が無くても読み返せるように」
+// 上の段 = 会話に戻れる過去のタブ(バックアップにあって記録も残っているもの)
+// 下の段 = 保管した画面(閉じた・再起動した・エンジンを替えた時の画面)。読むだけで開く。会話 ID があれば戻れる
+function histDialog() {
+  let dlg = document.getElementById('hist-dlg');
+  if (dlg) return dlg;
+  dlg = document.createElement('div');
+  dlg.id = 'hist-dlg';
+  dlg.hidden = true;
+  dlg.innerHTML = `<div class="box">
+    <div class="top"><h3>過去の会話と画面</h3><input type="text" class="q" placeholder="名前・場所で絞る"><button class="back" hidden>一覧に戻る</button><button class="close">閉じる</button></div>
+    <div class="list"></div><div class="viewer"></div></div>`;
+  document.body.appendChild(dlg);
+  dlg.addEventListener('click', (e) => { if (e.target === dlg) dlg.hidden = true; });
+  dlg.querySelector('.close').addEventListener('click', () => { dlg.hidden = true; });
+  dlg.querySelector('.back').addEventListener('click', () => { dlg.classList.remove('reading'); dlg.querySelector('.back').hidden = true; });
+  dlg.querySelector('.q').addEventListener('input', () => renderHistList(dlg));
+  return dlg;
+}
+let HIST = { past: [], archive: [] };
+function histWhen(iso) {
+  try { const d = new Date(iso); return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; } catch (_) { return ''; }
+}
+function histWhere(cwd) {
+  const p = projectOf({ cwd });
+  return p && p.name ? p.name : '';
+}
+async function resumeConversation(x) {
+  try {
+    const session = await window.api.createSession({ mode: x.mode || 'claude', cwd: x.cwd || undefined, name: x.name || undefined, conversationId: x.conversationId });
+    addTab(session);
+    if (typeof renderProjbar === 'function') renderProjbar();
+    const d = document.getElementById('hist-dlg'); if (d) d.hidden = true;
+  } catch (e) { console.error('resume failed', e); }
+}
+async function readArchived(dlg, x) {
+  const r = await window.api.bufferArchiveRead(x.file);
+  const v = dlg.querySelector('.viewer');
+  v.textContent = '';
+  dlg.classList.add('reading');
+  dlg.querySelector('.back').hidden = false;
+  if (!r || !r.ok) { v.textContent = (r && r.error) || '読めませんでした'; return; }
+  // 端末の画面として描き直す(色や罫線の制御文字をそのまま解釈させる)。書き込みはできない
+  const term = new Terminal({ disableStdin: true, scrollback: 50000, convertEol: true, fontSize: 13,
+    fontFamily: "'Menlo', 'Monaco', monospace", theme: { background: '#1a1b26', foreground: '#c0caf5' } });
+  const fit = new FitAddon.FitAddon();
+  term.loadAddon(fit);
+  term.open(v);
+  try { fit.fit(); } catch (_) {}
+  term.write(r.text);
+}
+function renderHistList(dlg) {
+  const q = (dlg.querySelector('.q').value || '').trim().toLowerCase();
+  const hit = (x) => !q || `${x.name} ${x.cwd} ${histWhere(x.cwd)}`.toLowerCase().includes(q);
+  const list = dlg.querySelector('.list');
+  list.textContent = '';
+  const section = (title, rows, build) => {
+    const h = document.createElement('h4'); h.textContent = title; list.appendChild(h);
+    if (!rows.length) { const e = document.createElement('div'); e.className = 'row'; e.textContent = 'ありません'; list.appendChild(e); return; }
+    rows.forEach(x => list.appendChild(build(x)));
+  };
+  const row = (x, when, btns) => {
+    const r = document.createElement('div'); r.className = 'row';
+    const n = document.createElement('span'); n.className = 'n'; n.textContent = x.name || '(名前なし)'; n.title = x.cwd || '';
+    const m = document.createElement('span'); m.className = 'm'; m.textContent = [histWhere(x.cwd), x.mode, when].filter(Boolean).join(' · ');
+    r.append(n, m);
+    for (const [label, fn] of btns) { const b = document.createElement('button'); b.textContent = label; b.addEventListener('click', fn); r.appendChild(b); }
+    return r;
+  };
+  section('会話に戻れる過去のタブ', HIST.past.filter(hit), (x) => row(x, histWhen(x.when), [['会話に戻る', () => resumeConversation(x)]]));
+  section('保管した画面(読むだけ。会話 ID があれば戻れる)', HIST.archive.filter(hit), (x) => {
+    const btns = [['読む', () => readArchived(dlg, x)]];
+    if (x.conversationId) btns.push(['会話に戻る', () => resumeConversation(x)]);
+    const why = { closed: '閉じた', restart: '再起動', 'mode-switch': 'エンジン切替', orphan: '取り残し' }[x.why] || '';
+    return row(x, `${histWhen(x.archivedAt)} ${why}`, btns);
+  });
+}
+async function openHistory() {
+  const dlg = histDialog();
+  dlg.classList.remove('reading');
+  dlg.querySelector('.back').hidden = true;
+  dlg.querySelector('.list').textContent = '読み込み中…';
+  dlg.hidden = false;
+  try {
+    const [past, archive] = await Promise.all([
+      window.api.pastTabs ? window.api.pastTabs() : [],
+      window.api.bufferArchiveList ? window.api.bufferArchiveList() : [],
+    ]);
+    HIST = { past: past || [], archive: archive || [] };
+  } catch (_) { HIST = { past: [], archive: [] }; }
+  renderHistList(dlg);
+}
+(function initHistory() {
+  if (typeof document === 'undefined' || !document.body) return;
+  const b = document.getElementById('sb-history');
+  if (b) b.addEventListener('click', openHistory);
+})();

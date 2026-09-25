@@ -555,12 +555,13 @@ ipcMain.handle('switch-mode', async (_event, { sessionId, newMode }) => {
   const old = sessions.get(sessionId);
   if (!old) return null;
   const { cwd } = old;
+  const oldMeta = sessionMetaFor(sessionId);
+  const oldBuf = sessionBuffers.get(sessionId);
   try { old.pty.kill(); } catch (_) {}
   sessionBuffers.delete(sessionId);
   savedBuffer.delete(sessionId);
-  // モード切替では新しい ID を採番するので、古い .buf はここで捨てないと残り続ける
-  // (メモリ上の Map からは消えるがディスクには残っていた)。
-  try { fs.unlinkSync(path.join(BUFFERS_DIR, `${sessionId}.buf`)); } catch (_) {}
+  // モード切替では新しい ID を採番する。古い .buf は保管庫へ(捨てると切替前の画面が読み返せない)
+  archiveBuffer(sessionId, 'mode-switch', oldMeta, oldBuf);
   sessions.delete(sessionId);
 
   const nodePty = getPty();
@@ -656,11 +657,13 @@ ipcMain.handle('resize-terminal', async (_e, { sessionId, cols, rows }) => {
 });
 
 ipcMain.handle('close-session', async (_e, { sessionId }) => {
+  const meta = sessionMetaFor(sessionId);     // 消す前に名前・場所・会話 ID を控える
+  const latest = sessionBuffers.get(sessionId);
   const s = sessions.get(sessionId);
   if (s && s.pty) { try { s.pty.kill(); } catch (_) {} sessions.delete(sessionId); }
   sessionBuffers.delete(sessionId);
   savedBuffer.delete(sessionId);
-  try { fs.unlinkSync(path.join(BUFFERS_DIR, `${sessionId}.buf`)); } catch (_) {}
+  archiveBuffer(sessionId, 'closed', meta, latest);   // タブを閉じても、画面の記録は保管庫に残す
 });
 
 // ── Check if Claude Code CLI is installed ──
@@ -723,7 +726,7 @@ ipcMain.handle('load-buffer', async (_e, { sessionId }) => {
 // ── Clean up old buffer files after restore ──
 ipcMain.handle('cleanup-old-buffers', async (_e, { oldIds }) => {
   for (const id of oldIds) {
-    try { fs.unlinkSync(path.join(BUFFERS_DIR, `${id}.buf`)); } catch (_) {}
+    archiveBuffer(id, 'restart');     // 消さずに保管(会話 ID が無くても読み返せるように)
     savedBuffer.delete(id);
   }
   // 復元が終わった直後 = 生きているタブが確定した瞬間なので、ここで取りこぼしも掃除する。
@@ -1810,6 +1813,98 @@ function saveSessionsSync() {
   } catch (_) {}
 }
 
+// ── 画面の記録を消さずに保管する (2026-09-25) ────────────────────────
+// 本人: 「今開いているタブも過去のものも、再起動後に resume できるように」「会話 ID が無くても読み返せるように」
+// それまで .buf を 4 か所で消していた(タブを閉じる・エンジン切替・再起動後の掃除・外からの閉じる)。
+// Claude の会話は ~/.claude/projects に記録が残るので戻れるが、端末タブや ID の無い会話は読み返せなくなっていた。
+// → 消す代わりに buffers/archive/ へ移し、名前・場所・会話 ID を横に置く。左メニューの「過去の画面」から読む。
+// 容量の上限: 新しい順に 1500 件かつ 2GB まで残し、それより古いものから捨てる(自分で作った写しなので上限を置く)。
+const ARCHIVE_DIR = path.join(BUFFERS_DIR, 'archive');
+function sessionMetaFor(id) {
+  const live = sessions.get(id);
+  if (live) return { name: live.name, cwd: live.cwd, mode: live.mode, conversationId: live.conversationId || null };
+  for (const f of ['sessions.json', 'sessions.prev.json']) {
+    try {
+      const d = JSON.parse(fs.readFileSync(path.join(SESSIONS_DIR, f), 'utf-8'));
+      const rows = Array.isArray(d) ? d : (d.sessions || []);
+      const r = rows.find(x => x && x.id === id);
+      if (r) return { name: r.name, cwd: r.cwd, mode: r.mode, conversationId: r.conversationId || null };
+    } catch (_) { /* 次の表を見る */ }
+  }
+  return { name: '', cwd: '', mode: '', conversationId: null };
+}
+function archiveBuffer(id, why, meta, latest) {
+  const src = path.join(BUFFERS_DIR, `${id}.buf`);
+  // ディスクの .buf は 10 秒ごとにしか書かれない。手元に最新の中身があれば先に書く(閉じる直前の分を落とさない)
+  if (typeof latest === 'string' && latest) {
+    try { fs.mkdirSync(BUFFERS_DIR, { recursive: true }); fs.writeFileSync(src, latest, 'utf-8'); } catch (_) {}
+  }
+  try {
+    const st = fs.statSync(src);
+    if (!st.size) { fs.unlinkSync(src); return; }
+    fs.mkdirSync(ARCHIVE_DIR, { recursive: true });
+    const base = `${new Date().toISOString().replace(/[:.]/g, '-')}_${id}`;
+    fs.renameSync(src, path.join(ARCHIVE_DIR, `${base}.buf`));
+    const m = { id, ...(meta || sessionMetaFor(id)), why, bytes: st.size, lastWrite: st.mtime.toISOString(), archivedAt: new Date().toISOString() };
+    fs.writeFileSync(path.join(ARCHIVE_DIR, `${base}.json`), JSON.stringify(m, null, 2));
+  } catch (_) { /* 元が無ければ何もしない */ }
+}
+function pruneArchive() {
+  try {
+    const files = fs.readdirSync(ARCHIVE_DIR).filter(f => f.endsWith('.buf')).sort().reverse();
+    let total = 0;
+    files.forEach((f, i) => {
+      const p = path.join(ARCHIVE_DIR, f);
+      try { total += fs.statSync(p).size; } catch (_) {}
+      if (i >= 1500 || total > 2 * 1024 * 1024 * 1024) {
+        try { fs.unlinkSync(p); fs.unlinkSync(p.replace(/\.buf$/, '.json')); } catch (_) {}
+      }
+    });
+  } catch (_) {}
+}
+ipcMain.handle('buffer-archive-list', () => {
+  try {
+    return fs.readdirSync(ARCHIVE_DIR).filter(f => f.endsWith('.json')).sort().reverse().slice(0, 400).map(f => {
+      try { return { file: f.replace(/\.json$/, ''), ...JSON.parse(fs.readFileSync(path.join(ARCHIVE_DIR, f), 'utf-8')) }; }
+      catch (_) { return null; }
+    }).filter(Boolean);
+  } catch (_) { return []; }
+});
+// 過去のタブ(バックアップに残っている一覧)のうち、会話の記録がまだあって今は開いていないもの。
+// 本人「過去のものも含めて resume できるように」。バックアップは再起動のたびに sessions.backup.*.json に残っている
+ipcMain.handle('past-tabs', () => {
+  const open = new Set([...sessions.values()].map(x => x.conversationId).filter(Boolean));
+  const seen = new Map();
+  let files = [];
+  try { files = fs.readdirSync(SESSIONS_DIR).filter(f => /^sessions\.(backup\..+|prev|rescue.*)\.json$/.test(f)); } catch (_) {}
+  for (const f of files) {
+    let rows = [];
+    try { const d = JSON.parse(fs.readFileSync(path.join(SESSIONS_DIR, f), 'utf-8')); rows = Array.isArray(d) ? d : (d.sessions || []); } catch (_) { continue; }
+    for (const r of rows) {
+      const cid = r && r.conversationId;
+      if (!cid || open.has(cid)) continue;
+      const when = r.savedAt || r.createdAt || '';
+      const prev = seen.get(cid);
+      if (!prev || String(when) > String(prev.when)) seen.set(cid, { conversationId: cid, name: r.name || '', cwd: r.cwd || '', mode: r.mode || 'claude', when });
+    }
+  }
+  // Claude の会話は記録が残っているものだけ(戻れないものを並べない)
+  const projRoot = path.join(os.homedir(), '.claude', 'projects');
+  let dirs = [];
+  try { dirs = fs.readdirSync(projRoot); } catch (_) {}
+  const exists = (cid) => dirs.some(d => fs.existsSync(path.join(projRoot, d, `${cid}.jsonl`)));
+  return [...seen.values()].filter(x => x.mode !== 'claude' || exists(x.conversationId))
+    .sort((a, b) => String(b.when).localeCompare(String(a.when))).slice(0, 300);
+});
+
+ipcMain.handle('buffer-archive-read', (_e, { file }) => {
+  // ⚠️ 名前だけ受け取り、保管庫の外は読まない
+  const base = path.basename(String(file || ''));
+  if (!/^[\w.-]+$/.test(base)) return { ok: false, error: '名前が不正です' };
+  try { return { ok: true, text: fs.readFileSync(path.join(ARCHIVE_DIR, `${base}.buf`), 'utf-8') }; }
+  catch (_) { return { ok: false, error: '見つかりません' }; }
+});
+
 // どのタブからも参照されていない .buf を捨てる。
 // タブを閉じれば close-session が消すが、クラッシュや強制終了で復元前に落ちると
 // 消し損ねが残り続ける。実測で 497 件中 479 件(62MB)が到達不能なゴミだった。
@@ -1824,9 +1919,10 @@ function pruneOrphanBuffers() {
       if (!f.endsWith('.buf')) continue;
       if (keep.has(f.slice(0, -4))) continue;
       const p = path.join(BUFFERS_DIR, f);
-      try { bytes += fs.statSync(p).size; fs.unlinkSync(p); n++; } catch (_) {}
+      try { bytes += fs.statSync(p).size; archiveBuffer(f.slice(0, -4), 'orphan'); n++; } catch (_) {}
     }
-    if (n) console.log(`[buffers] 孤児 ${n} 件 (${(bytes / 1048576).toFixed(1)}MB) を削除`);
+    if (n) console.log(`[buffers] 孤児 ${n} 件 (${(bytes / 1048576).toFixed(1)}MB) を保管庫へ`);
+    pruneArchive();
   } catch (_) {}
 }
 ipcMain.handle('save-sessions', async () => {
@@ -2289,11 +2385,13 @@ function startControl() {
       },
 
       closeSession: async (id) => {
+        const meta = sessionMetaFor(id);
+        const latest = sessionBuffers.get(id);
         const s = sessions.get(id);
         if (s && s.pty) { try { s.pty.kill(); } catch (_) {} sessions.delete(id); }
         sessionBuffers.delete(id);
         savedBuffer.delete(id);
-        try { fs.unlinkSync(path.join(BUFFERS_DIR, `${id}.buf`)); } catch (_) {}
+        archiveBuffer(id, 'closed', meta, latest);
       },
 
       runWorker: async ({ engine, task, cwd, write, model, timeoutMs }) => {
