@@ -160,7 +160,7 @@ app.post('/transcribe', auth, upload.single('audio'), async (req, res) => {
 
 // ── Health check ──
 app.get('/', (_req, res) => {
-  res.json({ status: 'ok', service: 'koach-ai-hub-api', version: '1.0.0' });
+  res.json({ status: 'ok', service: 'ai-hub-api', version: '1.0.0' });
 });
 
 // ── List available providers and their status ──
@@ -381,7 +381,7 @@ async function streamGemini(res, apiKey, model, messages, system, temperature, m
 // ── Start ──
 if (require.main === module) {
   app.listen(PORT, () => {
-    console.log(`Koach AI Hub API running on port ${PORT}`);
+    console.log(`AI Hub API running on port ${PORT}`);
     const available = Object.entries(PROVIDERS)
       .filter(([, cfg]) => process.env[cfg.keyEnv])
       .map(([, cfg]) => cfg.name);

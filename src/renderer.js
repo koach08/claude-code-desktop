@@ -2399,7 +2399,7 @@ function renderChatMessages() {
   if (chatMessages.length === 0) {
     container.innerHTML = `
       <div class="chat-welcome">
-        <h2>Koach AI Hub</h2>
+        <h2>AI Hub</h2>
         <p>5つのAIエンジンを切り替えながら、何でも聞ける。コード、研究、子育て、大学事務、なんでも。</p>
         <div class="engine-pills">
           <span class="engine-pill">Claude</span>

@@ -1,7 +1,7 @@
 {
-  "name": "koach-ai-hub-api",
+  "name": "ai-hub-api",
   "version": "1.0.0",
-  "description": "Multi-engine AI API proxy for Koach AI Hub",
+  "description": "Multi-engine AI API proxy for AI Hub",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
