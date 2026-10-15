@@ -34,10 +34,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (saved && saved.length > 0) {
     const oldIds = [];
     const activeIdx = prefs.activeTabIndex || 0;
-    for (const s of saved) {
-      oldIds.push(s.id);
-      await restoreTab(s);
+    // 前回見ていたタブだけすぐ起こす。残りは開いた時点で起動する(メモリ節約、10/15)
+    // addTab は追加のたびに switchTab を呼ぶので、復元中は switchTab で起こさない
+    restoringTabs = true;
+    for (let i = 0; i < saved.length; i++) {
+      oldIds.push(saved[i].id);
+      await restoreTab(saved[i], i !== activeIdx);
     }
+    restoringTabs = false;
     const tabIds = [...tabs.keys()];
     if (tabIds.length > 0) {
       const idx = Math.min(activeIdx, tabIds.length - 1);
@@ -80,7 +84,8 @@ function saveTabState() {
 }
 
 // ── Restore a saved session ──
-async function restoreTab(savedSession) {
+let restoringTabs = false;
+async function restoreTab(savedSession, deferred = false) {
   try {
     const hasConvId = !!savedSession.conversationId;
     const session = await window.api.createSession({
@@ -89,6 +94,7 @@ async function restoreTab(savedSession) {
       name: savedSession.name,
       restoreFromId: savedSession.id,
       conversationId: savedSession.conversationId || null,
+      deferred,
     });
     // Don't replay old buffer — it creates confusing overlap with new session output.
     // Instead show a clean restore marker with context about what was restored.
@@ -97,6 +103,7 @@ async function restoreTab(savedSession) {
       cwd: savedSession.cwd || '~',
       conversationId: savedSession.conversationId || null,
       mode: savedSession.mode || 'claude',
+      sleeping: !!session.sleeping,
     };
     addTab(session, null, restoreInfo);
   } catch (err) {
@@ -1062,6 +1069,7 @@ function addTab(session, replayBuffer, restoreInfo) {
     term.write(`\x1b[36m┌─ セッション復元 ─────────────────────┐\x1b[0m\r\n`);
     term.write(`\x1b[36m│\x1b[0m 📂 ${shortCwd}\r\n`);
     term.write(`\x1b[36m│\x1b[0m ${convLabel}\r\n`);
+    if (restoreInfo.sleeping) term.write(`\x1b[36m│\x1b[0m \x1b[2mこのタブを開くと起動します\x1b[0m\r\n`);
     term.write(`\x1b[36m└──────────────────────────────────────┘\x1b[0m\r\n\r\n`);
   } else if (replayBuffer) {
     term.write(replayBuffer);
@@ -1133,6 +1141,7 @@ function addTab(session, replayBuffer, restoreInfo) {
 
 function switchTab(id) {
   activeId = id;
+  if (!restoringTabs) window.api.wakeSession(id);   // 眠っているタブなら起こす(起きていれば何もしない)
   activeWebId = null;
   webTabs.forEach((w) => { w.tabEl.classList.remove('active'); w.pane.classList.remove('active'); });
   tabs.forEach((t, tid) => {

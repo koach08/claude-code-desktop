@@ -438,7 +438,7 @@ function deriveSessionName(cwd, mode) {
   return project + suffix;
 }
 
-ipcMain.handle('create-session', async (_event, { cwd, name, mode, restoreFromId, conversationId, model }) => {
+ipcMain.handle('create-session', async (_event, { cwd, name, mode, restoreFromId, conversationId, model, deferred }) => {
   const id = `s_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
   const nodePty = getPty();
   const sessionCwd = cwd || os.homedir();
@@ -490,13 +490,18 @@ ipcMain.handle('create-session', async (_event, { cwd, name, mode, restoreFromId
     const k = readSecretKey('XAI_API_KEY');
     if (k) { spawnEnv.XAI_API_KEY = k; spawnEnv.GROK_API_KEY = k; }
   }
-  const ptyProcess = nodePty.spawn(cmd, args, {
+  const spawnOpts = {
     name: IS_WIN ? undefined : 'xterm-256color',
     cols: 120,
     rows: 30,
     cwd: sessionCwd,
     env: spawnEnv,
-  });
+  };
+  // ⚠️ 2026-10-15: 起動時の復元で全タブの claude を一斉に --resume していた。
+  //    33本で約9GB、メモリ18GBの Mac でスワップが満杯になり「時々遅い」の一因(本人)。
+  //    復元時に見ていないタブは眠らせておき、開いた・入力が来た時点で起こす。
+  //    sessions には載せるので台帳(sessions.json)からは消えず、会話も失われない。
+  const sleeping = !!(deferred && isRestore);
 
   // ⚠️ 再起動で復元した12本が全部「Claude Code」で、何のセッションか分からなかった(本人)。
   //    既定名のままなら、会話の最初の依頼から名前を付ける
@@ -507,7 +512,7 @@ ipcMain.handle('create-session', async (_event, { cwd, name, mode, restoreFromId
     if (t) tabName = t;
   }
   const sessionData = {
-    pty: ptyProcess,
+    pty: null,
     cwd: sessionCwd,
     name: tabName,
     mode: sessionMode,
@@ -517,6 +522,7 @@ ipcMain.handle('create-session', async (_event, { cwd, name, mode, restoreFromId
     // Claude Code は作業中スピナーを描き続けるので、動いている限り出力が途切れない。
     lastOutputAt: Date.now(),
     exited: false,
+    sleeping: true,   // 下の wake() で起こす(眠らせるタブは起こさない)
   };
   sessions.set(id, sessionData);
 
@@ -530,6 +536,7 @@ ipcMain.handle('create-session', async (_event, { cwd, name, mode, restoreFromId
   const sessionStartMs = Date.now();
   const detectConvId = makeConvIdDetector(id, sessionMode, sessionCwd, sessionStartMs, conversationId);
 
+  const attach = (ptyProcess) => {
   ptyProcess.onData((data) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send(`session-output-${id}`, data);
@@ -549,8 +556,32 @@ ipcMain.handle('create-session', async (_event, { cwd, name, mode, restoreFromId
       mainWindow.webContents.send(`session-exit-${id}`, { exitCode, signal });
     }
   });
+  };
 
-  return { id, name: sessionData.name, cwd: sessionData.cwd, mode: sessionMode, restored: isRestore, conversationId: sessionData.conversationId || null };
+  // 眠っているタブを起こす。起きていれば何もしない
+  let pendingSize = null;
+  sessionData.wake = () => {
+    if (!sessionData.sleeping) return sessionData.pty;
+    sessionData.sleeping = false;
+    const p = nodePty.spawn(cmd, args, spawnOpts);
+    attach(p);
+    sessionData.pty = p;
+    if (pendingSize) { try { p.resize(pendingSize[0], pendingSize[1]); } catch (_) {} }
+    return p;
+  };
+  if (sleeping) {
+    // 眠っている間の代役。書き込み(本人の入力・操作窓からの入力)が来たらその場で起こす。
+    // 既存の s.pty.write / resize / kill の呼び出し側はそのままで動く
+    sessionData.pty = {
+      write: (d) => sessionData.wake().write(d),
+      resize: (c, r) => { pendingSize = [c, r]; },
+      kill: () => {},
+    };
+  } else {
+    sessionData.wake();
+  }
+
+  return { id, name: sessionData.name, cwd: sessionData.cwd, mode: sessionMode, restored: isRestore, sleeping, conversationId: sessionData.conversationId || null };
 });
 
 // ── IPC: Switch mode (kills current, starts new) ──
@@ -652,6 +683,11 @@ ipcMain.handle('send-input', async (_e, { sessionId, input }) => {
   } catch (err) {
     return { ok: false, reason: err.message };
   }
+});
+
+ipcMain.handle('wake-session', async (_e, { sessionId }) => {
+  const s = sessions.get(sessionId);
+  if (s && s.wake) { try { s.wake(); } catch (_) {} }
 });
 
 ipcMain.handle('resize-terminal', async (_e, { sessionId, cols, rows }) => {
