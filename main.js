@@ -131,6 +131,9 @@ function createWindow() {
       // Web タブ(koach-os / claude.ai / chatgpt.com をこのアプリの中に出す)のため。
       // 本人の望みは「デスクトップアプリをいくつも開かない」(2026-09-11)
       webviewTag: true,
+      // 声のライブは 50ms ごとに音量を見る。窓が後ろに回ると間引かれて区切りが崩れるので、間引かせない
+      // (家事をしながら話すとき、Ariya は前面に無い)
+      backgroundThrottling: false,
     },
   });
   // ⚠️ webview は中身のサイトが動く別のレンダラ。preload も node も渡さない。
@@ -1170,6 +1173,43 @@ ipcMain.handle('realtime-token', async () => {
 
 ipcMain.handle('voice-transcribe', async (_e, { audioBuffer, mimeType }) =>
   voiceNet().transcribe(Buffer.from(audioBuffer), mimeType));
+
+// ── 本物の Alfred に話しかける (2026-10-15) ──
+// 本人「Ariya と連携させて、家事をしながら話せるように」。Ariya の声のライブの会話を koach-os の声の頭に渡す。
+// 合言葉は Mac が作業を取りに行くときと同じもの (~/.config/koach-bridge/relay.json の backend と relay_token)。
+ipcMain.handle('alfred-voice', async (_e, { text, context }) => {
+  let cfg;
+  try {
+    cfg = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.config', 'koach-bridge', 'relay.json'), 'utf-8'));
+  } catch (_) {
+    return { ok: false, error: 'Mac の橋の設定 (relay.json) がありません' };
+  }
+  if (!cfg.backend || !cfg.relay_token) return { ok: false, error: 'Mac の橋の設定が足りません' };
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 90000);
+  try {
+    const res = await fetch(`${String(cfg.backend).replace(/\/$/, '')}/api/bridge/alfred-voice`, {
+      method: 'POST', signal: ctl.signal,
+      headers: { Authorization: `Bearer ${cfg.relay_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: String(text || '').slice(0, 2000), context: String(context || '').slice(-4000) }),
+    });
+    if (!res.ok) return { ok: false, error: `koach-os ${res.status}` };
+    return await res.json();
+  } catch (e) {
+    return { ok: false, error: e.name === 'AbortError' ? '時間切れ' : e.message };
+  } finally {
+    clearTimeout(timer);
+  }
+});
+
+// ライブの間は Mac を眠らせない (画面は消えてよい)。切ったら戻す
+let voiceAwakeId = null;
+ipcMain.handle('voice-keepawake', async (_e, on) => {
+  const { powerSaveBlocker } = require('electron');
+  if (on && voiceAwakeId === null) voiceAwakeId = powerSaveBlocker.start('prevent-app-suspension');
+  if (!on && voiceAwakeId !== null) { try { powerSaveBlocker.stop(voiceAwakeId); } catch (_) {} voiceAwakeId = null; }
+  return { on: voiceAwakeId !== null };
+});
 
 ipcMain.handle('voice-reply', async (_e, { messages, context, provider, model, tools, steps }) =>
   voiceNet().reply(messages || [], { context, provider, model, tools, steps }));

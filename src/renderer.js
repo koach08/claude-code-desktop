@@ -3362,6 +3362,10 @@ async function setupVoiceChat() {
       return (r && r.audio) ? { audio: r.audio, mime: r.mime } : { error: (r && r.error) || 'tts' };
     },
 
+    // 本物の Alfred (koach-os) に聞く。合言葉は Mac の橋のもの (~/.config/koach-bridge/relay.json)
+    askAlfred: async (text, context) => window.api.alfredVoice({ text, context: context || '' }),
+    keepAwake: (on) => { try { window.api.voiceKeepAwake(!!on); } catch (_) {} },
+
     // ⚠️ engine は声で切り替わる。指定が無ければ速いモデルが既定 (重いと会話が途切れる)
     converse: async (messages, context, engine, extra) =>
       window.api.voiceReply({
@@ -3375,7 +3379,13 @@ async function setupVoiceChat() {
       }),
 
     // ⚠️ 渡すのは既に開いている Claude Code のタブ。改行を付けて実行させる
-    sendToTab: async (tabId, text) => { await window.api.sendInput(tabId, `${text}\r`); },
+    // ⚠️ 文と改行を一度に書くと、Claude Code は「貼り付け」と受け取り、改行が送信にならずに入力欄に残る
+    //    (10/15 本人「リターンキー俺が打たないといけないやつ」)。文を書いてから、少し置いて送信の改行を別に送る
+    sendToTab: async (tabId, text) => {
+      await window.api.sendInput(tabId, String(text).replace(/\r?\n/g, ' '));
+      await new Promise((r) => setTimeout(r, 350));
+      await window.api.sendInput(tabId, '\r');
+    },
 
     readTab: async (tabId) => {
       const r = await window.api.loadBuffer(tabId);
@@ -3549,7 +3559,12 @@ async function setupVoiceChat() {
       },
       switchTab: (id) => switchTab(id),
       closeTab: async (id) => { await closeTab(id); },
-      sendToTab: async (id, text) => { await window.api.sendInput(id, `${text}\r`); },
+      // ⚠️ 文と送信の改行は分けて送る (一度に書くと貼り付け扱いで送信されない)
+      sendToTab: async (id, text) => {
+        await window.api.sendInput(id, String(text).replace(/\r?\n/g, ' '));
+        await new Promise((r) => setTimeout(r, 350));
+        await window.api.sendInput(id, '\r');
+      },
       readTab: async (id) => {
         const r = await window.api.loadBuffer(id);
         const raw = (r && r.buffer) ? r.buffer : (typeof r === 'string' ? r : '');

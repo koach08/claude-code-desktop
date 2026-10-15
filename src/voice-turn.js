@@ -207,6 +207,18 @@ function chunksForSpeech(text) {
 const HANDOFF_RE = /【渡す】\s*([\s\S]*?)\s*(?:【ここまで】|$)/;
 const HANDOFF_TO_RE = /【渡す先】\s*([^\n【]+)/;
 
+// 聞き取りが日本語の短い返事を中国語・英語の字で返すことがある (10/15 本人の会話で 是・對・這是・So.)。
+// 短い返事だけを日本語に戻す。長い文は触らない (本当に中国語で話すこともありうる)
+const MISHEARD = {
+  '是': 'はい', '是的': 'はい', '對': 'はい', '对': 'はい', '對啊': 'はい', '对啊': 'はい', '好': 'はい', '好的': 'はい',
+  '這是': 'はい', '这是': 'はい', '嗯': 'うん', 'yes': 'はい', 'yeah': 'はい', 'so': 'そう', 'ok': 'オーケー', 'okay': 'オーケー',
+};
+function fixMisheard(text) {
+  const t = String(text || '').trim();
+  const k = t.replace(/[。．.、,!！?？\s]/g, '').toLowerCase();
+  return Object.prototype.hasOwnProperty.call(MISHEARD, k) ? MISHEARD[k] : t;
+}
+
 function splitHandoff(reply) {
   const r = String(reply || '');
   const m = r.match(HANDOFF_RE);
@@ -252,7 +264,7 @@ function claimsSent(text) { return CLAIMS_SENT.test(String(text || '')); }
 
 const API = {
   STATES, LABEL, nextState, canRecord, onMicPress, chunksForSpeech, MIN_CHUNK,
-  splitHandoff, claimsSent, makeWatch, WATCH_QUIET_MS, WATCH_MAX_MS, WATCH_POLL_MS,
+  splitHandoff, claimsSent, fixMisheard, makeWatch, WATCH_QUIET_MS, WATCH_MAX_MS, WATCH_POLL_MS,
   isPhantom, PHANTOM, MIN_SPEECH_SEC,
   makeSendGuard, DUP_WINDOW_MS,
   classify, checkTarget, forSending, SEND_TURNS,

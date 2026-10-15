@@ -51,6 +51,8 @@ contextBridge.exposeInMainWorld('api', {
   // 声のやり取り (直に叩く。遅い経路を通さない)
   voiceTranscribe: (opts) => ipcRenderer.invoke('voice-transcribe', opts),
   voiceReply: (opts) => ipcRenderer.invoke('voice-reply', opts),
+  alfredVoice: (opts) => ipcRenderer.invoke('alfred-voice', opts),
+  voiceKeepAwake: (on) => ipcRenderer.invoke('voice-keepawake', on),
   voiceTts: (opts) => ipcRenderer.invoke('voice-tts', opts),
   // 声のまま考えるモデル。⚠️ 返るのは数分で切れる一時鍵で、本物の鍵ではない
   realtimeToken: () => ipcRenderer.invoke('realtime-token'),

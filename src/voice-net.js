@@ -132,6 +132,8 @@ function create({ fetchImpl, getKey, hubUrl, hubSecret, getYomi }) {
         fd.append('file', new Blob([buf], { type: mime }), nameFor(mime));
         fd.append('model', 'gpt-4o-mini-transcribe');
         fd.append('language', 'ja');
+        // 短い返事 (はい・そう) が中国語の字で返るのを減らす。前置きは「日本語の会話」だと伝えるだけ
+        fd.append('prompt', '日本語の会話です。はい、そうです、お願いします。');
         const res = await f(`${OPENAI}/audio/transcriptions`, {
           method: 'POST', headers: { Authorization: `Bearer ${k}` }, body: fd,
         });

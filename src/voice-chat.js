@@ -39,7 +39,12 @@
 
   const HISTORY_KEY = 'ariya.voice.history';
   const MAX_KEEP = 200;          // 保存しておく往復の数
-  const BARGE_GAP_MS = 250;      // 読み上げを止めてから録りはじめるまでの間
+  const BARGE_GAP_MS = 250;
+  // 家事をしながら話すときは、黙っている時間が長い。ライブは 1 回の聞き取りで声が無くても切らず、
+  // 最後に声がしてからこれだけ経ったときに初めて切る (聞きっぱなしにしない)
+  const LIVE_IDLE_MAX_MS = 30 * 60 * 1000;
+  const FILLER_MS = 1500;          // Alfred の返事を待つ間、ここで一言かける
+  const FILLER2_MS = 15000;      // 読み上げを止めてから録りはじめるまでの間
   const PROGRESS_TAIL = 12;      // 進捗として読む行数
 
   function create(deps) {
@@ -47,6 +52,11 @@
       transcribe,        // async (blobArray, mimeType) => {text} | {error}
       tts,               // async (text) => {audio, mime} | {error}  … 良い声で読む
       converse,          // async (messages, context) => {ok, reply}
+      // 本物の Alfred (koach-os の声の頭: Claude・道具・記憶) に聞く。2026-10-15 本人「Ariya と連携させて家事をしながら話せるように」
+      // 声の相手を声で切り替えていないときは、会話はこちらに渡す。無ければ昔の converse
+      askAlfred,         // async (text, context) => {ok, spoken, tools} | {ok:false, error}
+      keepAwake,         // (on: boolean) => void … ライブの間 Mac を眠らせない
+      liveIdleMaxMs,     // 試験用。ライブを自分から切るまでの沈黙 (既定 30 分)
       sendToTab,         // async (tabId, text) => void   … 作業の引き渡し
       readTab,           // async (tabId) => string       … 進捗を読む
       listTabs,          // () => [{id, cwd, name, exited}]
@@ -82,6 +92,7 @@
     let player = null;         // mp3 を鳴らす Audio
     let speakToken = 0;        // 読み上げの世代。割り込んだら古いものを捨てる
     let speechStartedAt = 0;   // 話し始めた時刻。短すぎる音を送らないため
+    let lastVoiceAt = 0;       // ライブで最後に声がした時刻 (家事の合間の沈黙で切らないため)
     const vad = VD.createVad();
     const barge = VD.createBarge();
 
@@ -152,9 +163,13 @@
         const rms = level();
         if (state === 'recording') {
           const e = vad.feed(rms, Date.now());
-          if (e === 'speech') speechStartedAt = Date.now();
+          if (e === 'speech') { speechStartedAt = Date.now(); lastVoiceAt = speechStartedAt; }
           if (e === 'stop') stopRecording();
-          else if (e === 'timeout') {
+          else if (e === 'timeout' && liveMode && Date.now() - lastVoiceAt < (liveIdleMaxMs || LIVE_IDLE_MAX_MS)) {
+            // 家事の合間の沈黙。送らずに、マイクを開けたまま聞き直す (ライブは続ける)
+            cancelRecording();
+            listen().catch(() => { liveMode = false; });
+          } else if (e === 'timeout') {
             // 何も話さなかった。送らずに降りる。
             // ⚠️ 先に liveMode を下ろす。順番を逆にすると cancelRecording が
             //    「ライブ中だから開けておく」と判断し、マイクと見張りが
@@ -162,7 +177,10 @@
             const wasLive = liveMode;
             liveMode = false;
             cancelRecording();
-            if (wasLive && onNotice) onNotice('しばらく声が無かったので、いったん切りました。');
+            if (wasLive) {
+              try { if (keepAwake) keepAwake(false); } catch (_) {}
+              if (onNotice) onNotice('30 分声が無かったので、いったん切りました。');
+            }
           }
         } else if (state === 'speaking' && liveMode) {
           // ⚠️ 読み上げの回り込みで誤爆しないよう、はっきりした声だけ拾う
@@ -450,13 +468,15 @@
       const blob = new global.Blob(chunks, { type: recorder.mimeType });
       const buf = await blob.arrayBuffer();
       const r = await transcribe(Array.from(new Uint8Array(buf)), recorder.mimeType);
-      const text = (r && r.text ? String(r.text) : '').trim();
+      let text = (r && r.text ? String(r.text) : '').trim();
 
       if (!text) {
         setState(V.nextState('transcribing', 'fail'));
         if (onNotice) onNotice(r && r.error ? `聞き取れませんでした: ${r.error}` : '聞き取れませんでした。');
         return;
       }
+      // ⚠️ 日本語の「はい」「そう」が中国語・英語の文字で返ることがある (10/15 実測: 是・對・這是・So.)
+      text = V.fixMisheard(text);
       // ⚠️ 一瞬の音や無音を渡すと、聞き取りが「ご視聴ありがとうございました」のような
       //    定型を作り出す（実測）。話した長さが短いか、定型そのものなら捨てて聞き続ける。
       const spokeSec = speechStartedAt ? (Date.now() - speechStartedAt) / 1000 : 99;
@@ -494,7 +514,7 @@
         });
         if (cmd.kind !== 'talk') { await handleCommand(cmd); return; }
 
-        // 3) 会話。⚠️ 会話側のモデルに手は無い。せめて実物（開いているタブ）は渡す。
+        // 会話 (声で別のエンジンを指名したとき)。⚠️ 会話側のモデルに手は無い。せめて実物（開いているタブ）は渡す。
         //    渡さないと「確認してみます」とだけ言って何もしない返事になる（実測）。
         //    いま見ているタブは名前と直近の画面まで渡す。本人はそのタブの話をしている。
         let context = '';
@@ -516,6 +536,24 @@
           } catch (_) {}
         }
 
+        // 声の相手を切り替えていなければ、本物の Alfred (koach-os の声の頭: Claude・道具・記憶) に聞く。
+        // 2026-10-15 本人「Ariya と連携させて、家事をしながら話せるように」。
+        // タブへ渡すときは Alfred が【渡す】…【ここまで】で返し、下の 4) で本人に尋ねてから渡す (端末に入るのは runIntent だけ)
+        let reply = '';
+        if (askAlfred && !(engine && engine.provider)) {
+          // Alfred は予定やメールを確かめてから答えるので、20 秒以上かかることがある (10/15 実測 27 秒)。
+          // 黙って待たせない: 1.5 秒で「少々お待ちください」、長引けばもう一度だけ伝える (本人「考える時間は、ちょっと待ってと言ってくれればいい」)
+          let filling = Promise.resolve();
+          const say = (t) => { if (state === 'thinking') filling = filling.then(() => speak(t)).catch(() => {}); };
+          const f1 = setTimeout(() => say('少々お待ちください。'), FILLER_MS);
+          const f2 = setTimeout(() => say('まだ確かめています。'), FILLER2_MS);
+          let r;
+          try { r = await askAlfred(text, context); } finally { clearTimeout(f1); clearTimeout(f2); }
+          await filling;   // 言いかけの「お待ちください」を途中で切らない
+          reply = (r && r.ok && r.spoken) ? String(r.spoken)
+            : `Alfred に届きませんでした。${r && r.error ? String(r.error).slice(0, 60) : ''}`.trim();
+          if (r && Array.isArray(r.tools) && r.tools.length) push('tool', `Alfred: ${r.tools.join('、')}`);
+        } else {
         // 相手に手を持たせる。道具を呼んできたら回して、結果を返し、文になるまで続ける。
         // ⚠️ 端末に文字が入るのは runTool の send_to_tab だけで、そこは関門 (gate) を通る。
         const msgs = V.forSending(history);
@@ -541,11 +579,12 @@
           }
           steps.push({ assistant: res.assistant, results });
         }
-        let reply = (res && res.reply) ? String(res.reply)
+        reply = (res && res.reply) ? String(res.reply)
           : (steps.length ? '済みました。' : '返事が来ませんでした。');
         // ⚠️ 渡せていないのに「渡しました」と言わせない。関門で止まったなら、こちらで尋ね直す。
         if (!sendLog.sent && sendLog.blocked && V.claimsSent(reply)) {
           reply = `まだ渡していません。${sendLog.blocked.target || 'そのタブ'} に渡します。よろしいですか。`;
+        }
         }
         gate.assistantSaid(reply);
 
@@ -623,6 +662,8 @@
           return false;
         }
         liveMode = true;
+        lastVoiceAt = Date.now();
+        try { if (keepAwake) keepAwake(true); } catch (_) {}
         stopSpeaking();
         if (state !== 'idle') setState('idle');
         await listen();
@@ -631,6 +672,7 @@
 
       stopLive() {
         liveMode = false;
+        try { if (keepAwake) keepAwake(false); } catch (_) {}
         stopSpeaking();
         try { if (recorder && recorder.state === 'recording') { recorder.onstop = null; recorder.stop(); } } catch (_) {}
         recorder = null;

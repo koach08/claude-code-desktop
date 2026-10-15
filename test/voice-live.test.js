@@ -127,12 +127,72 @@ test('やめたらマイクは確かに閉じる', async () => {
   assert.strictEqual(vc.state, 'idle');
 });
 
-test('何も話さなければ、自分から降りる', async () => {
+test('家事の合間に黙っても切らない (1 回の聞き取りの上限を過ぎても聞き続ける)', async () => {
   const { vc, log } = make();
-  // 待つ上限を短くして試す
+  await vc.startLive();
+  mic = 0.001;
+  await wait(25400);
+  assert.strictEqual(vc.live, true, '25 秒の沈黙で切れている (家事の合間に切れる)');
+  assert.strictEqual(vc.state, 'recording');
+  assert.ok(!log.heard.some((n) => n.includes('声が無かった')));
+  vc.stopLive();
+});
+
+test('長く声が無ければ、自分から降りてマイクを閉じる', async () => {
+  const awake = [];
+  const { vc, log } = make({ liveIdleMaxMs: 1000, keepAwake: (on) => awake.push(on) });
   await vc.startLive();
   mic = 0.001;
   await wait(25400);
   assert.strictEqual(vc.live, false, '無言のまま聞き続けている');
   assert.ok(log.heard.some((n) => n.includes('声が無かった')));
+  assert.deepStrictEqual(awake, [true, false], 'Mac を眠らせない設定が戻っていない');
+});
+
+test('声の相手を切り替えていなければ、本物の Alfred に聞く', async () => {
+  const asked = [];
+  const { vc, log } = make({
+    askAlfred: async (text, context) => { asked.push({ text, context }); return { ok: true, spoken: 'かしこまりました。' }; },
+    converse: async () => { throw new Error('Ariya 独自の頭に聞いている'); },
+  });
+  log.next = '明日の予定を教えて';
+  await vc.startLive();
+  await utter(700, 1800);
+  await wait(300);
+  assert.strictEqual(asked.length, 1);
+  assert.strictEqual(asked[0].text, '明日の予定を教えて');
+  assert.match(asked[0].context, /AOZORA/, 'タブの様子を Alfred に渡していない');
+  assert.match(log.spoken[0], /かしこまりました/);
+  vc.stopLive();
+});
+
+test('Alfred が渡す作業を返したら、名前を出して尋ね、「はい」で渡す (Enter は要らない)', async () => {
+  const sent = [];
+  const { vc, log } = make({
+    askAlfred: async () => ({ ok: true, spoken: '承知しました。【渡す先】AOZORA\n【渡す】読み上げの速さを直してください【ここまで】' }),
+    sendToTab: async (id, task) => sent.push({ id, task }),
+  });
+  log.next = 'さっきの声の件、どうしようか';
+  await vc.startLive();
+  await utter(700, 1800);
+  await wait(400);
+  assert.strictEqual(sent.length, 0, '尋ねる前に渡している');
+  assert.match(log.spoken.join(' '), /よろしいですか/);
+  log.next = 'はい';
+  await utter(700, 1800);
+  await wait(400);
+  assert.deepStrictEqual(sent, [{ id: 'a', task: '読み上げの速さを直してください' }]);
+  vc.stopLive();
+});
+
+test('Alfred の返事が遅いときは「少々お待ちください」と言ってから答える', async () => {
+  const { vc, log } = make({
+    askAlfred: async () => { await wait(2500); return { ok: true, spoken: '明日は 9 時から会議です。' }; },
+  });
+  log.next = '明日の朝は何があったかな';
+  await vc.startLive();
+  await utter(700, 1800);
+  await wait(3200);
+  assert.deepStrictEqual(log.spoken.slice(0, 2), ['少々お待ちください。', '明日は 9 時から会議です。']);
+  vc.stopLive();
 });
