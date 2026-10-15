@@ -37,9 +37,11 @@
     },
     codex: {
       bin: 'codex',
+      // ⚠️ モデルは頼まれたときだけ渡す。決め打ちの gpt-5.5 は ChatGPT のアカウントの Codex では使えず
+      //    400 で止まっていた (10/15、Alfred から渡した作業)。指定が無ければ Codex がそのアカウントの既定を使う
       build: (task, opts) => [
         'exec', task,
-        '-m', opts.model || 'gpt-5.5',
+        ...(opts.model ? ['-m', opts.model] : []),
         '-C', opts.cwd,
         '--skip-git-repo-check',
         '-s', opts.write ? 'workspace-write' : 'read-only',

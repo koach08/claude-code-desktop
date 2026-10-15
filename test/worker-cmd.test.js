@@ -50,3 +50,8 @@ test('タスク文は引数として渡す(シェルを経由させない)', () 
 test('エンジン一覧', () => {
   assert.deepStrictEqual(listEngines().sort(), ['claude', 'codex', 'gemini', 'grok']);
 });
+
+test('Codex: モデルを頼まれていなければ -m を付けない (アカウントの既定に任せる)', () => {
+  assert.ok(!buildCommand('codex', 'x', { cwd: CWD }).args.includes('-m'));
+  assert.ok(buildCommand('codex', 'x', { cwd: CWD, model: 'gpt-6.1-sol' }).args.join(' ').includes('-m gpt-6.1-sol'));
+});
