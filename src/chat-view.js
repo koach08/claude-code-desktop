@@ -94,10 +94,11 @@
       return `<div class="msg-av" style="background:${esc(c.color)}" title="${esc(c.name)}">${esc(c.initial)}</div>`;
     }
 
-    function addUser(text, extra) {
+    function addUser(text, extra, attachments) {
       setEmpty(false);
       const row = el('div', 'msg user');
-      const bubble = el('div', 'bubble', esc(text).replace(/\n/g, '<br>') + (extra ? `<div class="msg-extra">${esc(extra)}</div>` : ''));
+      const chips = (attachments || []).map((a) => `<span class="att-chip" title="${esc(a.url || '')}">📎 ${esc(a.title || a.url || '資料')}</span>`).join('');
+      const bubble = el('div', 'bubble', esc(text).replace(/\n/g, '<br>') + (extra ? `<div class="msg-extra">${esc(extra)}</div>` : '') + (chips ? `<div class="msg-atts">${chips}</div>` : ''));
       row.appendChild(bubble);
       list.appendChild(row);
       stick(true);
@@ -194,7 +195,7 @@
     function handle(ev, live = true) {
       switch (ev.kind) {
         case 'user-text':
-          addUser(ev.text, ev.images ? `画像 ${ev.images} 枚` : '');
+          addUser(ev.text, ev.images ? `画像 ${ev.images} 枚` : '', ev.attachments);
           if (live) setBusy(true);
           break;
         case 'message-start':

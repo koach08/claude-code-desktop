@@ -1652,3 +1652,73 @@ body[data-ui="agent"] .pane.chat .pane-header { display: flex; }
 
 /* 会話タブでは、端末向けの右欄(/help などのコマンド一覧)は出さない */
 body[data-tabkind="chat"] #sidebar, body[data-tabkind="web"] #sidebar { display: none !important; }
+
+/* ── 取り込み・情報ノート・添付 (2026-11-03) ── */
+.web-bar button.wb-text { padding: 0 8px; color: var(--fg); background: var(--bg1); }
+.web-bar button.wb-text:hover { border-color: #b9bdf0; color: var(--accent2); }
+
+#chat-library { position: relative; }
+.lib-badge:not(:empty) { margin-left: 4px; background: var(--red); color: #fff; border-radius: 999px; font-size: 10px; padding: 0 5px; }
+
+#chat-attach { display: none; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+body[data-tabkind="chat"] #chat-attach.on { display: flex; }
+.att-chip { display: inline-flex; align-items: center; gap: 4px; max-width: 360px; font-size: 12px; background: #f0f2ff; border: 1px solid #d5d9fb; color: var(--accent2); border-radius: 8px; padding: 3px 4px 3px 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.att-chip small { color: var(--fg2); }
+.att-chip button { border: none; background: none; color: var(--fg2); cursor: pointer; font-size: 11px; padding: 0 4px; }
+.att-chip button:hover { color: var(--red); }
+.att-hint { font-size: 12px; border: 1px dashed #b9bdf0; background: var(--bg1); color: var(--accent2); border-radius: 8px; padding: 3px 10px; cursor: pointer; font-family: inherit; }
+.att-hint:hover { background: #f0f2ff; }
+.msg-atts { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px; }
+.msg.user .msg-atts .att-chip { background: rgba(255,255,255,.6); padding-right: 8px; }
+
+#lib-panel { position: fixed; top: 0; right: 0; bottom: 0; width: min(520px, 100vw); z-index: 900; background: var(--bg1); border-left: 1px solid var(--border); box-shadow: -12px 0 32px rgba(0,0,0,.08); display: flex; flex-direction: column; font-size: 13px; color: var(--fg); }
+#lib-panel.hidden { display: none; }
+.lib-head { display: flex; align-items: center; gap: 8px; padding: 14px 14px 10px 16px; border-bottom: 1px solid var(--border); -webkit-app-region: no-drag; }
+.lib-head strong { font-size: 15px; }
+.lib-sub { color: var(--fg2); font-size: 12px; }
+#lib-panel button { font-family: inherit; font-size: 12px; border: 1px solid var(--border); background: var(--bg1); color: var(--fg); border-radius: 8px; padding: 4px 10px; cursor: pointer; }
+#lib-panel button:hover { background: var(--bg2); }
+#lib-panel button.lib-primary { background: #1f1f1f; color: #fff; border-color: #1f1f1f; }
+#lib-panel button.lib-primary:hover { background: #000; }
+#lib-panel button:disabled { opacity: .5; cursor: default; }
+.lib-body { flex: 1; overflow-y: auto; padding: 12px 16px 24px; display: flex; flex-direction: column; gap: 14px; }
+.lib-body section.hidden { display: none; }
+.lib-ingest { display: flex; flex-direction: column; gap: 8px; background: var(--bg2); border: 1px solid var(--border); border-radius: 12px; padding: 12px; }
+#lib-panel input[type="text"], #lib-panel input[type="password"], #lib-panel input[type="search"], #lib-panel select { font-family: inherit; font-size: 13px; border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px; background: var(--bg1); color: var(--fg); min-width: 0; }
+#lib-panel select { font-size: 12px; padding: 5px 8px; }
+.lib-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.lib-row input[type="search"] { flex: 1; }
+.lib-watch { font-size: 12px; color: var(--fg2); display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+.lib-jobs { display: flex; flex-direction: column; gap: 4px; }
+.lib-jobs:empty { display: none; }
+.lib-job { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--fg2); }
+.lib-job .lj-text { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lib-job .lj-bar { width: 60px; height: 4px; background: var(--bg3); border-radius: 2px; overflow: hidden; }
+.lib-job .lj-bar i { display: block; height: 100%; width: 8%; background: var(--accent); transition: width .3s; }
+.lib-job.ok { color: var(--green); } .lib-job.ok .lj-bar i { background: var(--green); }
+.lib-job.err { color: var(--red); } .lib-job.warn { color: var(--yellow); }
+.lib-job .lj-stop { padding: 1px 8px !important; font-size: 11px !important; }
+.lib-h { font-weight: 600; font-size: 12px; color: var(--fg2); display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.lib-wrow { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 12.5px; }
+.lib-wrow label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.lib-wrow small { color: var(--fg2); font-size: 11px; }
+.lib-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.lib-item { border: 1px solid var(--border); border-radius: 10px; padding: 9px 11px; cursor: pointer; }
+.lib-item:hover { border-color: #b9bdf0; background: #fafaff; }
+.li-title { font-weight: 600; font-size: 13px; line-height: 1.4; }
+.li-meta { font-size: 11px; color: var(--fg2); margin-top: 2px; }
+.li-sum { font-size: 12px; margin-top: 4px; color: var(--fg); line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.li-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+.li-tags span { font-size: 10.5px; background: var(--bg2); border-radius: 999px; padding: 1px 7px; color: var(--fg2); }
+.lib-empty { color: var(--fg2); font-size: 12.5px; line-height: 1.7; padding: 16px 4px; }
+.lib-empty small { font-family: ui-monospace, Menlo, monospace; font-size: 11px; }
+.ld-bar { position: sticky; top: -12px; background: var(--bg1); padding: 6px 0; z-index: 1; }
+.ld-md { font-size: 13.5px; }
+
+/* 動画の中身(場面の画像) */
+#lib-panel .lib-gkey input { flex: 1; min-width: 0; }
+#lib-panel .ld-frames { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 6px; margin: 4px 0 12px; }
+#lib-panel .ld-frames figure { margin: 0; cursor: pointer; border-radius: 6px; overflow: hidden; border: 1px solid rgba(0, 0, 0, 0.08); background: #f4f4f5; }
+#lib-panel .ld-frames figure:hover { outline: 2px solid #6b8afd; }
+#lib-panel .ld-frames img { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; }
+#lib-panel .ld-frames figcaption { font-size: 11px; color: #555; padding: 2px 6px; font-variant-numeric: tabular-nums; }

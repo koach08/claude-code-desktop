@@ -16,6 +16,7 @@
 // electron に依存させないのは、ここの壊れ方をテストで押さえるため(worker-run.js と同じ理由)。
 
 const { spawn } = require('child_process');
+const { splitAttachments } = require('./chat-presets');
 
 const KILL_GRACE_MS = 3000;
 
@@ -211,6 +212,8 @@ function createClaudeSession(opts, handlers = {}) {
 // ツールの結果として差し込まれた user 行と、本人の発言を分けて出す。
 function transcriptFromJsonl(text, limit = 400) {
   const out = [];
+  // 添付資料(長い字幕・本文)は吹き出しに出さず、資料名だけにする
+  const userText = (t) => { const p = splitAttachments(t); return { kind: 'user-text', text: p.text, attachments: p.attachments }; };
   for (const line of String(text || '').split('\n')) {
     if (!line.trim()) continue;
     let m;
@@ -219,12 +222,12 @@ function transcriptFromJsonl(text, limit = 400) {
     if (m.type === 'user' && m.message) {
       const c = m.message.content;
       if (typeof c === 'string') {
-        if (!c.startsWith('<')) out.push({ kind: 'user-text', text: c });
+        if (!c.startsWith('<')) out.push(userText(c));
         continue;
       }
       if (Array.isArray(c) && c.some((b) => b.type === 'text') && !c.some((b) => b.type === 'tool_result')) {
         const t = c.filter((b) => b.type === 'text').map((b) => b.text).join('\n');
-        if (t && !t.startsWith('<')) out.push({ kind: 'user-text', text: t });
+        if (t && !t.startsWith('<')) out.push(userText(t));
         continue;
       }
     }

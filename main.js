@@ -510,7 +510,7 @@ function createChatSession(id, { cwd, name, conversationId, chat, deferred }) {
       env,
       model: sessionData.chatOpts.model,
       resume: sessionData.conversationId || undefined,
-      appendSystemPrompt: chatPresets.systemPromptFor(sessionData.chatOpts, loadExtraCharacters()),
+      appendSystemPrompt: chatPresets.systemPromptFor({ ...sessionData.chatOpts, libraryDir: LIBRARY_DIR }, loadExtraCharacters()),
     }, {
       onEvent: (ev) => {
         sessionData.lastOutputAt = Date.now();
@@ -540,17 +540,19 @@ function createChatSession(id, { cwd, name, conversationId, chat, deferred }) {
     return agent;
   };
 
-  const submit = (text, images) => {
-    const t = String(text || '').trim();
+  const submit = (text, images, attachments) => {
+    let t = String(text || '').trim();
+    const atts = (attachments || []).filter((x) => x && x.text);
+    if (!t && atts.length) t = '添付した資料を読んで、要点と使えそうな点を教えてください。';
     if (!t && !(images && images.length)) return false;
     const a = start();
     // 最初の発言で名前を付ける(画面側と同じ規則。台帳・左メニュー・Alfred の /tabs に効かせる)
     if (sessionData.name === '新しい会話') sessionData.name = t.replace(/\s+/g, ' ').slice(0, 28);
     sessionData.busy = true;
     sessionData.lastOutputAt = Date.now();
-    appendBuf(`\n› ${t}\n`);
-    send(`chat-event-${id}`, { kind: 'user-text', text: t, images: (images || []).length });
-    return a.send(t, images);
+    appendBuf(`\n› ${t}${atts.length ? ` [添付 ${atts.length} 件]` : ''}\n`);
+    send(`chat-event-${id}`, { kind: 'user-text', text: t, images: (images || []).length, attachments: atts.map((x) => ({ title: x.title, url: x.url })) });
+    return a.send(chatPresets.composeWithAttachments(t, atts), images);
   };
 
   sessionData.chat = {
@@ -600,10 +602,10 @@ function createChatSession(id, { cwd, name, conversationId, chat, deferred }) {
   return { id, name: sessionData.name, cwd, mode: 'chat', chat: opts, restored: !!conversationId, sleeping: true, conversationId: sessionData.conversationId };
 }
 
-ipcMain.handle('chat-send', async (_e, { sessionId, text, images }) => {
+ipcMain.handle('chat-send', async (_e, { sessionId, text, images, attachments }) => {
   const s = sessions.get(sessionId);
   if (!s || !s.chat) return { ok: false, reason: 'no-session' };
-  return { ok: !!s.chat.submit(text, images) };
+  return { ok: !!s.chat.submit(text, images, attachments) };
 });
 ipcMain.handle('chat-interrupt', async (_e, { sessionId }) => {
   const s = sessions.get(sessionId);
@@ -644,6 +646,285 @@ ipcMain.handle('chat-transcript', async (_e, { conversationId, cwd }) => {
     return transcriptFromJsonl(text);
   } catch (_) { return []; }
 });
+
+// ── 取り込み・情報ノート (2026-11-03) ───────────────────────────────
+// YouTube(動画・チャンネル・再生リスト)と Web ページを URL だけで取り込み、道具なしの claude で
+// 「アプリ開発・研究・販売に使える形」に読み解いて、情報ノート(普通のフォルダ)に1件1ファイルで置く。
+// 本人がコピペでチャットに貼っていた手間をなくすため。会話タブにはそのまま添付もできる。
+const sourceFetch = require('./src/source-fetch');
+const sourceAnalyze = require('./src/source-analyze');
+const library = require('./src/source-library');
+const LIBRARY_DIR = ISOLATED_DATA ? path.join(SESSIONS_DIR, 'notes') : path.join(os.homedir(), 'Documents', 'Ariya情報ノート');
+const libJobs = new Map();   // jobId → { cancelled }
+
+function ytdlpBin() {
+  for (const p of ['/opt/homebrew/bin/yt-dlp', '/usr/local/bin/yt-dlp', path.join(os.homedir(), '.local', 'bin', 'yt-dlp')]) {
+    if (fs.existsSync(p)) return p;
+  }
+  return 'yt-dlp';
+}
+function fetchOpts() { return { ytdlp: ytdlpBin(), env: { ...shellEnv } }; }
+function claudeRunOpts(model) {
+  return { bin: IS_WIN ? 'claude.cmd' : 'claude', env: { ...shellEnv }, cwd: os.tmpdir(), model: CLAUDE_MODEL_ALLOW.has(String(model || '')) ? model : 'sonnet' };
+}
+function libSend(payload) {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('lib-progress', payload);
+}
+
+// ── 動画の中身(映像・音声)を読む ──
+// video: 'gemini' = Gemini が動画そのものを見る / 'frames' = 場面の画像を Claude が見る / 'off' = 字幕だけ
+// 字幕が無い動画は、どれでも手元の whisper.cpp で書き起こす(Gemini は音声も聞くので不要)
+const videoLook = require('./src/video-look');
+const ARIYA_ENV = path.join(os.homedir(), '.config', 'ariya', '.env');
+// Gemini の鍵: 環境変数か、このアプリ専用の .env だけ(画面には返さない。ほかの道具の鍵は使い回さない)
+function geminiKey() {
+  const fromEnv = shellEnv.GEMINI_API_KEY || process.env.GEMINI_API_KEY;
+  if (fromEnv) return String(fromEnv).trim();
+  try {
+    const m = /^GEMINI_API_KEY\s*=\s*"?([^"\n]+?)"?\s*$/m.exec(fs.readFileSync(ARIYA_ENV, 'utf-8'));
+    return m ? m[1].trim() : '';
+  } catch (_) { return ''; }
+}
+function videoModeOf(v) { return ['gemini', 'frames', 'off'].includes(v) ? v : (geminiKey() ? 'gemini' : 'frames'); }
+
+// 1件: 取る → (動画なら中身も見る) → 読み解く → 置く
+async function ingestOne(url, { lens, focus, model, video }, job, say = () => {}) {
+  const src = await sourceFetch.fetchSource(url, fetchOpts());
+  if (job && job.cancelled) throw new Error('止めました');
+  if (src.kind !== 'yt-video') {
+    const body = sourceFetch.sourceBody(src);
+    const a = await sourceAnalyze.analyzeSource(body, { lens, focus, ...claudeRunOpts(model) });
+    return library.saveNote(LIBRARY_DIR, {
+      src, title: src.title || url, url: src.url || url, kind: src.kind,
+      analysis: a.text, raw: body, lens, focus, costUsd: a.costUsd,
+      summary: sourceAnalyze.summaryOf(a.text), tags: sourceAnalyze.tagsOf(a.text),
+    });
+  }
+  let mode = videoModeOf(video);
+  const notes = [];
+  let a = null;
+  if (mode === 'gemini') {
+    const key = geminiKey();
+    if (!key) { notes.push('Gemini の鍵が無いので、場面の画像を Claude が見ました'); mode = 'frames'; } else {
+      say('Gemini が動画を見ています…(長い動画は数分)');
+      try {
+        a = await sourceAnalyze.analyzeWithGemini(sourceFetch.sourceBody(src), { lens, focus, videoUrl: src.url, apiKey: key, model: process.env.ARIYA_GEMINI_MODEL, lowRes: (src.duration || 0) > 1200 });
+      } catch (err) {
+        say(`Gemini で読めませんでした(${err.message})。場面の画像で読みます`, 'warn');
+        notes.push(`Gemini で読めなかったため場面の画像で分析(${err.message})`);
+        mode = 'frames';
+      }
+    }
+  }
+  if (job && job.cancelled) throw new Error('止めました');
+  const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ariya-video-'));
+  try {
+    let look = { frames: [], transcript: '', notes: [] };
+    // Gemini が読めたなら落とさない。それ以外は、映像(frames)か、字幕が無いときの書き起こし
+    if (!a && (mode === 'frames' || !src.transcript)) {
+      try {
+        look = await videoLook.lookIntoVideo(src, { frames: mode === 'frames', ytdlp: ytdlpBin(), env: { ...shellEnv }, workDir, say });
+      } catch (err) { look.notes.push(`映像・音声を取れませんでした(${err.message})`); }
+    }
+    if (job && job.cancelled) throw new Error('止めました');
+    if (look.transcript) { src.transcript = look.transcript; src.transcribed = true; }
+    notes.push(...look.notes);
+    if (notes.length) src.note = [src.note, ...notes].filter(Boolean).join(' / ');
+    const body = sourceFetch.sourceBody(src) + (notes.length && src.transcript ? `\n\n(取り込みの注意: ${notes.join(' / ')})` : '');
+    if (!a) {
+      const images = look.frames.map((f) => ({ label: f.label, data: fs.readFileSync(f.path).toString('base64') }));
+      if (images.length) say(`${images.length} 枚の場面と字幕を読み解いています…`);
+      a = await sourceAnalyze.analyzeSource(body, { lens, focus, images, ...claudeRunOpts(model) });
+    }
+    const how = a.model ? `gemini(${a.model})` : look.frames.length ? `frames(${look.frames.length})` : 'text';
+    return library.saveNote(LIBRARY_DIR, {
+      src, title: src.title || url, url: src.url || url, kind: src.kind,
+      analysis: a.text, raw: body, lens, focus, costUsd: a.costUsd,
+      summary: sourceAnalyze.summaryOf(a.text), tags: sourceAnalyze.tagsOf(a.text),
+      frames: look.frames, extra: { video: how, transcribed: !!src.transcribed },
+    });
+  } finally {
+    try { fs.rmSync(workDir, { recursive: true, force: true }); } catch (_) {}
+  }
+}
+
+// チャンネル・再生リスト: 新しい順に count 本。取り込み済みは飛ばし、最後に「まとめ」を1枚
+async function ingestList(url, { lens, focus, model, count, watch, video }, job, say) {
+  const list = await sourceFetch.listYoutubeVideos(url, count || 5, fetchOpts());
+  say({ stage: 'list', text: `${list.title}: ${list.videos.length} 本を読みます`, total: list.videos.length, done: 0 });
+  const made = [];
+  let i = 0;
+  for (const v of list.videos) {
+    if (job.cancelled) break;
+    i += 1;
+    const had = library.findByUrl(LIBRARY_DIR, v.url);
+    if (had) { made.push(had); say({ stage: 'skip', text: `取り込み済み: ${v.title}`, done: i, total: list.videos.length }); continue; }
+    say({ stage: 'item', text: `読んでいます: ${v.title}`, done: i - 1, total: list.videos.length });
+    try {
+      const e = await ingestOne(v.url, { lens, focus, model, video }, job, (text, stage) => say({ stage: stage || 'item', text: `${v.title}: ${text}`, done: i - 1, total: list.videos.length }));
+      made.push(e);
+      say({ stage: 'saved', text: `保存: ${e.title}`, entry: e, done: i, total: list.videos.length });
+    } catch (err) {
+      say({ stage: 'warn', text: `読めませんでした: ${v.title}(${err.message})`, done: i, total: list.videos.length });
+    }
+  }
+  if (watch) {
+    library.upsertWatch(LIBRARY_DIR, { url, title: list.title, lens, focus: focus || '', model: model || 'sonnet', video: video || '', seen: list.videos.map((v) => v.id), checkedAt: new Date().toISOString() });
+  }
+  if (made.length >= 2 && !job.cancelled) {
+    say({ stage: 'item', text: 'まとめを書いています…', done: i, total: list.videos.length });
+    const notes = made.map((m) => { const r = library.readNote(LIBRARY_DIR, m.id); return { title: m.title, analysis: r ? r.markdown : m.summary }; });
+    const s = await sourceAnalyze.synthesize({ title: list.title, notes, lens, focus }, claudeRunOpts(model));
+    const digest = library.saveNote(LIBRARY_DIR, {
+      title: `まとめ: ${list.title}(${made.length}本)`, url, kind: 'digest', analysis: s.text + '\n\n## 元にしたメモ\n' + made.map((m) => `- [${m.title}](${encodeURI(m.file)})`).join('\n'),
+      lens, focus, costUsd: s.costUsd, summary: sourceAnalyze.summaryOf(s.text), tags: sourceAnalyze.tagsOf(s.text),
+      src: { channel: list.title },
+    });
+    say({ stage: 'saved', text: `保存: ${digest.title}`, entry: digest });
+    return digest;
+  }
+  return made[0] || null;
+}
+
+ipcMain.handle('lib-ingest', async (_e, { url, lens, focus, model, count, watch, force, video }) => {
+  const c = sourceFetch.classifyUrl(url);
+  if (c.kind === 'invalid') return { ok: false, error: 'URL として読めません(https://… を入れてください)' };
+  const jobId = `j_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+  const job = { cancelled: false };
+  libJobs.set(jobId, job);
+  const say = (p) => libSend({ jobId, url: c.url, ...p });
+  (async () => {
+    try {
+      say({ stage: 'start', text: c.kind === 'web' ? 'ページを読んでいます…' : c.kind === 'yt-video' ? '字幕を取っています…' : '一覧を取っています…' });
+      let entry;
+      if (c.kind === 'yt-channel' || c.kind === 'yt-playlist') {
+        entry = await ingestList(c.url, { lens, focus, model, count, video, watch: !!watch && c.kind === 'yt-channel' }, job, say);
+      } else {
+        const had = !force && library.findByUrl(LIBRARY_DIR, c.url);
+        entry = had || await ingestOne(c.url, { lens, focus, model, video }, job, (text, stage) => say({ stage: stage || 'item', text }));
+        if (had) say({ stage: 'skip', text: '取り込み済みのノートを開きます' });
+      }
+      say({ stage: 'done', text: job.cancelled ? '止めました' : '終わりました', entry, cancelled: job.cancelled });
+    } catch (err) {
+      say({ stage: 'error', text: err.message || String(err) });
+    } finally { libJobs.delete(jobId); }
+  })();
+  return { ok: true, jobId, kind: c.kind };
+});
+ipcMain.handle('lib-cancel', (_e, { jobId }) => { const j = libJobs.get(jobId); if (j) j.cancelled = true; return { ok: !!j }; });
+ipcMain.handle('lib-list', (_e, { q } = {}) => { library.ensureDir(LIBRARY_DIR); return { dir: LIBRARY_DIR, notes: library.listNotes(LIBRARY_DIR, { q }), watches: library.loadWatches(LIBRARY_DIR) }; });
+// 場面の画像は小さいので data URL で渡す(画面から棚のファイルを直接読ませない)
+ipcMain.handle('lib-read', (_e, { id }) => {
+  const r = library.readNote(LIBRARY_DIR, id);
+  if (!r) return null;
+  const frames = [];
+  if (r.framesDir) {
+    for (const f of fs.readdirSync(r.framesDir).filter((x) => /^\d+_\d+\.jpg$/.test(x)).sort().slice(0, 40)) {
+      const m = /^\d+_(\d+)\.jpg$/.exec(f)[1];
+      const label = m.length > 4 ? `${m.slice(0, -4)}:${m.slice(-4, -2)}:${m.slice(-2)}` : `${m.slice(0, -2)}:${m.slice(-2)}`;
+      try { frames.push({ label, src: 'data:image/jpeg;base64,' + fs.readFileSync(path.join(r.framesDir, f)).toString('base64') }); } catch (_) {}
+    }
+  }
+  const { framesDir, ...rest } = r;
+  return { ...rest, frames };
+});
+// 何で動画を読めるか(鍵そのものは返さない)
+ipcMain.handle('lib-caps', () => {
+  const t = videoLook.tools();
+  return { gemini: !!geminiKey(), ffmpeg: !!t.ffmpeg, whisper: !!(t.whisper && t.whisperModel), envPath: ARIYA_ENV };
+});
+// 本人が画面で貼った Gemini の鍵を、このアプリ専用の .env に置く(本人だけ読める 0600)
+ipcMain.handle('lib-set-gemini-key', (_e, { key }) => {
+  const k = String(key || '').trim();
+  if (!/^[A-Za-z0-9_\-]{20,200}$/.test(k)) return { ok: false, error: '鍵の形ではありません' };
+  fs.mkdirSync(path.dirname(ARIYA_ENV), { recursive: true, mode: 0o700 });
+  let rest = '';
+  try { rest = fs.readFileSync(ARIYA_ENV, 'utf-8').split('\n').filter((l) => l && !/^GEMINI_API_KEY\s*=/.test(l)).join('\n'); } catch (_) {}
+  fs.writeFileSync(ARIYA_ENV, `${rest ? rest + '\n' : ''}GEMINI_API_KEY=${k}\n`, { mode: 0o600 });
+  fs.chmodSync(ARIYA_ENV, 0o600);
+  return { ok: true };
+});
+ipcMain.handle('lib-reveal', (_e, { id }) => {
+  const r = id ? library.readNote(LIBRARY_DIR, id) : null;
+  if (r) shell.showItemInFolder(r.path); else { library.ensureDir(LIBRARY_DIR); shell.openPath(LIBRARY_DIR); }
+  return { ok: true };
+});
+// 消すのはゴミ箱へ(戻せる)。元データも一緒に
+ipcMain.handle('lib-trash', async (_e, { id }) => {
+  const r = library.readNote(LIBRARY_DIR, id);
+  if (!r) return { ok: false };
+  await shell.trashItem(r.path);
+  if (r.rawPath) { try { await shell.trashItem(r.rawPath); } catch (_) {} }
+  if (r.framesDir) { try { await shell.trashItem(r.framesDir); } catch (_) {} }
+  library.removeFromIndex(LIBRARY_DIR, r.id);
+  return { ok: true };
+});
+ipcMain.handle('lib-unwatch', (_e, { url }) => { library.removeWatch(LIBRARY_DIR, url); return { ok: true }; });
+ipcMain.handle('lib-watch-toggle', (_e, { url, auto }) => { library.upsertWatch(LIBRARY_DIR, { url, auto: !!auto }); return { ok: true }; });
+ipcMain.handle('lib-check-now', async () => checkWatches({ manual: true }));
+
+// 分析せず中身だけ取る(会話に添付するため)。YouTube は字幕、ページは本文
+ipcMain.handle('lib-fetch-raw', async (_e, { url }) => {
+  try {
+    const src = await sourceFetch.fetchSource(url, fetchOpts());
+    return { ok: true, title: src.title || url, url: src.url || url, kind: src.kind, text: sourceFetch.sourceBody(src) };
+  } catch (err) { return { ok: false, error: err.message }; }
+});
+// Web タブで今見ているページの本文(ログイン後・JS で描くページも、そのままの姿で)
+ipcMain.handle('web-tab-extract', async (_e, { wid }) => {
+  const wc = webContentsOf(wid);
+  if (!wc) return { ok: false, error: 'このタブはまだ読み込まれていません' };
+  try {
+    const r = await wc.executeJavaScript(sourceFetch.PAGE_EXTRACT_SCRIPT, true);
+    return { ...r, ok: true };   // ページの結果に ok は無い。後ろに置いて必ず true
+  } catch (err) { return { ok: false, error: err.message }; }
+});
+// 今見ているページを分析してノートに(ログインが要るページでも取れるよう、本文は画面から)
+ipcMain.handle('lib-ingest-text', async (_e, { title, url, text, lens, focus, model }) => {
+  const jobId = `j_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+  const say = (p) => libSend({ jobId, url, ...p });
+  (async () => {
+    try {
+      say({ stage: 'start', text: 'このページを読み解いています…' });
+      const body = [`ページ: ${title || url}`, `URL: ${url}`, String(text || '').slice(0, sourceFetch.MAX_TEXT)].join('\n\n');
+      const a = await sourceAnalyze.analyzeSource(body, { lens, focus, ...claudeRunOpts(model) });
+      const entry = library.saveNote(LIBRARY_DIR, { title: title || url, url, kind: 'web', analysis: a.text, raw: body, lens, focus, costUsd: a.costUsd, summary: sourceAnalyze.summaryOf(a.text), tags: sourceAnalyze.tagsOf(a.text) });
+      say({ stage: 'done', text: '終わりました', entry });
+    } catch (err) { say({ stage: 'error', text: err.message || String(err) }); }
+  })();
+  return { ok: true, jobId };
+});
+
+// 見張るチャンネルの新着。起動 2 分後と 6 時間ごと。1回で 1 チャンネル 3 本まで(勝手に使うお金に上限)
+let watchBusy = false;
+async function checkWatches({ manual } = {}) {
+  if (watchBusy) return { ok: false, error: '確認中です' };
+  watchBusy = true;
+  let added = 0;
+  try {
+    for (const w of library.loadWatches(LIBRARY_DIR)) {
+      if (!manual && w.auto === false) continue;
+      let list;
+      try { list = await sourceFetch.listYoutubeVideos(w.url, 8, fetchOpts()); } catch (err) { libSend({ stage: 'warn', text: `${w.title || w.url}: ${err.message}` }); continue; }
+      const fresh = library.unseen(w, list.videos).slice(0, 3);
+      for (const v of fresh) {
+        libSend({ stage: 'item', text: `新着を読んでいます: ${v.title}` });
+        try {
+          const e = await ingestOne(v.url, { lens: w.lens, focus: w.focus, model: w.model, video: w.video }, null);
+          added += 1;
+          libSend({ stage: 'saved', text: `新着: ${e.title}`, entry: e, fromWatch: true });
+        } catch (err) { libSend({ stage: 'warn', text: `読めませんでした: ${v.title}(${err.message})` }); }
+      }
+      library.upsertWatch(LIBRARY_DIR, { url: w.url, seen: [...new Set([...list.videos.map((v) => v.id), ...(w.seen || [])])].slice(0, 200), checkedAt: new Date().toISOString() });
+    }
+  } finally { watchBusy = false; }
+  libSend({ stage: 'watch-done', text: added ? `新着 ${added} 件をノートにしました` : '新着はありませんでした', added });
+  return { ok: true, added };
+}
+if (!ISOLATED_DATA) {
+  setTimeout(() => { checkWatches().catch(() => {}); }, 2 * 60 * 1000);
+  setInterval(() => { checkWatches().catch(() => {}); }, 6 * 60 * 60 * 1000);
+}
 
 ipcMain.handle('create-session', async (_event, { cwd, name, mode, restoreFromId, conversationId, model, deferred, chat }) => {
   const id = `s_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;

@@ -15,6 +15,10 @@ Ariya Bridge は Claude Code / Codex / Gemini をひとつのウィンドウで�
 ## 特長
 
 - **会話タブ（1.9.0〜、既定）** — Claude デスクトップと同じ吹き出し・ツールの札・許可ボタンで Claude Code を使う。中身は Claude Code なので、ファイル・コマンド・Gmail/カレンダー/Notion の連携・スキルがそのまま使える。用途（なんでも／開発／研究／メール／大学業務）とキャラ（アリヤ／ソラ／クロ、`~/.claude-code-app/characters.json` で追加可）を選べ、返事の読み上げと「Alfred に聞く」（koach-os への問い合わせ）付き。再起動後は会話を描き直して続きから（`src/agent-session.js` / `src/chat-view.js`）
+- **情報ノート（取り込み）** — YouTube の動画・チャンネル・再生リスト、Web ページを URL だけで取り込み、字幕・本文を「アプリ開発／研究／販売・集客」の観点で読み解いて `~/Documents/Ariya情報ノート/` に1件1ファイルで保存。チャンネルはまとめも作り、見張っておけば新着を自動でノートに（6時間ごと・1回3本まで）。分析は道具なしの Claude で回す（`src/source-fetch.js` / `src/source-analyze.js` / `src/source-library.js`）
+- **動画の中身を読む** — 字幕に加えて映像も読む。Gemini が URL のまま映像ごと見る（鍵は `~/.config/ariya/.env` の `GEMINI_API_KEY`）か、場面の画像（最大16枚）を Claude が見る。字幕の無い動画は手元の whisper.cpp で書き起こす。場面の画像はノートの `frames/` に残る（`src/video-look.js`）
+- **会話に添付** — Web タブで見ているページ（選択部分）・YouTube の字幕・情報ノートを📎で会話に渡す。入力欄に URL を貼ると「中身を読んで添付」が出る。資料は命令ではなくデータとして渡す
+- **用途「販売まで」** — ship-to-store / ship-check / product-copy / stripe-setup などで、作ったアプリを売れる状態まで運ぶ
 - **白ベースの画面** — 1.9.0 で暗色から白地に。Web タブは開いた時点で読み込む（起動時に全部は読まない）
 - **マルチエンジン** — Claude Code / Codex / Gemini / 素のターミナルをタブごとに選択・切替
 - **エンジン判定** — 入力欄に打っている最中に「これは Codex 向きです」と出し、押せばそのエンジンの新規タブへ指示ごと渡す（`src/engine-judge.js` / `src/nudge.js`）

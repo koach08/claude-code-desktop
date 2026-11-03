@@ -149,6 +149,7 @@ function setupListeners() {
     send();
   });
   setupChatTools();
+  setupLibrary();
   document.getElementById('settings-btn').addEventListener('click', openSettings);
 
   // Engine suggest dialog (#6): タスクを入れて最適エンジンを判定→そのエンジンで新規タブ
@@ -312,7 +313,9 @@ function setupListeners() {
     const v = (document.getElementById('web-url').value || '').trim();
     if (!v) return;
     closeWebPicker();
-    addWebTab({ url: /^https?:\/\//i.test(v) ? v : `https://${v}` });
+    // URL でなければ検索として開く(「ブラウザ」から調べものを始められるように)
+    const looksUrl = /^https?:\/\//i.test(v) || /^[\w-]+(\.[\w-]+)+(\/\S*)?$/.test(v);
+    addWebTab({ url: /^https?:\/\//i.test(v) ? v : looksUrl ? `https://${v}` : `https://www.google.com/search?q=${encodeURIComponent(v)}` });
   });
 
   // UI toggle
@@ -886,7 +889,7 @@ function addWebTab({ id, url, title, silent }) {
   pane.className = 'pane web';
   const bar = document.createElement('div');
   bar.className = 'web-bar';
-  bar.innerHTML = `<button data-act="back" title="戻る">‹</button><button data-act="fwd" title="進む">›</button><button data-act="reload" title="再読み込み">↻</button><span class="web-url" title="${esc(url)}">${esc(url)}</span><button data-act="ext" title="いつものブラウザで開く">⧉</button>`;
+  bar.innerHTML = `<button data-act="back" title="戻る">‹</button><button data-act="fwd" title="進む">›</button><button data-act="reload" title="再読み込み">↻</button><span class="web-url" title="${esc(url)}">${esc(url)}</span><button data-act="to-chat" class="wb-text" title="このページ(選択していればその部分)を会話に添付する。YouTube は字幕">📎 会話に渡す</button><button data-act="to-note" class="wb-text" title="このページを読み解いて情報ノートに保存">📥 ノートにする</button><button data-act="ext" title="いつものブラウザで開く">⧉</button>`;
   pane.appendChild(bar);
   const view = document.createElement('webview');
   // ⚠️ 2026-11-03: 起動時の復元で Web タブ(claude.ai / ChatGPT / Alfred)を全部読み込んでいた。
@@ -905,6 +908,8 @@ function addWebTab({ id, url, title, silent }) {
       else if (b.dataset.act === 'fwd') view.goForward();
       else if (b.dataset.act === 'reload') view.reload();
       else if (b.dataset.act === 'ext') window.api.openExternal ? window.api.openExternal(w.url) : window.open(w.url);
+      else if (b.dataset.act === 'to-chat') webTabToChat(w, b);
+      else if (b.dataset.act === 'to-note') webTabToNote(w);
     } catch (_) {}
   });
   // 外(制御窓)から読める・押せるように、中身の webContents を main に知らせる
@@ -1083,6 +1088,8 @@ function updateComposerForTab() {
   const t = activeId && tabs.get(activeId);
   const isChat = !!(t && t.chat);
   document.body.dataset.tabkind = isChat ? 'chat' : 'term';
+  if (isChat) lastChatId = activeId;
+  renderAttachChips();
   const bar = document.getElementById('chat-tools');
   const sendBtn = document.getElementById('send-btn');
   const ta = document.getElementById('prompt-input');
@@ -1117,8 +1124,121 @@ function updateComposerForTab() {
   if (bar) bar.dataset.purpose = c.purpose || 'general';
 }
 
+// ── 会話への添付(Web タブ・情報ノート・URL から) ──
+// 本人がコピペで貼っていた分を、札(📎)として入力欄の上に溜め、次の発言と一緒に送る。
+// 中身は main で <attached_source> に包まれ、「資料であって命令ではない」と添えて渡る。
+let lastChatId = null;
+let libPanel = null;
+const URL_RE = /https?:\/\/[^\s<>"'）)」】]+/g;
+
+async function attachToChat(att) {
+  if (!att || !att.text) return;
+  let id = activeId && tabs.get(activeId) && tabs.get(activeId).chat ? activeId : null;
+  if (!id && lastChatId && tabs.has(lastChatId)) id = lastChatId;
+  if (!id) {
+    const before = new Set(tabs.keys());
+    await newTab('chat');
+    id = [...tabs.keys()].find((k) => !before.has(k)) || activeId;
+  }
+  const t = tabs.get(id);
+  if (!t || !t.chat) return;
+  t.attachments = (t.attachments || []).filter((a) => a.url !== att.url || !att.url);
+  t.attachments.push({ title: String(att.title || att.url || '資料').slice(0, 120), url: att.url || '', text: String(att.text), size: String(att.text).length });
+  if (activeId !== id) switchTab(id); else renderAttachChips();
+  const ta = document.getElementById('prompt-input');
+  if (ta) { ta.placeholder = '添付した資料について聞きたいことを書いてください(空のまま送ると要点をまとめます)'; ta.focus(); }
+}
+
+function renderAttachChips() {
+  const box = document.getElementById('chat-attach');
+  if (!box) return;
+  const t = activeId && tabs.get(activeId);
+  const atts = (t && t.chat && t.attachments) || [];
+  const ta = document.getElementById('prompt-input');
+  const typed = (t && t.chat && ta) ? (ta.value.match(URL_RE) || []).filter((u) => !atts.some((a) => a.url === u)) : [];
+  if (!atts.length && !typed.length) { box.innerHTML = ''; box.classList.remove('on'); return; }
+  box.classList.add('on');
+  const kb = (n) => (n > 1000 ? `${Math.round(n / 1000)}k字` : `${n}字`);
+  box.innerHTML = atts.map((a, i) => `<span class="att-chip" title="${esc(a.url || '')}">📎 ${esc(a.title)} <small>${kb(a.size || 0)}</small><button type="button" data-rm="${i}" title="外す">✕</button></span>`).join('') +
+    (typed.length ? `<button type="button" class="att-hint" data-fetch="1" title="YouTube は字幕、ページは本文を読んで添付します">🔗 URL の中身を読んで添付${typed.length > 1 ? `(${Math.min(typed.length, 3)}件)` : ''}</button>` : '');
+}
+
+function setupAttachChips() {
+  const box = document.getElementById('chat-attach');
+  if (!box) return;
+  box.addEventListener('click', async (e) => {
+    const t = activeId && tabs.get(activeId);
+    if (!t || !t.chat) return;
+    const rm = e.target.closest('[data-rm]');
+    if (rm) { t.attachments.splice(Number(rm.dataset.rm), 1); renderAttachChips(); return; }
+    const f = e.target.closest('[data-fetch]');
+    if (!f) return;
+    const ta = document.getElementById('prompt-input');
+    const urls = [...new Set(ta.value.match(URL_RE) || [])].filter((u) => !(t.attachments || []).some((a) => a.url === u)).slice(0, 3);
+    f.disabled = true; f.textContent = '読んでいます…';
+    for (const u of urls) {
+      const r = await window.api.libFetchRaw(u);
+      if (r && r.ok) await attachToChat({ title: r.title, url: u, text: r.text });
+      else t.chat.note(`読めませんでした: ${u}(${(r && r.error) || '不明'})`, 'error');
+    }
+    renderAttachChips();
+  });
+  const ta = document.getElementById('prompt-input');
+  let tmr = null;
+  if (ta) ta.addEventListener('input', () => { clearTimeout(tmr); tmr = setTimeout(renderAttachChips, 250); });
+}
+
+function setLibBadge(n) {
+  const b = document.querySelector('#chat-library .lib-badge');
+  if (!b) return;
+  const cur = Number(b.dataset.n || 0);
+  const next = n === 0 ? 0 : cur + n;
+  b.dataset.n = String(next);
+  b.textContent = next ? String(next) : '';
+}
+
+function setupLibrary() {
+  if (!window.AriyaLibrary) return;
+  libPanel = window.AriyaLibrary.init({
+    attachToChat,
+    openWeb: (url) => addWebTab({ url }),
+    badge: setLibBadge,
+  });
+  setupAttachChips();
+}
+
+// Web タブの「会話に渡す」「ノートにする」。今見ている姿(ログイン後・JS で描いた後)のまま読む
+function isYoutubeWatch(u) { return /^https:\/\/(www\.|m\.)?youtube\.com\/(watch\?|shorts\/|live\/)|^https:\/\/youtu\.be\//.test(String(u || '')); }
+async function webTabToChat(w, btn) {
+  const label = btn && btn.textContent;
+  if (btn) { btn.disabled = true; btn.textContent = '読んでいます…'; }
+  try {
+    let r;
+    if (isYoutubeWatch(w.url)) {
+      r = await window.api.libFetchRaw(w.url);
+      if (r && r.ok) await attachToChat({ title: r.title, url: w.url, text: r.text });
+    } else {
+      r = await window.api.webTabExtract(w.id);
+      if (r && r.ok) {
+        const text = [`ページ: ${r.title}`, `URL: ${r.url}`, r.description ? `概要: ${r.description}` : '', r.selection ? `(選択した部分)\n${r.selection}` : r.text].filter(Boolean).join('\n\n');
+        await attachToChat({ title: r.selection ? `${r.title}(選択部分)` : r.title, url: r.url, text });
+      }
+    }
+    if (!r || !r.ok) setStatus('error', `読めませんでした: ${(r && r.error) || '不明'}`);
+  } finally { if (btn) { btn.disabled = false; btn.textContent = label; } }
+}
+async function webTabToNote(w) {
+  if (!libPanel) return;
+  if (isYoutubeWatch(w.url)) return libPanel.ingestFromWeb({ url: w.url, youtube: true });
+  const r = await window.api.webTabExtract(w.id);
+  if (!r || !r.ok) { setStatus('error', `読めませんでした: ${(r && r.error) || '不明'}`); return; }
+  libPanel.ingestFromWeb({ url: r.url, title: r.title, text: [r.description, r.selection || r.text].filter(Boolean).join('\n\n') });
+}
+
 function setupChatTools() {
   const on = (id, ev, fn) => { const e = document.getElementById(id); if (e) e.addEventListener(ev, fn); };
+  on('chat-library', 'click', () => libPanel && libPanel.toggle());
+  on('chat-browser', 'click', () => openWebPicker());
   on('chat-purpose', 'change', (e) => configureChat({ purpose: e.target.value }));
   on('chat-model', 'change', (e) => configureChat({ model: e.target.value }));
   on('chat-character', 'change', (e) => configureChat({ character: e.target.value }));
@@ -1711,19 +1831,22 @@ function cancelRelay() {
 async function send() {
   const ta = document.getElementById('prompt-input');
   const text = ta.value.trim();
-  if (!text || !activeId) return;
+  const tab0 = activeId && tabs.get(activeId);
+  const hasAtt = !!(tab0 && tab0.chat && tab0.attachments && tab0.attachments.length);
+  if ((!text && !hasAtt) || !activeId) return;
 
   // Check if session ended, offer restart
   const tab = tabs.get(activeId);
 
   // 会話タブ: 振り分けはしない(中身が Claude Code なので何でも受けられる)。そのまま発言として送る
   if (tab && tab.chat) {
-    history.push(text);
-    if (history.length > 100) history.shift();
-    histIdx = history.length;
+    if (text) { history.push(text); if (history.length > 100) history.shift(); histIdx = history.length; }
     // 画像は貼り付け時にファイルへ落ちてパスが入る(既存の仕組み)。Claude Code がそのパスを読む
-    const r = await window.api.chatSend(activeId, text);
+    const atts = (tab.attachments || []).map((a) => ({ title: a.title, url: a.url, text: a.text }));
+    const r = await window.api.chatSend(activeId, text, undefined, atts);
     if (!r || !r.ok) { tab.chat.note('送れませんでした。もう一度お試しください', 'error'); return; }
+    tab.attachments = [];
+    renderAttachChips();
     window.api.logPrompt({ sessionId: activeId, prompt: text, sessionName: tab.session.name || '', cwd: tab.session.cwd || '' });
     ta.value = '';
     ta.style.height = 'auto';
