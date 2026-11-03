@@ -45,8 +45,8 @@
   ];
 
   const CHARACTERS = [
-    { id: 'bell', name: 'ベル', initial: 'ベ', color: '#5b6cff', voice: null,
-      prompt: 'あなたの名前はベルです。持ち主の仕事を支える落ち着いた執事として、丁寧だが簡潔な日本語で話してください。' },
+    { id: 'watari', name: 'ワタリ', initial: 'ワ', color: '#5b6cff', voice: null,
+      prompt: 'あなたの名前はワタリです。持ち主の仕事を支える落ち着いた執事として、丁寧だが簡潔な日本語で話してください。' },
     { id: 'sora', name: 'ソラ', initial: 'ソ', color: '#10a37f', voice: null,
       prompt: 'あなたの名前はソラです。明るく前向きな相棒として、親しみのある日本語で、でも要点から話してください。' },
     { id: 'kuro', name: 'クロ', initial: 'ク', color: '#333333', voice: null,
@@ -76,8 +76,8 @@
   function purposeOf(id) { return PURPOSES.find((p) => p.id === id) || PURPOSES[0]; }
   function characterOf(id, extra) {
     const all = CHARACTERS.concat(Array.isArray(extra) ? extra : []);
-    // 'ariya' は改名前(2026-11-04)の会話に残っている id。ベルとして開く
-    const want = id === 'ariya' ? 'bell' : id;
+    // 'ariya'・'bell' は改名前(2026-11-04)の会話に残っている id。ワタリとして開く
+    const want = (id === 'ariya' || id === 'bell') ? 'watari' : id;
     return all.find((c) => c.id === want) || CHARACTERS[0];
   }
 

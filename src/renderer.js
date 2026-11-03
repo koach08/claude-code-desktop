@@ -1020,14 +1020,14 @@ async function getChatPresets() {
 }
 function characterById(id) {
   const list = (chatPresets && chatPresets.characters) || (window.BridgeworkChatPresets && window.BridgeworkChatPresets.CHARACTERS) || [];
-  const want = id === 'ariya' ? 'bell' : id;   // 改名前の会話の id
-  return list.find((c) => c.id === want) || list[0] || { id: 'bell', name: 'ベル', initial: 'ベ', color: '#5b6cff' };
+  const want = (id === 'ariya' || id === 'bell') ? 'watari' : id;   // 改名前の会話の id
+  return list.find((c) => c.id === want) || list[0] || { id: 'watari', name: 'ワタリ', initial: 'ワ', color: '#5b6cff' };
 }
 let chatSpeakDefault = (() => { try { return localStorage.getItem('ariya:chat-speak') === 'on'; } catch (_) { return false; } })();
 
 async function addChatTab(session, { transcript } = {}) {
   const presets = await getChatPresets();
-  session.chat = session.chat || { model: 'sonnet', purpose: 'general', character: 'bell' };
+  session.chat = session.chat || { model: 'sonnet', purpose: 'general', character: 'watari' };
   const tabEl = document.createElement('div');
   tabEl.className = 'tab chat';
   tabEl.dataset.sid = session.id;

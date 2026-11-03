@@ -470,7 +470,7 @@ function createChatSession(id, { cwd, name, conversationId, chat, deferred }) {
   const opts = {
     model: CLAUDE_MODEL_ALLOW.has(String((chat && chat.model) || '')) ? chat.model : 'sonnet',
     purpose: (chat && chat.purpose) || 'general',
-    character: (chat && chat.character) || 'bell',
+    character: (chat && chat.character) || 'watari',
   };
   const send = (ch, payload) => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(ch, payload);
