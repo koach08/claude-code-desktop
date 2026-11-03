@@ -20,7 +20,9 @@ if (IS_DEV_BUILD) {
   app.setPath('userData', `${app.getPath('userData')}-dev`);
 }
 
-const SESSIONS_DIR = path.join(os.homedir(), '.claude-code-app');
+// ARIYA_DATA_DIR: 確認用に別の置き場で起動する(本番の台帳・Alfred の鍵を上書きしないため。2026-11-03)
+const ISOLATED_DATA = !!process.env.ARIYA_DATA_DIR;
+const SESSIONS_DIR = process.env.ARIYA_DATA_DIR || path.join(os.homedir(), '.claude-code-app');
 const BUFFERS_DIR = path.join(SESSIONS_DIR, 'buffers');
 const CRASH_FLAG = path.join(SESSIONS_DIR, '.running');
 const sessions = new Map();
@@ -120,7 +122,7 @@ function createWindow() {
     ...bounds,
     minWidth: 700,
     minHeight: 450,
-    backgroundColor: '#1a1b26',
+    backgroundColor: '#ffffff',
     title: IS_DEV_BUILD ? '[DEV] Ariya Bridge 開発エージェント' : 'Ariya Bridge 開発エージェント',
     titleBarStyle: IS_MAC ? 'hiddenInset' : 'default',
     trafficLightPosition: IS_MAC ? { x: 12, y: 12 } : undefined,
@@ -438,11 +440,219 @@ function deriveSessionName(cwd, mode) {
   return project + suffix;
 }
 
-ipcMain.handle('create-session', async (_event, { cwd, name, mode, restoreFromId, conversationId, model, deferred }) => {
+// ── 会話タブ (mode 'chat', 2026-11-03) ───────────────────────────────
+// 端末ではなく Claude デスクトップと同じ吹き出しで見せるタブ。裏は claude -p の stream-json
+// (src/agent-session.js)。sessions には端末タブと同じ形で載せ、pty の代わりに「代役」を置く:
+// write に '\r' が来たら溜めた文字を1発言として送る / '\x03' は中断。
+// こうしておくと、入力欄・声の「このタブに渡す」・Alfred の /tabs/:id/input・自動保存・
+// 左メニュー・台帳が、何も変えずに会話タブにも効く。
+const { createClaudeSession, transcriptFromJsonl } = require('./src/agent-session');
+const chatPresets = require('./src/chat-presets');
+const CHARACTERS_FILE = path.join(SESSIONS_DIR, 'characters.json');
+
+function loadExtraCharacters() {
+  try {
+    const rows = JSON.parse(fs.readFileSync(CHARACTERS_FILE, 'utf-8'));
+    return Array.isArray(rows) ? rows.filter((c) => c && c.id && c.name) : [];
+  } catch (_) { return []; }
+}
+
+function stripAnsi(s) { return String(s || '').replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, ''); }
+
+function chatToolLine(ev) {
+  const i = ev.input || {};
+  const arg = i.command || i.file_path || i.path || i.pattern || i.url || i.query || i.description || '';
+  return `⏺ ${ev.name}${arg ? `(${String(arg).slice(0, 120)})` : ''}`;
+}
+
+function createChatSession(id, { cwd, name, conversationId, chat, deferred }) {
+  const opts = {
+    model: CLAUDE_MODEL_ALLOW.has(String((chat && chat.model) || '')) ? chat.model : 'sonnet',
+    purpose: (chat && chat.purpose) || 'general',
+    character: (chat && chat.character) || 'ariya',
+  };
+  const send = (ch, payload) => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(ch, payload);
+  };
+  const appendBuf = (text) => {
+    let buf = (sessionBuffers.get(id) || '') + text;
+    if (buf.length > MAX_BUFFER) buf = buf.slice(-MAX_BUFFER);
+    sessionBuffers.set(id, buf);
+  };
+
+  const sessionData = {
+    pty: null,
+    cwd,
+    name: name || '新しい会話',
+    mode: 'chat',
+    chatOpts: opts,
+    conversationId: conversationId || null,
+    createdAt: new Date().toISOString(),
+    lastOutputAt: Date.now(),
+    exited: false,
+    sleeping: true,
+    busy: false,
+    pendingPermissions: new Map(),
+  };
+  sessions.set(id, sessionData);
+  sessionBuffers.set(id, '');
+
+  let agent = null;
+  let typed = '';
+
+  const start = () => {
+    if (agent && agent.alive) return agent;
+    sessionData.sleeping = false;
+    const env = { ...shellEnv };
+    agent = createClaudeSession({
+      bin: IS_WIN ? 'claude.cmd' : 'claude',
+      cwd: sessionData.cwd,
+      env,
+      model: sessionData.chatOpts.model,
+      resume: sessionData.conversationId || undefined,
+      appendSystemPrompt: chatPresets.systemPromptFor(sessionData.chatOpts, loadExtraCharacters()),
+    }, {
+      onEvent: (ev) => {
+        sessionData.lastOutputAt = Date.now();
+        if (ev.kind === 'init' && ev.sessionId) {
+          sessionData.conversationId = ev.sessionId;
+        } else if (ev.kind === 'text') {
+          appendBuf(`\n${ev.text}\n`);
+        } else if (ev.kind === 'tool-use') {
+          appendBuf(`\n${chatToolLine(ev)}\n`);
+        } else if (ev.kind === 'permission') {
+          sessionData.pendingPermissions.set(ev.requestId, ev);
+          appendBuf(`\n⚠ 許可待ち: ${ev.tool}\n`);
+        } else if (ev.kind === 'result') {
+          sessionData.busy = false;
+        }
+        send(`chat-event-${id}`, ev);
+      },
+      onExit: ({ code, err }) => {
+        sessionData.busy = false;
+        sessionData.pendingPermissions.clear();
+        // 会話そのものは終わっていない。次の発言で --resume して起こし直す
+        agent = null;
+        sessionData.sleeping = true;
+        send(`chat-event-${id}`, { kind: 'exit', code, err: code ? stripAnsi(err || '').slice(-600) : null });
+      },
+    });
+    return agent;
+  };
+
+  const submit = (text, images) => {
+    const t = String(text || '').trim();
+    if (!t && !(images && images.length)) return false;
+    const a = start();
+    // 最初の発言で名前を付ける(画面側と同じ規則。台帳・左メニュー・Alfred の /tabs に効かせる)
+    if (sessionData.name === '新しい会話') sessionData.name = t.replace(/\s+/g, ' ').slice(0, 28);
+    sessionData.busy = true;
+    sessionData.lastOutputAt = Date.now();
+    appendBuf(`\n› ${t}\n`);
+    send(`chat-event-${id}`, { kind: 'user-text', text: t, images: (images || []).length });
+    return a.send(t, images);
+  };
+
+  sessionData.chat = {
+    submit,
+    interrupt: () => (agent ? agent.interrupt() : false),
+    respondPermission: (requestId, allow, extra) => {
+      const p = sessionData.pendingPermissions.get(requestId);
+      sessionData.pendingPermissions.delete(requestId);
+      if (!agent) return false;
+      return agent.respondPermission(requestId, allow, { updatedInput: (p && p.input) || {}, ...(extra || {}) });
+    },
+    // モデル・用途・キャラを変える。動いていれば止め、次の発言で同じ会話のまま起こし直す
+    configure: (next) => {
+      const o = sessionData.chatOpts;
+      if (next.model && CLAUDE_MODEL_ALLOW.has(next.model)) o.model = next.model;
+      if (next.purpose) o.purpose = next.purpose;
+      if (next.character) o.character = next.character;
+      if (next.cwd && fs.existsSync(next.cwd)) sessionData.cwd = next.cwd;
+      if (agent) { const a = agent; agent = null; a.close(); }
+      sessionData.sleeping = true;
+      return { ...o, cwd: sessionData.cwd };
+    },
+    close: () => { if (agent) agent.close(); agent = null; },
+  };
+
+  // 端末タブ向けの呼び出し(send-input / control-server / 声の受け渡し)を受ける代役
+  sessionData.pty = {
+    write: (d) => {
+      const s = String(d);
+      if (s === '\x03' || s === '\x1b') { sessionData.chat.interrupt(); return; }
+      typed += s;
+      const cut = typed.lastIndexOf('\r');
+      if (cut < 0) return;
+      const text = typed.slice(0, cut).replace(/\r/g, '\n');
+      typed = typed.slice(cut + 1);
+      if (text.trim()) submit(text);
+    },
+    resize: () => {},
+    kill: () => sessionData.chat.close(),
+  };
+  sessionData.wake = () => sessionData.pty;   // 発言が来るまで claude は起こさない(MCP の起動待ちを空振りさせない)
+
+  if (conversationId) {
+    const t = titleForConversation(conversationId, cwd);
+    if (t && (!name || name === '新しい会話')) sessionData.name = t;
+  }
+  return { id, name: sessionData.name, cwd, mode: 'chat', chat: opts, restored: !!conversationId, sleeping: true, conversationId: sessionData.conversationId };
+}
+
+ipcMain.handle('chat-send', async (_e, { sessionId, text, images }) => {
+  const s = sessions.get(sessionId);
+  if (!s || !s.chat) return { ok: false, reason: 'no-session' };
+  return { ok: !!s.chat.submit(text, images) };
+});
+ipcMain.handle('chat-interrupt', async (_e, { sessionId }) => {
+  const s = sessions.get(sessionId);
+  return { ok: !!(s && s.chat && s.chat.interrupt()) };
+});
+ipcMain.handle('chat-permission', async (_e, { sessionId, requestId, allow, always }) => {
+  const s = sessions.get(sessionId);
+  if (!s || !s.chat) return { ok: false };
+  const p = s.pendingPermissions.get(requestId);
+  const extra = (allow && always && p && Array.isArray(p.suggestions)) ? { updatedPermissions: p.suggestions } : {};
+  return { ok: !!s.chat.respondPermission(requestId, !!allow, extra) };
+});
+ipcMain.handle('chat-configure', async (_e, { sessionId, ...next }) => {
+  const s = sessions.get(sessionId);
+  if (!s || !s.chat) return null;
+  return s.chat.configure(next);
+});
+ipcMain.handle('chat-presets', async () => ({
+  purposes: chatPresets.PURPOSES,
+  characters: chatPresets.CHARACTERS.concat(loadExtraCharacters()),
+  models: chatPresets.MODELS,
+}));
+// 再起動後・過去の会話を開いたときに、吹き出しを描き直す材料
+ipcMain.handle('chat-transcript', async (_e, { conversationId, cwd }) => {
+  if (!conversationId || !/^[0-9a-f-]{36}$/i.test(conversationId)) return [];
+  const p = path.join(os.homedir(), '.claude', 'projects', claudeProjectSlug(cwd || os.homedir()), `${conversationId}.jsonl`);
+  try {
+    const st = fs.statSync(p);
+    // 長い会話は末尾だけ読む(数十MBになることがある)
+    const MAX = 3 * 1024 * 1024;
+    const fd = fs.openSync(p, 'r');
+    const len = Math.min(st.size, MAX);
+    const buf = Buffer.alloc(len);
+    fs.readSync(fd, buf, 0, len, st.size - len);
+    fs.closeSync(fd);
+    let text = buf.toString('utf-8');
+    if (st.size > MAX) text = text.slice(text.indexOf('\n') + 1);
+    return transcriptFromJsonl(text);
+  } catch (_) { return []; }
+});
+
+ipcMain.handle('create-session', async (_event, { cwd, name, mode, restoreFromId, conversationId, model, deferred, chat }) => {
   const id = `s_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-  const nodePty = getPty();
   const sessionCwd = cwd || os.homedir();
   const sessionMode = mode || 'claude';
+  if (sessionMode === 'chat') {
+    return createChatSession(id, { cwd: sessionCwd, name, conversationId, chat: { model, ...(chat || {}) }, deferred });
+  }
+  const nodePty = getPty();
   const isRestore = !!(restoreFromId || conversationId);
 
   let cmd, args;
@@ -1871,7 +2081,7 @@ function saveSessionsSync() {
     fs.mkdirSync(BUFFERS_DIR, { recursive: true });
     const data = [];
     for (const [id, s] of sessions) {
-      data.push({ id, name: s.name, cwd: s.cwd, mode: s.mode, conversationId: s.conversationId || null, createdAt: s.createdAt, savedAt: new Date().toISOString() });
+      data.push({ id, name: s.name, cwd: s.cwd, mode: s.mode, conversationId: s.conversationId || null, ...(s.chatOpts ? { chat: s.chatOpts } : {}), createdAt: s.createdAt, savedAt: new Date().toISOString() });
     }
     saveLedger(SESSIONS_DIR, data);
     // 出力バッファは「前回保存から中身が変わったタブ」だけ書く。
@@ -2408,6 +2618,8 @@ const controlJobs = new Map();
 const CONTROL_JOB_MAX = 40;
 
 function startControl() {
+  // 確認用の起動では窓口を開かない(鍵ファイル control.json とポートを本番と取り合うため)
+  if (ISOLATED_DATA) return;
   try {
     controlServer = startControlServer({
       sessions,

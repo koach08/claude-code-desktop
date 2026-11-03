@@ -148,8 +148,21 @@ contextBridge.exposeInMainWorld('api', {
   onMenuAction: (cb) => {
     ipcRenderer.on('menu-action', (_e, action) => cb(action));
   },
+  // 会話タブ(吹き出し表示)。裏は claude -p の stream-json
+  chatSend: (sessionId, text, images) => ipcRenderer.invoke('chat-send', { sessionId, text, images }),
+  chatInterrupt: (sessionId) => ipcRenderer.invoke('chat-interrupt', { sessionId }),
+  chatPermission: (sessionId, requestId, allow, always) => ipcRenderer.invoke('chat-permission', { sessionId, requestId, allow, always }),
+  chatConfigure: (sessionId, opts) => ipcRenderer.invoke('chat-configure', { sessionId, ...(opts || {}) }),
+  chatPresets: () => ipcRenderer.invoke('chat-presets'),
+  chatTranscript: (conversationId, cwd) => ipcRenderer.invoke('chat-transcript', { conversationId, cwd }),
+  onChatEvent: (id, cb) => {
+    const h = (_e, d) => cb(d);
+    ipcRenderer.on(`chat-event-${id}`, h);
+    return () => ipcRenderer.removeListener(`chat-event-${id}`, h);
+  },
   removeListeners: (id) => {
     ipcRenderer.removeAllListeners(`session-output-${id}`);
     ipcRenderer.removeAllListeners(`session-exit-${id}`);
+    ipcRenderer.removeAllListeners(`chat-event-${id}`);
   },
 });

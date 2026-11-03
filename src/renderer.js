@@ -14,6 +14,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   const prefs = await window.api.loadPrefs();
   if (prefs.uiMode) setUiMode(prefs.uiMode);
   if (prefs.lastMode) currentMode = prefs.lastMode;
+  // 1.9.0 から新しい会話の既定は「会話タブ」。一度だけ切り替える(その後に本人が選んだものは尊重)
+  if (!prefs.chatDefault2611) { currentMode = 'chat'; window.api.savePrefs({ ...prefs, lastMode: 'chat', chatDefault2611: true }); }
 
   appSettings = await window.api.loadSettings();
 
@@ -80,6 +82,7 @@ function saveTabState() {
     uiMode,
     lastMode: currentMode,
     activeTabIndex: idx >= 0 ? idx : 0,
+    chatDefault2611: true,   // prefs は丸ごと上書きされるので、毎回書く
   });
 }
 
@@ -94,8 +97,10 @@ async function restoreTab(savedSession, deferred = false) {
       name: savedSession.name,
       restoreFromId: savedSession.id,
       conversationId: savedSession.conversationId || null,
+      chat: savedSession.chat || null,
       deferred,
     });
+    if (session.mode === 'chat') { await addChatTab(session, { transcript: true }); return; }
     // Don't replay old buffer — it creates confusing overlap with new session output.
     // Instead show a clean restore marker with context about what was restored.
     const restoreInfo = {
@@ -137,7 +142,13 @@ function setupListeners() {
       (items[cur >= 0 ? cur : 0] || {}).click && items[cur >= 0 ? cur : 0].click();
     } else if (e.key === 'Escape') { closeExternalPicker(); }
   });
-  document.getElementById('send-btn').addEventListener('click', send);
+  // 会話タブが返事を書いている間は「止める」になる
+  document.getElementById('send-btn').addEventListener('click', () => {
+    const t = activeChat();
+    if (t && t.chat.busy) { window.api.chatInterrupt(activeId); return; }
+    send();
+  });
+  setupChatTools();
   document.getElementById('settings-btn').addEventListener('click', openSettings);
 
   // Engine suggest dialog (#6): タスクを入れて最適エンジンを判定→そのエンジンで新規タブ
@@ -673,6 +684,13 @@ async function switchSessionMode(newMode) {
   if (!activeId) return;
   const tab = tabs.get(activeId);
   if (!tab) return;
+  // 会話タブは端末と中身の形が違うので、その場で差し替えない。同じフォルダで隣に開く
+  // (会話は閉じずに残る。端末で細かく見たいとき・端末から会話に戻るとき)
+  if (newMode === 'chat' || (tab.session && tab.session.mode === 'chat')) {
+    if (tab.session && tab.session.mode === newMode) return;
+    await newTab(newMode, tab.session && tab.session.cwd);
+    return;
+  }
 
   currentMode = newMode;
   document.querySelectorAll('.mode-btn').forEach(b => {
@@ -871,7 +889,9 @@ function addWebTab({ id, url, title, silent }) {
   bar.innerHTML = `<button data-act="back" title="戻る">‹</button><button data-act="fwd" title="進む">›</button><button data-act="reload" title="再読み込み">↻</button><span class="web-url" title="${esc(url)}">${esc(url)}</span><button data-act="ext" title="いつものブラウザで開く">⧉</button>`;
   pane.appendChild(bar);
   const view = document.createElement('webview');
-  view.setAttribute('src', url);
+  // ⚠️ 2026-11-03: 起動時の復元で Web タブ(claude.ai / ChatGPT / Alfred)を全部読み込んでいた。
+  //    1枚ずつがブラウザ1枚分のメモリを食う。復元したものは開いた時点で読み込む
+  if (silent) view.dataset.lazySrc = url; else view.setAttribute('src', url);
   view.setAttribute('partition', 'persist:web');
   view.setAttribute('allowpopups', '');
   view.setAttribute('useragent', WEB_UA);
@@ -917,6 +937,8 @@ function addWebTab({ id, url, title, silent }) {
 function switchWebTab(wid) {
   const w = webTabs.get(wid); if (!w) return;
   activeWebId = wid;
+  if (w.view && w.view.dataset.lazySrc) { w.view.setAttribute('src', w.view.dataset.lazySrc); delete w.view.dataset.lazySrc; }
+  document.body.dataset.tabkind = 'web';
   tabs.forEach((t) => { t.tabEl.classList.remove('active'); t.pane.classList.remove('active'); });
   webTabs.forEach((x, xid) => { const on = xid === wid; x.tabEl.classList.toggle('active', on); x.pane.classList.toggle('active', on); });
   try { w.tabEl.scrollIntoView({ inline: 'nearest', block: 'nearest' }); } catch (_) {}
@@ -958,16 +980,195 @@ async function newTabWithCwd(mode, droppedPath) {
   await newTab(mode, cwd);
 }
 
+// ── 会話タブ (2026-11-03) ───────────────────────────────────────
+// 端末ではなく吹き出しで見せるタブ。中身は Claude Code なので、ファイル・コマンド・
+// Gmail/カレンダー/Notion の連携・スキルがそのまま使える(研究・メール・大学業務もここで)。
+let chatPresets = null;
+async function getChatPresets() {
+  if (!chatPresets) {
+    try { chatPresets = await window.api.chatPresets(); } catch (_) { chatPresets = null; }
+    if (!chatPresets && window.AriyaChatPresets) {
+      const P = window.AriyaChatPresets;
+      chatPresets = { purposes: P.PURPOSES, characters: P.CHARACTERS, models: P.MODELS };
+    }
+  }
+  return chatPresets;
+}
+function characterById(id) {
+  const list = (chatPresets && chatPresets.characters) || (window.AriyaChatPresets && window.AriyaChatPresets.CHARACTERS) || [];
+  return list.find((c) => c.id === id) || list[0] || { id: 'ariya', name: 'アリヤ', initial: 'A', color: '#5b6cff' };
+}
+let chatSpeakDefault = (() => { try { return localStorage.getItem('ariya:chat-speak') === 'on'; } catch (_) { return false; } })();
+
+async function addChatTab(session, { transcript } = {}) {
+  const presets = await getChatPresets();
+  session.chat = session.chat || { model: 'sonnet', purpose: 'general', character: 'ariya' };
+  const tabEl = document.createElement('div');
+  tabEl.className = 'tab chat';
+  tabEl.dataset.sid = session.id;
+  tabEl.innerHTML = `<span class="tab-icon">💬</span><span class="tname">${esc(session.name)}</span><span class="tab-badge"></span><span class="tclose">&times;</span>`;
+  const tabsContainer = document.getElementById('tabs');
+  tabsContainer.appendChild(tabEl);
+  requestAnimationFrame(() => { tabsContainer.scrollLeft = tabsContainer.scrollWidth; });
+
+  let data = null;
+  const view = window.AriyaChatView.create({
+    session, presets,
+    api: window.api,
+    character: characterById(session.chat.character),
+    speakDefault: chatSpeakDefault,
+    getSessionId: () => getTabSessionId(tabEl),
+    onBusy: (busy) => {
+      tabEl.classList.toggle('busy', busy);
+      if (getTabSessionId(tabEl) === activeId) updateComposerForTab();
+    },
+    onTitle: (text) => {
+      // 最初の発言で名前を付ける(「新しい会話」のまま並ぶと見分けがつかない)
+      if (session.name === '新しい会話' || !session.name) {
+        session.name = text.replace(/\s+/g, ' ').slice(0, 28);
+        tabEl.querySelector('.tname').textContent = session.name;
+        if (typeof renderProjbar === 'function') renderProjbar();
+      }
+    },
+    onAttention: (kind) => {
+      if (getTabSessionId(tabEl) === activeId) return;
+      const badge = tabEl.querySelector('.tab-badge');
+      if (badge) { badge.classList.add('visible'); badge.classList.toggle('approval', kind === 'approval'); }
+    },
+    onPurpose: (purpose) => configureChat({ purpose }),
+  });
+  const pane = view.pane;
+  const paneHeader = document.createElement('div');
+  paneHeader.className = 'pane-header';
+  paneHeader.innerHTML = `<span class="ph-icon">💬</span><span class="ph-name">${esc(session.name)}</span><span class="ph-cwd">${esc(session.cwd || '')}</span><span class="ph-status"></span>`;
+  pane.prepend(paneHeader);
+  document.getElementById('terminal-container').appendChild(pane);
+
+  data = { term: view.term, fit: view.fit, tabEl, pane, paneHeader, session, ended: false, chat: view };
+  tabs.set(session.id, data);
+  window.api.onChatEvent(session.id, (ev) => view.handle(ev, true));
+
+  tabEl.addEventListener('click', (e) => {
+    if (!e.target.closest('.tclose')) { const sid = getTabSessionId(tabEl); if (sid) switchTab(sid); }
+  });
+  tabEl.querySelector('.tclose').addEventListener('click', (e) => {
+    e.stopPropagation(); const sid = getTabSessionId(tabEl); if (sid) closeTab(sid);
+  });
+  if (transcript && session.conversationId) view.loadTranscript(session.conversationId, session.cwd);
+  switchTab(session.id);
+  if (typeof renderProjbar === 'function') renderProjbar();
+  return data;
+}
+
+function activeChat() {
+  const t = activeId && tabs.get(activeId);
+  return t && t.chat ? t : null;
+}
+
+async function configureChat(next) {
+  const t = activeChat();
+  if (!t) return;
+  const sid = getTabSessionId(t.tabEl);
+  const r = await window.api.chatConfigure(sid, next);
+  if (!r) return;
+  t.session.chat = { model: r.model, purpose: r.purpose, character: r.character };
+  if (r.cwd) t.session.cwd = r.cwd;
+  t.chat.setCharacter(characterById(r.character));
+  updateComposerForTab();
+  window.api.saveSessions();
+}
+
+// 入力欄の上の「用途・モデル・キャラ・フォルダ・読み上げ」。会話タブのときだけ出す
+function updateComposerForTab() {
+  const t = activeId && tabs.get(activeId);
+  const isChat = !!(t && t.chat);
+  document.body.dataset.tabkind = isChat ? 'chat' : 'term';
+  const bar = document.getElementById('chat-tools');
+  const sendBtn = document.getElementById('send-btn');
+  const ta = document.getElementById('prompt-input');
+  if (!isChat) {
+    if (sendBtn) { sendBtn.textContent = '送信'; sendBtn.classList.remove('stop'); }
+    if (ta) ta.placeholder = 'プロンプトを入力... (Enter で送信, Shift+Enter で改行)';
+    return;
+  }
+  const c = t.session.chat || {};
+  const presets = chatPresets || {};
+  const fill = (id, rows, cur, label) => {
+    const s = document.getElementById(id);
+    if (!s) return;
+    s.innerHTML = (rows || []).map((r) => `<option value="${esc(r.id)}"${r.id === cur ? ' selected' : ''}>${esc(label(r))}</option>`).join('');
+  };
+  fill('chat-purpose', presets.purposes, c.purpose, (r) => `${r.icon} ${r.label}`);
+  fill('chat-model', presets.models, c.model, (r) => `${r.label} — ${r.hint}`);
+  fill('chat-character', presets.characters, c.character, (r) => r.name);
+  const cwdBtn = document.getElementById('chat-cwd');
+  if (cwdBtn) {
+    const home = (t.session.cwd || '').replace(/^\/Users\/[^/]+/, '~');
+    cwdBtn.textContent = '📁 ' + (home.split('/').slice(-2).join('/') || '~');
+    cwdBtn.title = t.session.cwd || '';
+  }
+  const sp = document.getElementById('chat-speak');
+  if (sp) { sp.classList.toggle('on', t.chat.speakOn); sp.textContent = t.chat.speakOn ? '🔊 読み上げ' : '🔈 読み上げ'; }
+  if (sendBtn) {
+    sendBtn.textContent = t.chat.busy ? '■ 止める' : '送信';
+    sendBtn.classList.toggle('stop', t.chat.busy);
+  }
+  if (ta) ta.placeholder = `${characterById(c.character).name}に話しかける… (Enter で送信, Shift+Enter で改行)`;
+  if (bar) bar.dataset.purpose = c.purpose || 'general';
+}
+
+function setupChatTools() {
+  const on = (id, ev, fn) => { const e = document.getElementById(id); if (e) e.addEventListener(ev, fn); };
+  on('chat-purpose', 'change', (e) => configureChat({ purpose: e.target.value }));
+  on('chat-model', 'change', (e) => configureChat({ model: e.target.value }));
+  on('chat-character', 'change', (e) => configureChat({ character: e.target.value }));
+  on('chat-cwd', 'click', async () => {
+    const dir = await window.api.harnessPickFolder();
+    const p = typeof dir === 'string' ? dir : (dir && (dir.path || dir.folder));
+    if (p) configureChat({ cwd: p });
+  });
+  on('chat-speak', 'click', () => {
+    const t = activeChat(); if (!t) return;
+    t.chat.setSpeak(!t.chat.speakOn);
+    chatSpeakDefault = t.chat.speakOn;
+    try { localStorage.setItem('ariya:chat-speak', chatSpeakDefault ? 'on' : 'off'); } catch (_) {}
+    if (!t.chat.speakOn) t.chat.stopAudio();
+    updateComposerForTab();
+  });
+  // Alfred(koach-os)と連携: 統合ではなく「聞いて答えをもらう」。文脈として直近の返事を添える
+  on('chat-alfred', 'click', async () => {
+    const t = activeChat(); if (!t) return;
+    const ta = document.getElementById('prompt-input');
+    const q = ta.value.trim();
+    if (!q) { ta.placeholder = 'Alfred に聞きたいことを書いてから「Alfred に聞く」を押してください'; ta.focus(); return; }
+    ta.value = ''; ta.style.height = 'auto';
+    const card = t.chat.alfredCard(q);
+    const ctx = `Ariya Bridge の会話「${t.session.name || ''}」から。直近の返事:\n${(t.chat.lastAssistantText || '').slice(-1500)}`;
+    let r;
+    try { r = await window.api.alfredVoice({ text: q, context: ctx }); } catch (e) { r = { ok: false, error: String(e && e.message || e) }; }
+    card.done(r);
+  });
+  on('chat-new', 'click', () => {
+    const t = activeChat();
+    newTab('chat', t && t.session.cwd);
+  });
+  on('chat-open-term', 'click', () => {
+    const t = activeChat();
+    newTab('claude', t && t.session.cwd);
+  });
+}
+
 function addTab(session, replayBuffer, restoreInfo) {
+  if (session.mode === 'chat') { addChatTab(session, { transcript: !!restoreInfo }); return; }
   const term = new Terminal({
     theme: {
-      background: '#1a1b26', foreground: '#c0caf5', cursor: '#c0caf5',
-      selectionBackground: '#33467c',
-      black: '#15161e', red: '#f7768e', green: '#9ece6a', yellow: '#e0af68',
-      blue: '#7aa2f7', magenta: '#bb9af7', cyan: '#7dcfff', white: '#a9b1d6',
-      brightBlack: '#414868', brightRed: '#f7768e', brightGreen: '#9ece6a',
-      brightYellow: '#e0af68', brightBlue: '#7aa2f7', brightMagenta: '#bb9af7',
-      brightCyan: '#7dcfff', brightWhite: '#c0caf5',
+      background: '#ffffff', foreground: '#1f2328', cursor: '#1f2328', cursorAccent: '#ffffff',
+      selectionBackground: '#b6d7ff',
+      black: '#24292f', red: '#cf222e', green: '#116329', yellow: '#9a6700',
+      blue: '#0969da', magenta: '#8250df', cyan: '#1b7c83', white: '#6e7781',
+      brightBlack: '#57606a', brightRed: '#a40e26', brightGreen: '#1a7f37',
+      brightYellow: '#7d4e00', brightBlue: '#218bff', brightMagenta: '#a475f9',
+      brightCyan: '#3192aa', brightWhite: '#8c959f',
     },
     fontSize: appSettings.fontSize || 14,
     fontFamily: "'Menlo', 'Monaco', 'Courier New', monospace",
@@ -1180,6 +1381,7 @@ function switchTab(id) {
       }, 100);
     }
   });
+  updateComposerForTab();
   if (uiMode === 'simple' || uiMode === 'builder' || uiMode === 'harness' || uiMode === 'agent') {
     document.getElementById('prompt-input').focus();
     if (uiMode === 'harness') refreshHarnessPanel();
@@ -1258,6 +1460,7 @@ function hideEngineNudge() {
 // 打つたびに IPC を叩かないよう間引く。
 function scheduleEngineNudge(text) {
   clearTimeout(nudgeTimer);
+  if (activeChat()) return;   // 会話タブは何でも受けるので「別のエンジン向き」は出さない
   nudgeTimer = setTimeout(() => { updateEngineNudge(text); }, 300);
 }
 
@@ -1512,6 +1715,24 @@ async function send() {
 
   // Check if session ended, offer restart
   const tab = tabs.get(activeId);
+
+  // 会話タブ: 振り分けはしない(中身が Claude Code なので何でも受けられる)。そのまま発言として送る
+  if (tab && tab.chat) {
+    history.push(text);
+    if (history.length > 100) history.shift();
+    histIdx = history.length;
+    // 画像は貼り付け時にファイルへ落ちてパスが入る(既存の仕組み)。Claude Code がそのパスを読む
+    const r = await window.api.chatSend(activeId, text);
+    if (!r || !r.ok) { tab.chat.note('送れませんでした。もう一度お試しください', 'error'); return; }
+    window.api.logPrompt({ sessionId: activeId, prompt: text, sessionName: tab.session.name || '', cwd: tab.session.cwd || '' });
+    ta.value = '';
+    ta.style.height = 'auto';
+    nudgeMuted = false;
+    hideEngineNudge();
+    window.api.saveSessions();
+    return;
+  }
+
   if (tab && tab.ended) {
     tab.term.write(`\r\n\x1b[33m[セッション終了済み] モードを切替えて再起動します...\x1b[0m\r\n`);
     switchSessionMode(currentMode);
@@ -1729,7 +1950,7 @@ function setStatus(state, text) {
 }
 
 function updateStatusMode(mode) {
-  const labels = { claude: 'Claude Code', codex: 'Codex', gemini: 'Gemini', grok: 'Grok', shell: 'Terminal' };
+  const labels = { chat: '会話 (Claude Code)', claude: 'Claude Code', codex: 'Codex', gemini: 'Gemini', grok: 'Grok', shell: 'Terminal' };
   document.getElementById('status-mode').textContent = labels[mode] || mode;
 }
 
@@ -4114,7 +4335,7 @@ async function readArchived(dlg, x) {
   if (!r || !r.ok) { v.textContent = (r && r.error) || '読めませんでした'; return; }
   // 端末の画面として描き直す(色や罫線の制御文字をそのまま解釈させる)。書き込みはできない
   const term = new Terminal({ disableStdin: true, scrollback: 50000, convertEol: true, fontSize: 13,
-    fontFamily: "'Menlo', 'Monaco', monospace", theme: { background: '#1a1b26', foreground: '#c0caf5' } });
+    fontFamily: "'Menlo', 'Monaco', monospace", theme: { background: '#ffffff', foreground: '#1f2328', selectionBackground: '#b6d7ff' } });
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
   term.open(v);

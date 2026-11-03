@@ -17,6 +17,7 @@
       <button id="open-external-btn" title="他のアプリの会話を開く (Cmd+Shift+O)">↗</button>
       <div id="topbar-spacer"></div>
       <div id="mode-toggle">
+        <button class="mode-btn" data-mode="chat" title="会話 — Claude デスクトップと同じ吹き出しで(研究・メール・大学業務もここで)">会話</button>
         <button class="mode-btn active" data-mode="claude">Claude</button>
         <button class="mode-btn" data-mode="codex">Codex</button>
         <button class="mode-btn" data-mode="gemini">Gemini</button>
@@ -60,6 +61,7 @@
         <button id="sb-collapse" title="左メニューをしまう">‹</button>
       </div>
       <div id="sb-engines" title="ここで選んだエンジンで新しい会話が開きます">
+        <button class="sb-eng" data-eng="chat" title="吹き出しの会話。中身は Claude Code(ファイル・連携・スキルが使える)">会話</button>
         <button class="sb-eng active" data-eng="claude">Claude</button>
         <button class="sb-eng" data-eng="codex">Codex</button>
         <button class="sb-eng" data-eng="gemini">Gemini</button>
@@ -434,6 +436,18 @@
         <textarea id="builder-prompt" placeholder="何を作りたいですか？ 例: レストランの予約管理アプリを作って" rows="2"></textarea>
         <button id="builder-send-btn">送信</button>
       </div>
+      <!-- 会話タブのときだけ出す: 用途・モデル・キャラ・作業フォルダ・読み上げ (2026-11-03) -->
+      <div id="chat-tools">
+        <select id="chat-purpose" title="用途。使う連携と、どこで確認を取るかが変わります"></select>
+        <select id="chat-model" title="頭の重さ。変えると次の発言から(同じ会話のまま)"></select>
+        <select id="chat-character" title="話し相手のキャラ(名前・口調)"></select>
+        <button id="chat-cwd" type="button" title="作業フォルダ">📁 ~</button>
+        <span class="ct-spacer"></span>
+        <button id="chat-alfred" type="button" title="入力欄の文を koach-os の Alfred に聞く(予定・メール・家事・目標は Alfred が見ています)">🎩 Alfred に聞く</button>
+        <button id="chat-speak" type="button" title="返事を声で読み上げる">🔈 読み上げ</button>
+        <button id="chat-open-term" type="button" title="同じフォルダで Claude Code を端末で開く(細かい表示が見たいとき)">端末で開く</button>
+        <button id="chat-new" type="button" title="新しい会話 (Cmd+T)">＋ 新しい会話</button>
+      </div>
       <!-- Normal Prompt -->
       <div id="input-row">
         <textarea id="prompt-input" placeholder="プロンプトを入力... (Enter で送信, Shift+Enter で改行)" rows="2"></textarea>
@@ -693,6 +707,10 @@
   <script src="realtime-tools.js"></script>
   <script src="realtime.js"></script>
   <script src="voice-chat.js"></script>
+  <!-- 会話タブ(吹き出し表示)。renderer より先に読む -->
+  <script src="chat-markdown.js"></script>
+  <script src="chat-presets.js"></script>
+  <script src="chat-view.js"></script>
   <script src="renderer.js"></script>
   <!-- Web タブ: サイトをこのアプリの中のタブとして開く(アプリを何個も開かないため) -->
   <div id="web-picker" class="hidden" role="dialog" aria-label="Web をタブで開く">

@@ -14,6 +14,8 @@ Ariya Bridge は Claude Code / Codex / Gemini をひとつのウィンドウで�
 
 ## 特長
 
+- **会話タブ（1.9.0〜、既定）** — Claude デスクトップと同じ吹き出し・ツールの札・許可ボタンで Claude Code を使う。中身は Claude Code なので、ファイル・コマンド・Gmail/カレンダー/Notion の連携・スキルがそのまま使える。用途（なんでも／開発／研究／メール／大学業務）とキャラ（アリヤ／ソラ／クロ、`~/.claude-code-app/characters.json` で追加可）を選べ、返事の読み上げと「Alfred に聞く」（koach-os への問い合わせ）付き。再起動後は会話を描き直して続きから（`src/agent-session.js` / `src/chat-view.js`）
+- **白ベースの画面** — 1.9.0 で暗色から白地に。Web タブは開いた時点で読み込む（起動時に全部は読まない）
 - **マルチエンジン** — Claude Code / Codex / Gemini / 素のターミナルをタブごとに選択・切替
 - **エンジン判定** — 入力欄に打っている最中に「これは Codex 向きです」と出し、押せばそのエンジンの新規タブへ指示ごと渡す（`src/engine-judge.js` / `src/nudge.js`）
 - **工程リレー** — 1 つの依頼を 下調べ → 本作業 → 点検 に分け、癖の違うエンジンへ順に渡す。タブは開かず裏で走る（`src/relay.js`）
