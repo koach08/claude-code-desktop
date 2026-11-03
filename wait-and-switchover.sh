@@ -5,29 +5,29 @@
 # Claude Code は 1 ターン動くたびに .jsonl に追記するので、書きかけの Edit や実行中の
 # Bash がある間はここが必ず動き続ける。止まった＝そのターンが終わって指示待ちになった、と読む。
 #
-# nohup で切り離して実行すること。呼び出し元 (Ariya Bridge 内の Claude) は
+# nohup で切り離して実行すること。呼び出し元 (Bridgework 内の Claude) は
 # switchover の途中で殺されるが、このスクリプトは生き残って最後まで進む。
 
-# Ariya Bridge のタブから起動された場合は、親から完全に切り離した自分を作り直して
+# Bridgework のタブから起動された場合は、親から完全に切り離した自分を作り直して
 # そちらへ引き継ぐ。nohup は SIGHUP を無視するだけで、アプリ終了時にプロセスグループ
 # ごと落とされるのは防げない。2026-08-23 はそれで差し替えの途中(ditto)で死んだ。
 # 二重 fork + setsid で新しいセッションリーダーになれば、アプリが終わっても生き残る。
-ariya_ancestor() {
+app_ancestor() {
   local pid=$$ cmd i=0
   while [ "${pid:-0}" -gt 1 ] && [ $i -lt 60 ]; do
     cmd=$(ps -o command= -p "$pid" 2>/dev/null)
     case "$cmd" in
-      *"Ariya Bridge.app/Contents/MacOS/Ariya Bridge"*) return 0 ;;
+      *"Bridgework.app/Contents/MacOS/Bridgework"*|*"Ariya Bridge.app/Contents/MacOS/Ariya Bridge"*) return 0 ;;
     esac
     pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
     i=$((i+1))
   done
   return 1
 }
-if [ "${WAIT_SWITCHOVER_DETACHED:-0}" != "1" ] && ariya_ancestor; then
+if [ "${WAIT_SWITCHOVER_DETACHED:-0}" != "1" ] && app_ancestor; then
   _LOG="$HOME/.claude-code-app/switchover.log"
   mkdir -p "$HOME/.claude-code-app"
-  echo "=== $(date '+%F %T') Ariya Bridge 内からの起動を検出。切り離して実行し直します ===" >> "$_LOG"
+  echo "=== $(date '+%F %T') Bridgework 内からの起動を検出。切り離して実行し直します ===" >> "$_LOG"
   WAIT_SWITCHOVER_DETACHED=1 SWITCHOVER_DETACHED=1 \
   python3 -c 'import os,sys
 if os.fork() > 0: os._exit(0)
@@ -96,9 +96,9 @@ PY
     echo "switchover 終了コード=$rc" >> "$LOG"
     if [ $rc -eq 0 ]; then
       sleep 25
-      echo "--- ariya:// の登録確認 ---" >> "$LOG"
+      echo "--- bridgework:// / ariya:// の登録確認 ---" >> "$LOG"
       /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister \
-        -dump 2>/dev/null | grep -i "ariya" | head -5 >> "$LOG"
+        -dump 2>/dev/null | grep -iE "bridgework|ariya" | head -5 >> "$LOG"
     fi
     echo "=== $(date '+%F %T') 完了 ===" >> "$LOG"
     exit $rc

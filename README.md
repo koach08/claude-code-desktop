@@ -1,22 +1,24 @@
-# Ariya Bridge 開発エージェント
+# Bridgework
 
 **あなたと AI の開発チームをつなぐ、デスクトップの開発エージェント。**
 
-Ariya Bridge は Claude Code / Codex / Gemini をひとつのウィンドウで束ね、
+Bridgework は Claude Code / Codex / Gemini をひとつのウィンドウで束ね、
 案件ごとにエンジンを切り替え、出荷まで面倒を見るための macOS / Windows / Linux アプリです。
 ターミナルに不慣れでも、GUI から AI コーディングエージェントを動かせます。
 
-> 旧称 **Claude Code Desktop**。単一エンジンの GUI ラッパーから、
+> 旧称 **Bridgework**・**Claude Code Desktop**。単一エンジンの GUI ラッパーから、
 > 複数エンジンを役割分担させる「AI の開発会社」へと発展させています。
 > 方針は [VISION.md](VISION.md) を参照。
 
-![Ariya Bridge](build/icon.png)
+![Bridgework](build/icon.png)
 
 ## 特長
 
 - **会話タブ（1.9.0〜、既定）** — Claude デスクトップと同じ吹き出し・ツールの札・許可ボタンで Claude Code を使う。中身は Claude Code なので、ファイル・コマンド・Gmail/カレンダー/Notion の連携・スキルがそのまま使える。用途（なんでも／開発／研究／メール／大学業務）とキャラ（アリヤ／ソラ／クロ、`~/.claude-code-app/characters.json` で追加可）を選べ、返事の読み上げと「Alfred に聞く」（koach-os への問い合わせ）付き。再起動後は会話を描き直して続きから（`src/agent-session.js` / `src/chat-view.js`）
-- **情報ノート（取り込み）** — YouTube の動画・チャンネル・再生リスト、Web ページを URL だけで取り込み、字幕・本文を「アプリ開発／研究／販売・集客」の観点で読み解いて `~/Documents/Ariya情報ノート/` に1件1ファイルで保存。チャンネルはまとめも作り、見張っておけば新着を自動でノートに（6時間ごと・1回3本まで）。分析は道具なしの Claude で回す（`src/source-fetch.js` / `src/source-analyze.js` / `src/source-library.js`）
-- **動画の中身を読む** — 字幕に加えて映像も読む。Gemini が URL のまま映像ごと見る（鍵は `~/.config/ariya/.env` の `GEMINI_API_KEY`）か、場面の画像（最大16枚）を Claude が見る。字幕の無い動画は手元の whisper.cpp で書き起こす。場面の画像はノートの `frames/` に残る（`src/video-look.js`）
+- **情報ノート（取り込み）** — YouTube の動画・チャンネル・再生リスト、Web ページを URL だけで取り込み、字幕・本文を「アプリ開発／研究／販売・集客」の観点で読み解いて `~/Documents/Bridgework情報ノート/` に1件1ファイルで保存。チャンネルはまとめも作り、見張っておけば新着を自動でノートに（6時間ごと・1回3本まで）。分析は道具なしの Claude で回す（`src/source-fetch.js` / `src/source-analyze.js` / `src/source-library.js`）
+- **動画の中身を読む** — 字幕に加えて映像も読む。Gemini が URL のまま映像ごと見る（鍵は `~/.config/bridgework/.env` の `GEMINI_API_KEY`）か、場面の画像（最大16枚）を Claude が見る。字幕の無い動画は手元の whisper.cpp で書き起こす。場面の画像はノートの `frames/` に残る（`src/video-look.js`）
+- **オフィス(Fleet View)** — 「🏢 オフィス」で全部のセッションを社員として俯瞰する(Fleet View を起こして Web タブで開く。置き場は `BRIDGEWORK_FLEET_DIR`、既定 `~/Desktop/アプリ開発プロジェクト/fleet-view`)。キャラを押すとその社員に相談(元の会話を分けて読むだけの道具で答える。元の作業は汚さない)、「詳細」でそのセッションを会話タブで開く
+- **スライド** — テーマ・貼った素材・情報ノートから「授業／研究発表／アプリ紹介・販売／説明」のスライドを作る。構成は道具なしの Claude が JSON で書き、見た目はアプリのテーマ(4種)で描く(script の無い HTML)。言葉で直す・1つ前に戻す・PDF(1枚1ページ)・全画面で発表。動画のノートなら場面の画像も使う。置き場は `~/Documents/Bridgeworkスライド/`(`src/slide-deck.js` / `src/slide-panel.js`)
 - **会話に添付** — Web タブで見ているページ（選択部分）・YouTube の字幕・情報ノートを📎で会話に渡す。入力欄に URL を貼ると「中身を読んで添付」が出る。資料は命令ではなくデータとして渡す
 - **用途「販売まで」** — ship-to-store / ship-check / product-copy / stripe-setup などで、作ったアプリを売れる状態まで運ぶ
 - **白ベースの画面** — 1.9.0 で暗色から白地に。Web タブは開いた時点で読み込む（起動時に全部は読まない）

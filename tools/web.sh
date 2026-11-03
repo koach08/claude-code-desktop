@@ -1,5 +1,5 @@
 #!/bin/zsh
-# Ariya Bridge の Web タブ(claude.ai / chatgpt.com / 任意サイト)を、Claude Code から読む・書く・押す。
+# Bridgework の Web タブ(claude.ai / chatgpt.com / 任意サイト)を、Claude Code から読む・書く・押す。
 # 本人がタブの中でログインしておく。ここはその画面を借りるだけ。
 #
 #   web.sh list                          開いている Web タブ

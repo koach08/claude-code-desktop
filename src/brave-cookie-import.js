@@ -1,4 +1,4 @@
-// Brave にある chatgpt.com / openai.com のログイン(cookie)を、Ariya Bridge の Web タブ
+// Brave にある chatgpt.com / openai.com のログイン(cookie)を、Bridgework の Web タブ
 // (persist:web)へ取り込む。Google の埋め込みログイン拒否を避けるため、「ログイン操作」を
 // させるのではなく「もうログイン済みの状態」をそのまま移す。
 //
@@ -72,7 +72,7 @@ function readBraveCookies(dbPath) {
     const like = HOSTS.map((h) => `host_key LIKE '%${h}'`).join(' OR ');
     const sql = `SELECT host_key, name, path, hex(encrypted_value), expires_utc, is_secure, is_httponly, samesite FROM cookies WHERE ${like};`;
     // 使用中でもコピーして読む(Brave 起動中はロックされることがある)
-    const tmp = path.join(os.tmpdir(), `ariya-brave-cookies-${Date.now()}.sqlite`);
+    const tmp = path.join(os.tmpdir(), `bridgework-brave-cookies-${Date.now()}.sqlite`);
     try { fs.copyFileSync(dbPath, tmp); } catch (e) { return reject(new Error('Brave の cookie を読めませんでした: ' + e.message)); }
     execFile('/usr/bin/sqlite3', ['-readonly', '-separator', '\t', tmp, sql], { maxBuffer: 20 * 1024 * 1024 }, (err, stdout) => {
       try { fs.unlinkSync(tmp); } catch (_) {}

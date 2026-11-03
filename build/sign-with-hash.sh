@@ -24,7 +24,7 @@ IDENTITY="${SIGN_IDENTITY:-$(cat "$HOME/.claude-code-app/signing-identity" 2>/de
   exit 1
 }
 DIR="${0:A:h:h}"
-APP="${1:-$DIR/dist/mac-arm64/Ariya Bridge.app}"
+APP="${1:-$DIR/dist/mac-arm64/Bridgework.app}"
 ENT="$DIR/build/entitlements.mac.plist"
 
 [ -d "$APP" ] || { echo "アプリが見つかりません: $APP"; exit 1; }

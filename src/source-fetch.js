@@ -140,7 +140,7 @@ async function fetchYoutubeVideo(url, { ytdlp = 'yt-dlp', run = defaultRun, tmpR
   };
   const pick = pickSubtitle(meta);
   if (!pick) return { ...info, transcript: '', note: '字幕がありません(説明文だけで分析します)' };
-  const dir = fs.mkdtempSync(path.join(tmpRoot, 'ariya-yt-'));
+  const dir = fs.mkdtempSync(path.join(tmpRoot, 'bridgework-yt-'));
   try {
     const args = ['--skip-download', pick.auto ? '--write-auto-subs' : '--write-subs', '--sub-langs', pick.lang, '--sub-format', 'vtt', '--no-warnings', '--no-playlist', '-o', path.join(dir, '%(id)s.%(ext)s'), url];
     const s = await run(ytdlp, args, { env });

@@ -66,5 +66,5 @@ test('renderer は <script> で読むので UMD が window に生える', () => 
   const win = {};
   vm.createContext(win);
   vm.runInContext(src, win);
-  assert.strictEqual(typeof win.AriyaNudge?.shouldNudge, 'function');
+  assert.strictEqual(typeof win.BridgeworkNudge?.shouldNudge, 'function');
 });

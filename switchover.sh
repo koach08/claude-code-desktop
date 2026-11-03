@@ -1,7 +1,7 @@
 #!/bin/zsh
-# Ariya Bridge 更新スイッチオーバー (dist/mac-arm64 ビルド → /Applications)
+# Bridgework 更新スイッチオーバー (dist/mac-arm64 ビルド → /Applications)
 # ⚠️ 「別の Terminal.app / iTerm」から実行してください。
-#    Ariya Bridge の中から実行すると、アプリ終了と同時にこのスクリプトごと止まります。
+#    Bridgework の中から実行すると、アプリ終了と同時にこのスクリプトごと止まります。
 # ⚠️ 実行するとアプリ内の Claude 会話は全て終了します。区切りのいいタイミングで。
 #    conversationId のあるタブは再起動後 `claude --resume` で自動的に戻ります。
 set -e
@@ -20,20 +20,20 @@ HERE="$(dirname -- "$SELF")"
 # 実行し、手順1でアプリを終了させた瞬間に自分ごと道連れで死んだ。ditto が途中で
 # 止まり、Info.plist を欠いたバンドルが /Applications に残って起動不能になった。
 # 警告コメントだけが頼りだったので、実行元を見て止める番人を置く。
-ariya_ancestor() {
+app_ancestor() {
   local pid=$$ cmd i=0
   while [ "${pid:-0}" -gt 1 ] && [ $i -lt 60 ]; do
     cmd=$(ps -o command= -p "$pid" 2>/dev/null)
     case "$cmd" in
-      *"Ariya Bridge.app/Contents/MacOS/Ariya Bridge"*) return 0 ;;
+      *"Bridgework.app/Contents/MacOS/Bridgework"*|*"Ariya Bridge.app/Contents/MacOS/Ariya Bridge"*) return 0 ;;
     esac
     pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
     i=$((i+1))
   done
   return 1
 }
-if [ "${SWITCHOVER_DETACHED:-0}" != "1" ] && ariya_ancestor; then
-  echo "⚠ Ariya Bridge の中から実行されています。差し替えは行わず中止しました。" >&2
+if [ "${SWITCHOVER_DETACHED:-0}" != "1" ] && app_ancestor; then
+  echo "⚠ Bridgework の中から実行されています。差し替えは行わず中止しました。" >&2
   echo "  手順1のアプリ終了でこのスクリプト自身が死に、バンドルが壊れます(2026-08-23 に発生)。" >&2
   echo "" >&2
   echo "  Terminal.app / iTerm から:  zsh \"$SELF\"" >&2
@@ -42,32 +42,35 @@ if [ "${SWITCHOVER_DETACHED:-0}" != "1" ] && ariya_ancestor; then
   exit 4
 fi
 
-SRC="$HERE/dist/mac-arm64/Ariya Bridge.app"   # このスクリプトと同じ場所の dist を見る
-DST="/Applications/Ariya Bridge.app"
+SRC="$HERE/dist/mac-arm64/Bridgework.app"   # このスクリプトと同じ場所の dist を見る
+DST="/Applications/Bridgework.app"
+# 2026-11-04 改名前の名前。残っていれば一緒に終了させ、ariya:// の登録を新しい方へ移す(バンドルは消さない)
+OLDNAME="/Applications/Ariya Bridge.app"
 LSREG="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 
 if [ ! -d "$SRC" ]; then echo "新ビルドが見つかりません: $SRC"; exit 1; fi
 
 # 出発前点検: 稼働中のアプリを終了させてから新ビルドの不備に気づくのを防ぐ。
 # 無人実行だと「アプリを落としただけで終わり」が一番まずい。
-if [ ! -x "$SRC/Contents/MacOS/Ariya Bridge" ]; then
+if [ ! -x "$SRC/Contents/MacOS/Bridgework" ]; then
   echo "新ビルドの実行ファイルがありません。中止します: $SRC"; exit 1
 fi
 if ! codesign --verify --strict "$SRC" 2>/dev/null; then
   echo "新ビルドの署名が壊れています。中止します: $SRC"; exit 1
 fi
 NEWVER=$(/usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" "$SRC/Contents/Info.plist" 2>/dev/null)
-OLDVER=$(/usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" "$DST/Contents/Info.plist" 2>/dev/null)
+OLDVER=$(/usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" "$DST/Contents/Info.plist" 2>/dev/null || /usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" "$OLDNAME/Contents/Info.plist" 2>/dev/null)
 echo "点検OK: $OLDVER → $NEWVER"
 
 echo "0) 差し替え前のタブ台帳を退避..."
 BK="$HOME/.claude-code-app/sessions.backup.$(date +%Y%m%d-%H%M%S).json"
 if cp "$HOME/.claude-code-app/sessions.json" "$BK" 2>/dev/null; then echo "   $BK"; else echo "   (台帳なし・スキップ)"; fi
 
-echo "1) 実行中の Ariya Bridge を終了 (終了時にタブ台帳が保存される)..."
-running() { pgrep -f "/Applications/Ariya Bridge.app/Contents/MacOS/Ariya Bridge" 2>/dev/null; }
+echo "1) 実行中の Bridgework(旧 Ariya Bridge)を終了 (終了時にタブ台帳が保存される)..."
+running() { pgrep -f "/Applications/(Bridgework|Ariya Bridge).app/Contents/MacOS/(Bridgework|Ariya Bridge)" 2>/dev/null; }
 
-osascript -e 'tell application "Ariya Bridge" to quit' 2>/dev/null || true
+osascript -e 'tell application "Bridgework" to quit' 2>/dev/null || true
+[ -d "$OLDNAME" ] && { osascript -e 'tell application "Ariya Bridge" to quit' 2>/dev/null || true; }
 for i in {1..20}; do running >/dev/null || break; sleep 1; done
 
 # launchd から無人で走らせると Apple Events が通らず osascript が黙って失敗しうる。
@@ -90,8 +93,8 @@ echo "2) 新バンドルを展開してから差し替え..."
 # 先に /Applications 内のステージングへ丸ごと展開し、出来上がりを検めてから mv で
 # 入れ替える。展開の途中で落ちても現物には手を付けていないので、「起動できない
 # バンドルだけが残る」状態にならない。同じボリューム内なので mv は一瞬で終わる。
-STAGE="/Applications/.AriyaBridge.staging.$$"
-OLD="/tmp/AriyaBridge.old.$$"
+STAGE="/Applications/.Bridgework.staging.$$"
+OLD="/tmp/Bridgework.old.$$"
 rm -rf "$STAGE"
 trap 'rm -rf "$STAGE" 2>/dev/null || true' EXIT
 
@@ -99,13 +102,13 @@ if ! ditto "$SRC" "$STAGE"; then
   echo "   ⚠ 展開に失敗。/Applications には触れていません"
   rm -rf "$STAGE"; env -u CLAUDECODE -u CLAUDE_CODE_CHILD_SESSION -u CLAUDE_CODE_ENTRYPOINT open "$DST" 2>/dev/null || true; exit 1
 fi
-if [ ! -x "$STAGE/Contents/MacOS/Ariya Bridge" ] || [ ! -f "$STAGE/Contents/Info.plist" ]; then
+if [ ! -x "$STAGE/Contents/MacOS/Bridgework" ] || [ ! -f "$STAGE/Contents/Info.plist" ]; then
   echo "   ⚠ 展開結果が不完全。/Applications には触れていません"
   rm -rf "$STAGE"; env -u CLAUDECODE -u CLAUDE_CODE_CHILD_SESSION -u CLAUDE_CODE_ENTRYPOINT open "$DST" 2>/dev/null || true; exit 1
 fi
 
 if [ -d "$DST" ]; then mv "$DST" "$OLD"; fi
-if mv "$STAGE" "$DST" && [ -x "$DST/Contents/MacOS/Ariya Bridge" ]; then
+if mv "$STAGE" "$DST" && [ -x "$DST/Contents/MacOS/Bridgework" ]; then
   trap - EXIT
   rm -rf "$OLD"
   echo "   installed: $DST"
@@ -117,11 +120,11 @@ else
   env -u CLAUDECODE -u CLAUDE_CODE_CHILD_SESSION -u CLAUDE_CODE_ENTRYPOINT open "$DST"; exit 1
 fi
 
-echo "3) URL スキーム (ariya://) を LaunchServices に登録..."
+echo "3) URL スキーム (bridgework:// と旧 ariya://) を LaunchServices に登録..."
 "$LSREG" -f "$DST" 2>/dev/null || true
 # dist/ に残るビルド成果物も同じ ariya: を主張し、OS がそちら(非起動)へ解決してしまう。
 # /Applications を唯一のハンドラにするため登録解除する。
-for d in "$SRC" "$(dirname "$(dirname "$SRC")")/mac/Ariya Bridge.app"; do
+for d in "$SRC" "$(dirname "$(dirname "$SRC")")/mac/Bridgework.app" "$(dirname "$SRC")/Ariya Bridge.app" "$OLDNAME"; do
   [ -d "$d" ] && "$LSREG" -u "$d" 2>/dev/null || true
 done
 

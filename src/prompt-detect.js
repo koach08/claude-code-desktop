@@ -23,7 +23,7 @@
 (function (root, factory) {
   const api = factory();
   if (typeof module === 'object' && module.exports) module.exports = api;
-  else root.AriyaPrompt = api;
+  else root.BridgeworkPrompt = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
 
   // PTY の生出力から、判定に使える見える文字だけを取り出す。

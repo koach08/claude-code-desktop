@@ -42,7 +42,7 @@ test('ソースに個人の呼び名を書いていない(公開リポジトリ)
   let local = {};
   try { local = JSON.parse(fs.readFileSync(path.join(require('os').homedir(), '.claude-code-app', 'project-labels.json'), 'utf8')); } catch (_) { /* CI など表が無い所では飛ばす */ }
   // このリポジトリ自身の道具の名前は元から公開されている
-  const own = new Set(['Ariya Bridge', 'Fleet View', 'CC Desktop', 'Code Harness']);
+  const own = new Set(['Bridgework', 'Ariya Bridge', 'Fleet View', 'CC Desktop', 'Code Harness']);
   const leaked = [...new Set(Object.values(local))].filter(v => !own.has(v) && v.length >= 3 && /[^\x00-\x7f]|[A-Z]/.test(v) && src.includes(v));
   assert.deepStrictEqual(leaked, [], `ソースに呼び名が入っている: ${leaked.join(', ')}`);
 });

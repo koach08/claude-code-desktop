@@ -7,7 +7,7 @@
 // renderer.js の中身には触らず、hooks で「会話に添付」「Web タブで開く」だけ借りる。
 
 (function (root) {
-  const md = () => root.AriyaMarkdown;
+  const md = () => root.BridgeworkMarkdown;
   const esc = (s) => md().escapeHtml(s);
   const KIND_ICON = { 'yt-video': '▶️', web: '🌐', digest: '🧭' };
   const LENSES = [
@@ -41,7 +41,7 @@
           </div>
           <div class="lib-row lib-gkey hidden">
             <input id="lib-gkey" type="password" placeholder="Gemini の API キー(aistudio.google.com/apikey で作れます)" autocomplete="off" spellcheck="false" />
-            <button type="button" data-act="save-gkey" title="このアプリ専用の .env(~/.config/ariya/.env)に保存します">保存</button>
+            <button type="button" data-act="save-gkey" title="このアプリ専用の .env(~/.config/bridgework/.env)に保存します">保存</button>
           </div>
           <input id="lib-focus" type="text" placeholder="特に知りたいこと(任意) 例: 授業で使える AI ツール / 個人開発の集客" autocomplete="off" />
           <div class="lib-row">
@@ -212,6 +212,7 @@
           <button type="button" data-act="back">‹ 一覧</button><span class="ct-spacer"></span>
           <button type="button" class="lib-primary" data-act="attach-note" title="この分析を会話に添付">📎 会話に添付</button>
           ${r.raw ? '<button type="button" data-act="attach-full" title="元の字幕・本文も一緒に添付">＋元データも</button>' : ''}
+          ${hooks.makeSlides ? '<button type="button" data-act="slides" title="このノートを元にスライドを作る">🖼 スライドに</button>' : ''}
           ${current.url ? '<button type="button" data-act="open-src" title="元の動画・ページをアプリ内のブラウザで開く">🌐 元を開く</button>' : ''}
           <button type="button" data-act="reveal" title="Finder で表示">Finder</button>
           <button type="button" data-act="trash" title="ゴミ箱へ(Finder のゴミ箱から戻せます)">🗑</button>
@@ -259,6 +260,7 @@
         close();
       } else if (current && act === 'open-src') { hooks.openWeb(current.url); close(); }
       else if (act === 'save-gkey') saveGeminiKey();
+      else if (current && act === 'slides') hooks.makeSlides(current.id);
       else if (current && act === 'frame' && current.url) {
         const sec = String(a.dataset.t || '').split(':').reduce((x, n) => x * 60 + Number(n), 0);
         hooks.openWeb(current.url + (current.url.includes('?') ? '&' : '?') + `t=${sec}s`); close();
@@ -296,5 +298,5 @@
     return { open, close, ingestFromWeb, toggle: () => (state.open ? close() : open()), get isOpen() { return state.open; } };
   }
 
-  root.AriyaLibrary = { init };
+  root.BridgeworkLibrary = { init };
 })(typeof window !== 'undefined' ? window : globalThis);

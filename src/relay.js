@@ -22,7 +22,7 @@
 (function (root, factory) {
   const api = factory();
   if (typeof module === 'object' && module.exports) module.exports = api;
-  else root.AriyaRelay = api;
+  else root.BridgeworkRelay = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
 
   // どの会社が動かしているか。点検役を選ぶときに、実装役と重ならないようにする。

@@ -8,7 +8,7 @@
 // write() に来た文字は、端末の色コードを外して小さな知らせとして出す。
 
 (function (root) {
-  const md = () => root.AriyaMarkdown;
+  const md = () => root.BridgeworkMarkdown;
   const ANSI = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
   const TOOL_LABEL = {
     Bash: 'コマンド', Read: '読む', Write: '書く', Edit: '直す', MultiEdit: '直す', Glob: '探す', Grep: '探す',
@@ -44,6 +44,9 @@
     const statusLine = el('div', 'chat-statusline');
     pane.appendChild(scroller);
     pane.appendChild(statusLine);
+    // どれだけ読んでいるか(コンテキスト)と、つながっている連携(MCP)。本人: 確認できるようにしたい
+    const meter = el('div', 'chat-meter');
+    pane.appendChild(meter);
 
     const st = {
       busy: false,
@@ -55,7 +58,59 @@
       empty: true,
       rafPending: new Set(),
       character,
+      ctx: 0, ctxWindow: 0, model: '', outTotal: 0, mcp: null, toolCount: 0,
     };
+
+    const kTok = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(2)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
+    const MCP_MARK = { connected: ['✓', 'ok', 'つながっています'], failed: ['✗', 'bad', 'つながりません'], 'needs-auth': ['🔑', 'warn', 'ログインが要ります'], pending: ['…', 'wait', 'つないでいる途中'], disabled: ['–', 'wait', '止めてあります'] };
+    function windowFor(model) { return st.ctxWindow || (/\[1m\]|1m/i.test(model || '') ? 1000000 : 200000); }
+    const countBy = (rows, k) => rows.filter((x) => x.status === k).length;
+    function renderMeter() {
+      const parts = [];
+      if (st.ctx) {
+        const w = windowFor(st.model);
+        const pct = Math.min(100, Math.round((st.ctx / w) * 100));
+        const lvl = pct >= 85 ? 'bad' : pct >= 60 ? 'warn' : 'ok';
+        parts.push(`<span class="cm-ctx ${lvl}" title="この会話がいま読んでいる量(コンテキスト)。いっぱいに近づくと古い部分が要約されます。出力の累計 ${kTok(st.outTotal)} トークン"><span class="cm-label">コンテキスト</span><span class="cm-bar"><i style="width:${pct}%"></i></span>${kTok(st.ctx)} / ${kTok(w)}<span class="cm-pct">${pct}%</span></span>`);
+      }
+      if (st.mcp) {
+        const ok = countBy(st.mcp, 'connected'), auth = countBy(st.mcp, 'needs-auth'), bad = countBy(st.mcp, 'failed');
+        parts.push(`<button type="button" class="cm-mcp" data-act="mcp" title="連携(MCP)の今の状態を見る">🔌 連携 ✓${ok}${auth ? ` <span class="cm-warn">🔑${auth}</span>` : ''}${bad ? ` <span class="cm-bad">✗${bad}</span>` : ''}</button>`);
+      } else {
+        parts.push('<span class="cm-mcp-wait" title="最初に話しかけたあとに分かります">🔌 連携 —</span>');
+      }
+      meter.innerHTML = parts.join('');
+      if (st.popOpen) drawPop();
+    }
+    function drawPop() {
+      let pop = document.querySelector('.cm-pop');
+      if (!pop) { pop = el('div', 'cm-pop'); document.body.appendChild(pop); }
+      const rows = (st.mcp || []).slice().sort((a, b) => (b.status === 'connected') - (a.status === 'connected') || a.name.localeCompare(b.name));
+      const order = ['connected', 'needs-auth', 'failed', 'pending', 'disabled'];
+      const sum = order.map((k) => [k, countBy(rows, k)]).filter(([, n]) => n).map(([k, n]) => `${MCP_MARK[k][0]} ${MCP_MARK[k][2]} ${n}`).join(' · ');
+      pop.innerHTML = `<div class="cm-pop-h">連携 <small>${rows.length}件${st.toolCount ? ` · 道具 ${st.toolCount}個` : ''}${st.mcpChecking ? ' · 確かめています…' : ''}</small><div class="cm-sum">${esc(sum)}</div></div>` +
+        (rows.length ? rows.map((x) => { const [m, c, label] = MCP_MARK[x.status] || ['?', 'wait', x.status]; return `<div class="cm-row ${c}"><span class="cm-st">${m}</span><span class="cm-name">${esc(x.name.replace(/^claude\.ai /, ''))}</span><span class="cm-sts">${esc(label)}</span></div>`; }).join('') : '<div class="cm-row">連携はありません</div>') +
+        '<div class="cm-pop-f">つながらない連携も、話しかけるたびに読み込みと待ち時間がかかります。使わないものは外すと速く・安くなります。ログインは端末で <code>claude</code> を開いて <code>/mcp</code> から</div>';
+      // ボタンの上か下の、広い方に出す(画面の外にはみ出さない)
+      const b = meter.querySelector('[data-act="mcp"]'); if (!b) return;
+      const r = b.getBoundingClientRect();
+      const below = window.innerHeight - r.bottom, above = r.top;
+      pop.style.right = `${Math.max(8, window.innerWidth - r.right)}px`;
+      if (below >= above) { pop.style.top = `${r.bottom + 6}px`; pop.style.bottom = ''; pop.style.maxHeight = `${below - 20}px`; }
+      else { pop.style.bottom = `${window.innerHeight - r.top + 6}px`; pop.style.top = ''; pop.style.maxHeight = `${above - 20}px`; }
+    }
+    function closePop() { st.popOpen = false; const p = document.querySelector('.cm-pop'); if (p) p.remove(); }
+    async function mcpPopover() {
+      if (st.popOpen) { closePop(); return; }
+      st.popOpen = true; st.mcpChecking = true; drawPop();
+      // 会話の始まりの状態は古い(つなぐ途中)。開くたびに今の状態を聞く
+      let asked = false;
+      try { asked = api.chatMcpStatus ? await api.chatMcpStatus(sid()) : false; } catch (_) {}
+      if (!asked) { st.mcpChecking = false; if (st.popOpen) drawPop(); }
+    }
+    meter.addEventListener('click', (e) => { if (e.target.closest('[data-act="mcp"]')) mcpPopover(); });
+    document.addEventListener('mousedown', (e) => { if (st.popOpen && !e.target.closest('.cm-pop') && !e.target.closest('.chat-meter')) closePop(); });
+    renderMeter();
 
     // ── 空のときの「今日は何をしますか」 ──
     const welcome = el('div', 'chat-welcome');
@@ -194,6 +249,23 @@
 
     function handle(ev, live = true) {
       switch (ev.kind) {
+        case 'init':
+          if (ev.model) st.model = ev.model;
+          if (ev.mcpServers) { st.mcp = ev.mcpServers; st.toolCount = ev.toolCount || 0; }
+          renderMeter();
+          break;
+        case 'auto-model':
+          note(`おまかせ: ${({ haiku: 'Haiku', sonnet: 'Sonnet', opus: 'Opus' })[ev.model] || ev.model} で答えます(${ev.why})`);
+          break;
+        case 'mcp-status':
+          st.mcp = ev.mcpServers; st.mcpChecking = false;
+          renderMeter();
+          break;
+        case 'usage':
+          st.ctx = ev.context; st.outTotal += ev.output || 0;
+          if (ev.model) st.model = ev.model;
+          renderMeter();
+          break;
         case 'user-text':
           addUser(ev.text, ev.images ? `画像 ${ev.images} 枚` : '', ev.attachments);
           if (live) setBusy(true);
@@ -245,6 +317,7 @@
           break;
         case 'result':
           setBusy(false);
+          if (ev.contextWindow) { st.ctxWindow = ev.contextWindow; renderMeter(); }
           if (live) {
             if (ev.costUsd != null || ev.ms) {
               const secs = ev.ms ? `${Math.round(ev.ms / 100) / 10}秒` : '';
@@ -330,5 +403,5 @@
     };
   }
 
-  root.AriyaChatView = { create, toolSummary };
+  root.BridgeworkChatView = { create, toolSummary };
 })(typeof self !== 'undefined' ? self : this);

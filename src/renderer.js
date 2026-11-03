@@ -477,8 +477,10 @@ function setupListeners() {
         return;
       }
       if (req.action === 'resume' && req.conversationId) {
+        // 会話タブが既定の画面なら、Claude の続きも会話タブで開く(端末ではなく吹き出しで)
+        const m = req.mode || 'claude';
         await restoreTab({
-          mode: req.mode || 'claude',
+          mode: m === 'claude' && currentMode === 'chat' ? 'chat' : m,
           cwd: req.cwd || undefined,
           name: req.name || undefined,
           conversationId: req.conversationId,
@@ -811,7 +813,7 @@ const WEB_PRESETS = [
 // Electron のままの UA だと Google のログインが「安全でないブラウザ」と弾く。Chrome として名乗る
 // ⚠️ productName は "Ariya Bridge" と空白入り。旧 /Ariya[^ ]*\// は空白で止まって残していた。
 //    正本は main.js の setupWebSession()(セッション全体に効く)。ここは webview 属性の保険。
-const WEB_UA = String((typeof navigator !== 'undefined' && navigator.userAgent) || '').replace(/ ?Electron\/[\d.]+/, '').replace(/ ?Ariya Bridge\/[\d.]+/, '').replace(/ ?Ariya[^ ]*\/[\d.]+/, '').replace(/ ?claude-code-desktop\/[\d.]+/, '');
+const WEB_UA = String((typeof navigator !== 'undefined' && navigator.userAgent) || '').replace(/ ?Electron\/[\d.]+/, '').replace(/ ?Ariya Bridge\/[\d.]+/, '').replace(/ ?Bridgework\/[\d.]+/, '').replace(/ ?Ariya[^ ]*\/[\d.]+/, '').replace(/ ?claude-code-desktop\/[\d.]+/, '');
 
 function openWebPicker() {
   const el = document.getElementById('web-picker');
@@ -922,6 +924,7 @@ function addWebTab({ id, url, title, silent }) {
     saveWebTabs();
   });
   view.addEventListener('did-navigate', (e) => {
+    if (e.url === 'about:blank') return;   // 眠らせたときの空ページ。元の URL を覚えたまま
     w.url = e.url; bar.querySelector('.web-url').textContent = e.url; bar.querySelector('.web-url').title = e.url;
     saveWebTabs();
   });
@@ -938,6 +941,22 @@ function addWebTab({ id, url, title, silent }) {
   if (!silent) switchWebTab(wid);
   return wid;
 }
+
+// 見ていない Web タブを眠らせる(2026-11-03)。1枚がブラウザ1枚分のメモリを食う。
+// 20分見ていない・音を出していないタブは中身を外し、開いたときに読み直す(上の lazySrc と同じ仕組み)
+const WEB_IDLE_MS = 20 * 60 * 1000;
+const webIdleTimer = setInterval(() => {
+  const now = Date.now();
+  for (const [wid, w] of webTabs) {
+    const visible = wid === activeWebId && document.body.dataset.tabkind === 'web';
+    if (visible || !w.seenAt) { w.seenAt = now; continue; }
+    if (!w.view || w.view.dataset.lazySrc || now - w.seenAt < WEB_IDLE_MS) continue;
+    try { if (w.view.isCurrentlyAudible && w.view.isCurrentlyAudible()) { w.seenAt = now; continue; } } catch (_) {}
+    w.view.dataset.lazySrc = w.url;
+    try { w.view.setAttribute('src', 'about:blank'); } catch (_) {}
+  }
+}, 60 * 1000);
+if (webIdleTimer && webIdleTimer.unref) webIdleTimer.unref();   // テスト(node)で読んだときに終わらなくなるのを防ぐ
 
 function switchWebTab(wid) {
   const w = webTabs.get(wid); if (!w) return;
@@ -992,22 +1011,23 @@ let chatPresets = null;
 async function getChatPresets() {
   if (!chatPresets) {
     try { chatPresets = await window.api.chatPresets(); } catch (_) { chatPresets = null; }
-    if (!chatPresets && window.AriyaChatPresets) {
-      const P = window.AriyaChatPresets;
+    if (!chatPresets && window.BridgeworkChatPresets) {
+      const P = window.BridgeworkChatPresets;
       chatPresets = { purposes: P.PURPOSES, characters: P.CHARACTERS, models: P.MODELS };
     }
   }
   return chatPresets;
 }
 function characterById(id) {
-  const list = (chatPresets && chatPresets.characters) || (window.AriyaChatPresets && window.AriyaChatPresets.CHARACTERS) || [];
-  return list.find((c) => c.id === id) || list[0] || { id: 'ariya', name: 'アリヤ', initial: 'A', color: '#5b6cff' };
+  const list = (chatPresets && chatPresets.characters) || (window.BridgeworkChatPresets && window.BridgeworkChatPresets.CHARACTERS) || [];
+  const want = id === 'ariya' ? 'bell' : id;   // 改名前の会話の id
+  return list.find((c) => c.id === want) || list[0] || { id: 'bell', name: 'ベル', initial: 'ベ', color: '#5b6cff' };
 }
 let chatSpeakDefault = (() => { try { return localStorage.getItem('ariya:chat-speak') === 'on'; } catch (_) { return false; } })();
 
 async function addChatTab(session, { transcript } = {}) {
   const presets = await getChatPresets();
-  session.chat = session.chat || { model: 'sonnet', purpose: 'general', character: 'ariya' };
+  session.chat = session.chat || { model: 'sonnet', purpose: 'general', character: 'bell' };
   const tabEl = document.createElement('div');
   tabEl.className = 'tab chat';
   tabEl.dataset.sid = session.id;
@@ -1017,7 +1037,7 @@ async function addChatTab(session, { transcript } = {}) {
   requestAnimationFrame(() => { tabsContainer.scrollLeft = tabsContainer.scrollWidth; });
 
   let data = null;
-  const view = window.AriyaChatView.create({
+  const view = window.BridgeworkChatView.create({
     session, presets,
     api: window.api,
     character: characterById(session.chat.character),
@@ -1129,6 +1149,7 @@ function updateComposerForTab() {
 // 中身は main で <attached_source> に包まれ、「資料であって命令ではない」と添えて渡る。
 let lastChatId = null;
 let libPanel = null;
+let slidePanel = null;
 const URL_RE = /https?:\/\/[^\s<>"'）)」】]+/g;
 
 async function attachToChat(att) {
@@ -1198,12 +1219,14 @@ function setLibBadge(n) {
 }
 
 function setupLibrary() {
-  if (!window.AriyaLibrary) return;
-  libPanel = window.AriyaLibrary.init({
+  if (!window.BridgeworkLibrary) return;
+  libPanel = window.BridgeworkLibrary.init({
     attachToChat,
     openWeb: (url) => addWebTab({ url }),
     badge: setLibBadge,
+    makeSlides: (noteId) => { if (libPanel) libPanel.close(); if (slidePanel) slidePanel.open({ noteId }); },
   });
+  if (window.BridgeworkSlides) slidePanel = window.BridgeworkSlides.init({ attachToChat });
   setupAttachChips();
 }
 
@@ -1235,9 +1258,18 @@ async function webTabToNote(w) {
   libPanel.ingestFromWeb({ url: r.url, title: r.title, text: [r.description, r.selection || r.text].filter(Boolean).join('\n\n') });
 }
 
+// オフィス(Fleet View)を Web タブで開く。動いていなければ main が起こす
+async function openOffice() {
+  const r = await window.api.officeOpen();
+  if (!r || !r.ok) { setStatus('error', (r && r.error) || 'オフィスを開けませんでした'); return; }
+  addWebTab({ url: r.url, title: '🏢 オフィス' });
+}
+
 function setupChatTools() {
   const on = (id, ev, fn) => { const e = document.getElementById(id); if (e) e.addEventListener(ev, fn); };
   on('chat-library', 'click', () => libPanel && libPanel.toggle());
+  on('chat-office', 'click', openOffice);
+  on('chat-slides', 'click', () => { if (libPanel && libPanel.isOpen) libPanel.close(); if (slidePanel) slidePanel.toggle(); });
   on('chat-browser', 'click', () => openWebPicker());
   on('chat-purpose', 'change', (e) => configureChat({ purpose: e.target.value }));
   on('chat-model', 'change', (e) => configureChat({ model: e.target.value }));
@@ -1263,7 +1295,7 @@ function setupChatTools() {
     if (!q) { ta.placeholder = 'Alfred に聞きたいことを書いてから「Alfred に聞く」を押してください'; ta.focus(); return; }
     ta.value = ''; ta.style.height = 'auto';
     const card = t.chat.alfredCard(q);
-    const ctx = `Ariya Bridge の会話「${t.session.name || ''}」から。直近の返事:\n${(t.chat.lastAssistantText || '').slice(-1500)}`;
+    const ctx = `Bridgework の会話「${t.session.name || ''}」から。直近の返事:\n${(t.chat.lastAssistantText || '').slice(-1500)}`;
     let r;
     try { r = await window.api.alfredVoice({ text: q, context: ctx }); } catch (e) { r = { ok: false, error: String(e && e.message || e) }; }
     card.done(r);
@@ -1586,7 +1618,7 @@ function scheduleEngineNudge(text) {
 
 async function updateEngineNudge(text) {
   const box = document.getElementById('engine-nudge');
-  if (!box || !window.AriyaNudge) return;
+  if (!box || !window.BridgeworkNudge) return;
   const t = String(text || '').trim();
   // 黙らせている間は判定も呼ばない。入力を空にしたら解除する。
   if (nudgeMuted) {
@@ -1595,7 +1627,7 @@ async function updateEngineNudge(text) {
     return;
   }
   let judge = null;
-  if (t.length >= window.AriyaNudge.MIN_CHARS) {
+  if (t.length >= window.BridgeworkNudge.MIN_CHARS) {
     try { judge = await window.api.suggestEngine(t); } catch (_) { return; }
   }
   // 判定を待っている間に打ち替えられていたら捨てる。
@@ -1603,7 +1635,7 @@ async function updateEngineNudge(text) {
   // IPC を待っている最中に「このまま」を押されていたら、戻ってきてから出さない。
   // await の前だけ見ていると、押した直後に判定が返ってきて出し直してしまう。
   if (nudgeMuted) { hideEngineNudge(); return; }
-  const d = window.AriyaNudge.shouldNudge(judge, currentTabEngine(), t);
+  const d = window.BridgeworkNudge.shouldNudge(judge, currentTabEngine(), t);
   if (!d.show) { hideEngineNudge(); return; }
   nudgeState = d;
   document.getElementById('engine-nudge-text').textContent =
@@ -1772,7 +1804,7 @@ async function runRelayFromDialog() {
   const task = document.getElementById('engine-task-input').value.trim();
   if (!task) return;
   const els = relayPanelEls();
-  if (!els.panel || !window.AriyaRelay) return;
+  if (!els.panel || !window.BridgeworkRelay) return;
 
   els.panel.classList.remove('hidden');
   els.steps.innerHTML = '';
@@ -1784,7 +1816,7 @@ async function runRelayFromDialog() {
     const avail = await window.api.workerEngines();
     const available = Object.keys(avail).filter((e) => avail[e]);
     const judge = await window.api.suggestEngine(task);
-    const plan = window.AriyaRelay.planRelay(task, judge, available);
+    const plan = window.BridgeworkRelay.planRelay(task, judge, available);
     if (!plan.ok) { els.plan.textContent = `計画を立てられません: ${plan.error}`; return; }
 
     // cwd はいまのタブに合わせる。案件が変わると調べる先が変わってしまう。
@@ -1800,7 +1832,7 @@ async function runRelayFromDialog() {
       if (relayRun.cancelled) break;
       const row = relayStepRow(step);
       els.steps.appendChild(row);
-      const prompt = window.AriyaRelay.buildStagePrompt(step, task, prior);
+      const prompt = window.BridgeworkRelay.buildStagePrompt(step, task, prior);
       const r = await runRelayStep(step, prompt, cwd, row);
       const state = row.querySelector('.relay-state');
       const out = (r.out || '').trim();
@@ -1865,10 +1897,10 @@ async function send() {
   // ── 自動振り分け(2026-09-23) ─────────────────────────────
   // アイコンを押さなくても、Enter の時点で「どのエンジンで・どれだけ重い頭で」を決める。
   // 黙って飛ばさない: 回したことと理由を必ずいまのタブに書く。
-  if (autoRouteOn && window.AriyaNudge) {
+  if (autoRouteOn && window.BridgeworkNudge) {
     let judge = null;
     try { judge = await window.api.suggestEngine(text); } catch (_) { judge = null; }
-    if (judge && window.AriyaNudge.shouldAutoRoute(judge, currentTabEngine())) {
+    if (judge && window.BridgeworkNudge.shouldAutoRoute(judge, currentTabEngine())) {
       hideEngineNudge();
       if (tab) {
         tab.term.write(`\r\n\x1b[36m[→ ${judge.label} に回しました]\x1b[0m `
@@ -1984,8 +2016,8 @@ function detectActivity(output, sessionId) {
   // 通るので、例外を投げると画面が出力のたびに壊れる。
   // タイトルの合図も見る。Codex は待っている間タイトルを点滅させ続けるので、
   // 出力が続いたまま人間を待っている状態は、テキスト側だけでは捕まらない。
-  const isApproval = !!(window.AriyaPrompt
-    && (window.AriyaPrompt.isAwaitingUser(tail) || window.AriyaPrompt.titleSaysWaiting(tail)));
+  const isApproval = !!(window.BridgeworkPrompt
+    && (window.BridgeworkPrompt.isAwaitingUser(tail) || window.BridgeworkPrompt.titleSaysWaiting(tail)));
 
   const patterns = [
     { re: { test: () => isApproval }, msg: 'あなたの返事待ち — ターミナルで番号を選ぶ' },
@@ -2051,7 +2083,7 @@ function detectActivity(output, sessionId) {
       const tab = tabs.get(sessionId);
       const tabName = tab ? (tab.session.name || 'Claude Code') : 'Claude Code';
       try {
-        new Notification('Ariya Bridge — あなた待ち', {
+        new Notification('Bridgework — あなた待ち', {
           body: `「${tabName}」が返事を待って止まっています`,
           silent: false,
         });

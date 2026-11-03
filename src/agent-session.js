@@ -43,7 +43,11 @@ function normalize(m) {
   switch (m.type) {
     case 'system':
       if (m.subtype === 'init') {
-        out.push({ kind: 'init', sessionId: m.session_id, model: m.model || null, cwd: m.cwd || null });
+        const init = { kind: 'init', sessionId: m.session_id, model: m.model || null, cwd: m.cwd || null };
+        // つながっている連携(MCP)。画面の「🔌 連携」に出す(本人: どれが繋がっているか確認したい)
+        if (Array.isArray(m.mcp_servers)) init.mcpServers = m.mcp_servers.map((x) => ({ name: String(x.name || ''), status: String(x.status || '') })).filter((x) => x.name);
+        if (Array.isArray(m.tools)) init.toolCount = m.tools.length;
+        out.push(init);
       } else if (m.subtype === 'status' && m.status) {
         out.push({ kind: 'status', status: m.status });
       } else if (m.subtype === 'task_summary' && m.detail) {
@@ -66,6 +70,12 @@ function normalize(m) {
     case 'assistant': {
       if (m.parent_tool_use_id) break;
       const msg = m.message || {};
+      // コンテキストの使用量 = この発言を作るときに読んだ量(入力 + キャッシュ読み/書き)
+      const u = msg.usage;
+      if (u && typeof u === 'object') {
+        const context = (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
+        if (context > 0) out.push({ kind: 'usage', context, output: u.output_tokens || 0, model: msg.model || null });
+      }
       for (const b of msg.content || []) {
         if (b.type === 'text') out.push({ kind: 'text', messageId: msg.id, text: b.text });
         else if (b.type === 'tool_use') out.push({ kind: 'tool-use', messageId: msg.id, id: b.id, name: b.name, input: b.input });
@@ -79,6 +89,14 @@ function normalize(m) {
       for (const b of content) {
         if (b.type !== 'tool_result') continue;
         out.push({ kind: 'tool-result', id: b.tool_use_id, isError: !!b.is_error, text: toolResultText(b.content) });
+      }
+      break;
+    }
+    case 'control_response': {
+      // 連携の今の状態(こちらから mcp_status で聞いた返事)
+      const r = m.response && m.response.response;
+      if (r && Array.isArray(r.mcpServers)) {
+        out.push({ kind: 'mcp-status', mcpServers: r.mcpServers.map((x) => ({ name: String(x.name || ''), status: String(x.status || '') })).filter((x) => x.name) });
       }
       break;
     }
@@ -97,6 +115,7 @@ function normalize(m) {
         costUsd: typeof m.total_cost_usd === 'number' ? m.total_cost_usd : null,
         ms: m.duration_ms || null,
         sessionId: m.session_id || null,
+        contextWindow: Object.values(m.modelUsage || {}).reduce((mx, x) => Math.max(mx, (x && x.contextWindow) || 0), 0) || null,
       });
       break;
     default:
@@ -197,7 +216,9 @@ function createClaudeSession(opts, handlers = {}) {
       },
     }),
     // 返事の途中で止める。プロセスは生かしたまま次の発言を待たせる。
-    interrupt: () => write({ type: 'control_request', request_id: `ariya-${++reqSeq}`, request: { subtype: 'interrupt' } }),
+    interrupt: () => write({ type: 'control_request', request_id: `bw-${++reqSeq}`, request: { subtype: 'interrupt' } }),
+    // つながっている連携の今の状態を聞く。返事は onEvent に mcp-status で来る
+    mcpStatus: () => write({ type: 'control_request', request_id: `bw-${++reqSeq}`, request: { subtype: 'mcp_status' } }),
     close: () => {
       if (exited) return;
       try { proc.stdin.end(); } catch (_) {}

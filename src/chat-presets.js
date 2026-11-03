@@ -9,7 +9,7 @@
 
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory();
-  else root.AriyaChatPresets = factory();
+  else root.BridgeworkChatPresets = factory();
 })(typeof self !== 'undefined' ? self : this, function () {
   const PURPOSES = [
     {
@@ -45,8 +45,8 @@
   ];
 
   const CHARACTERS = [
-    { id: 'ariya', name: 'アリヤ', initial: 'A', color: '#5b6cff', voice: null,
-      prompt: 'あなたの名前はアリヤです。持ち主の仕事を支える落ち着いた執事として、丁寧だが簡潔な日本語で話してください。' },
+    { id: 'bell', name: 'ベル', initial: 'ベ', color: '#5b6cff', voice: null,
+      prompt: 'あなたの名前はベルです。持ち主の仕事を支える落ち着いた執事として、丁寧だが簡潔な日本語で話してください。' },
     { id: 'sora', name: 'ソラ', initial: 'ソ', color: '#10a37f', voice: null,
       prompt: 'あなたの名前はソラです。明るく前向きな相棒として、親しみのある日本語で、でも要点から話してください。' },
     { id: 'kuro', name: 'クロ', initial: 'ク', color: '#333333', voice: null,
@@ -55,15 +55,30 @@
   ];
 
   const MODELS = [
+    { id: 'auto', label: 'おまかせ', hint: '用途と中身で選ぶ(節約)' },
     { id: 'opus', label: 'Opus', hint: 'いちばん賢い' },
     { id: 'sonnet', label: 'Sonnet', hint: 'ふだん使い' },
     { id: 'haiku', label: 'Haiku', hint: '速い・安い' },
   ];
 
+  // 「おまかせ」の選び方(2026-11-03)。本人: 目的に合わせて自動で調整し、トークンを節約したい。
+  // 会話の最初の発言で1回だけ選ぶ。途中で替えると読み込み済み(キャッシュ)が無駄になり、かえって高くつく。
+  const DEEP_RE = /設計|アーキテクチャ|論文|査読|リファクタ|徹底|深く|戦略|原因が分からない|なぜ動かない|セキュリティ|申請書|科研/;
+  function pickModel({ purpose, text, attachments } = {}) {
+    const t = String(text || '');
+    const heavy = (attachments || []).length > 0 || t.length > 600;
+    if (DEEP_RE.test(t)) return { model: 'opus', why: '込み入った相談なので' };
+    if (purpose === 'dev' || purpose === 'ship' || purpose === 'research') return { model: 'sonnet', why: `用途が${purposeOf(purpose).label}なので` };
+    if (!heavy && t.length < 200) return { model: 'haiku', why: '短いやり取りなので' };
+    return { model: 'sonnet', why: heavy ? '資料や長い文を読むので' : 'ふだんの作業なので' };
+  }
+
   function purposeOf(id) { return PURPOSES.find((p) => p.id === id) || PURPOSES[0]; }
   function characterOf(id, extra) {
     const all = CHARACTERS.concat(Array.isArray(extra) ? extra : []);
-    return all.find((c) => c.id === id) || CHARACTERS[0];
+    // 'ariya' は改名前(2026-11-04)の会話に残っている id。ベルとして開く
+    const want = id === 'ariya' ? 'bell' : id;
+    return all.find((c) => c.id === want) || CHARACTERS[0];
   }
 
   // claude --append-system-prompt に渡す文。空なら付けない。
@@ -73,7 +88,7 @@
     if (c.prompt) parts.push(c.prompt);
     const p = purposeOf(opts.purpose);
     if (p.prompt) parts.push(p.prompt);
-    parts.push('この会話は Ariya Bridge の会話画面から来ています。返事は Markdown で読みやすく、日本語で書いてください。');
+    parts.push('この会話は Bridgework の会話画面から来ています。返事は Markdown で読みやすく、日本語で書いてください。');
     if (opts.libraryDir) {
       parts.push(`本人が集めたオンライン情報(YouTube・Web ページの分析メモ)は「情報ノート」 ${opts.libraryDir} に1件1ファイルの Markdown で置いてあります(元の字幕・本文は raw/)。本人が「情報ノート」「集めた動画」などと言ったら、そこを読んでください。`);
     }
@@ -111,5 +126,5 @@
     return { text: s.slice(0, at), attachments: atts };
   }
 
-  return { PURPOSES, CHARACTERS, MODELS, purposeOf, characterOf, systemPromptFor, composeWithAttachments, splitAttachments, ATTACH_MARK };
+  return { PURPOSES, CHARACTERS, MODELS, pickModel, purposeOf, characterOf, systemPromptFor, composeWithAttachments, splitAttachments, ATTACH_MARK };
 });

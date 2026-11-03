@@ -26,6 +26,7 @@ function findBin(name) {
 // whisper.cpp のモデル。大きい(精度の高い)ものを優先
 function findWhisperModel() {
   const dirs = [
+    process.env.BRIDGEWORK_WHISPER_DIR,
     process.env.ARIYA_WHISPER_DIR,
     path.join(os.homedir(), '.cache', 'whisper'),
     path.join(os.homedir(), '.cache', 'whisper.cpp'),

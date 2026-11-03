@@ -35,6 +35,7 @@ test('用途とキャラ: 追記プロンプトに両方が入り、知らない
   assert.ok(p.includes('クロ'));
   assert.ok(p.includes('送信・転送・削除'));
   assert.strictEqual(presets.purposeOf('nope').id, 'general');
-  assert.strictEqual(presets.characterOf('nope').id, 'ariya');
+  assert.strictEqual(presets.characterOf('nope').id, 'bell');
+  assert.strictEqual(presets.characterOf('ariya').id, 'bell');
   assert.strictEqual(presets.characterOf('x', [{ id: 'x', name: 'X' }]).name, 'X');
 });

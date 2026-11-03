@@ -4,7 +4,7 @@
 # なぜ在るか: 本人が手順を覚える必要をなくすため。3 行のコマンドを覚えて打つのは負担で、
 # 打ち間違いも起きる。ここに閉じ込めて「asa.sh を叩く」だけにする(2026-09-13)。
 #
-# ⚠️ 別の Terminal.app から実行すること。Ariya Bridge のタブから叩くと、アプリ終了と
+# ⚠️ 別の Terminal.app から実行すること。Bridgework のタブから叩くと、アプリ終了と
 #    同時に自分ごと止まる(switchover.sh 側にも番人が居るが、ここでも先に言っておく)。
 # ⚠️ 実行するとアプリ内の会話は全部終わる。conversationId のあるタブは再起動後に戻る。
 set -e
@@ -19,7 +19,7 @@ echo
 echo "━━━ 2/3 中身の確認 ━━━"
 # 差し替える前に、入れたはずのものが本当に入っているかを見る。
 # 「ビルドしたのに古いまま」を何度か踏んでいるので、目で確かめられるようにする。
-ASAR="$HERE/dist/mac-arm64/Ariya Bridge.app/Contents/Resources/app.asar"
+ASAR="$HERE/dist/mac-arm64/Bridgework.app/Contents/Resources/app.asar"
 if [ ! -f "$ASAR" ]; then echo "❌ ビルド結果が見つかりません: $ASAR"; exit 1; fi
 TMPD=$(mktemp -d)
 # ⚠️ extract-file は標準出力に出さず、カレントに basename で書く。

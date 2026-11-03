@@ -94,9 +94,9 @@ test('ブラウザ側でも同じ規則が読める形になっている', () =>
   const win = {};
   vm.createContext(win);
   vm.runInContext(src, win);          // module が無い = ブラウザと同じ条件
-  assert.strictEqual(typeof win.AriyaPrompt?.isAwaitingUser, 'function',
-    'window.AriyaPrompt が生えていない');
-  assert.ok(win.AriyaPrompt.isAwaitingUser(' › 1. Yes, proceed (y)'));
+  assert.strictEqual(typeof win.BridgeworkPrompt?.isAwaitingUser, 'function',
+    'window.BridgeworkPrompt が生えていない');
+  assert.ok(win.BridgeworkPrompt.isAwaitingUser(' › 1. Yes, proceed (y)'));
 });
 
 // ── 答え終わったあと: 選択肢の枠が残っていても待ちではない ──────────

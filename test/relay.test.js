@@ -131,9 +131,9 @@ test('renderer は <script> で読むので UMD が window に生える', () => 
   const win = {};
   vm.createContext(win);
   vm.runInContext(src, win);          // module が無い = ブラウザと同じ条件
-  assert.strictEqual(typeof win.AriyaRelay?.planRelay, 'function');
-  assert.strictEqual(typeof win.AriyaRelay?.buildStagePrompt, 'function');
-  const p = win.AriyaRelay.planRelay('x', { engine: 'claude', confidence: 'high' }, ['claude', 'gemini']);
+  assert.strictEqual(typeof win.BridgeworkRelay?.planRelay, 'function');
+  assert.strictEqual(typeof win.BridgeworkRelay?.buildStagePrompt, 'function');
+  const p = win.BridgeworkRelay.planRelay('x', { engine: 'claude', confidence: 'high' }, ['claude', 'gemini']);
   assert.strictEqual(p.ok, true);
 });
 

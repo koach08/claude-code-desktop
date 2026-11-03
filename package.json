@@ -38,12 +38,12 @@
   },
   "build": {
     "appId": "com.languagexai.claude-code-desktop",
-    "productName": "Ariya Bridge",
+    "productName": "Bridgework",
     "mac": {
       "category": "public.app-category.developer-tools",
       "icon": "build/icon.icns",
       "extendInfo": {
-        "CFBundleDisplayName": "Ariya Bridge 開発エージェント"
+        "CFBundleDisplayName": "Bridgework"
       },
       "target": [
         {
@@ -100,7 +100,7 @@
       "category": "Development"
     },
     "dmg": {
-      "title": "Ariya Bridge 開発エージェント",
+      "title": "Bridgework",
       "contents": [
         {
           "x": 130,
@@ -126,8 +126,9 @@
     ],
     "protocols": [
       {
-        "name": "Ariya Bridge",
+        "name": "Bridgework",
         "schemes": [
+          "bridgework",
           "ariya"
         ],
         "role": "Viewer"

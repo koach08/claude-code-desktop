@@ -17,7 +17,7 @@
 (function (root, factory) {
   const api = factory();
   if (typeof module === 'object' && module.exports) module.exports = api;
-  else root.AriyaNudge = api;
+  else root.BridgeworkNudge = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
 
   // これ未満の入力では判定しない。日本語だと 10 文字あれば動詞まで出る。

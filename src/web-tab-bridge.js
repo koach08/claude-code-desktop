@@ -1,7 +1,7 @@
 // Web タブ(claude.ai / chatgpt.com をアプリの中で開いたもの)を、外(制御窓・Claude Code)から
 // 読んで操作するための橋。
 //
-// なぜ要るか: 本人は ChatGPT や Claude のチャットを Ariya Bridge の中で開き、そこへ
+// なぜ要るか: 本人は ChatGPT や Claude のチャットを Bridgework の中で開き、そこへ
 // 「作業に応じて向いているエンジンに投げる」をしたい。画面をスクショして押すより、
 // webview の中で JS を走らせて入力欄に書き、返事の本文を読む方が速くて確実。
 //

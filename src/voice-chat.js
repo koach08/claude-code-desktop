@@ -52,7 +52,7 @@
       transcribe,        // async (blobArray, mimeType) => {text} | {error}
       tts,               // async (text) => {audio, mime} | {error}  … 良い声で読む
       converse,          // async (messages, context) => {ok, reply}
-      // 本物の Alfred (koach-os の声の頭: Claude・道具・記憶) に聞く。2026-10-15 本人「Ariya と連携させて家事をしながら話せるように」
+      // 本物の Alfred (koach-os の声の頭: Claude・道具・記憶) に聞く。2026-10-15 本人「Ariya(現 Bridgework)と連携させて家事をしながら話せるように」
       // 声の相手を声で切り替えていないときは、会話はこちらに渡す。無ければ昔の converse
       askAlfred,         // async (text, context) => {ok, spoken, tools} | {ok:false, error}
       keepAwake,         // (on: boolean) => void … ライブの間 Mac を眠らせない
@@ -537,7 +537,7 @@
         }
 
         // 声の相手を切り替えていなければ、本物の Alfred (koach-os の声の頭: Claude・道具・記憶) に聞く。
-        // 2026-10-15 本人「Ariya と連携させて、家事をしながら話せるように」。
+        // 2026-10-15 本人「Ariya(現 Bridgework)と連携させて、家事をしながら話せるように」。
         // タブへ渡すときは Alfred が【渡す】…【ここまで】で返し、下の 4) で本人に尋ねてから渡す (端末に入るのは runIntent だけ)
         let reply = '';
         if (askAlfred && !(engine && engine.provider)) {

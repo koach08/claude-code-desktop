@@ -6,7 +6,7 @@
 
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory();
-  else root.AriyaMarkdown = factory();
+  else root.BridgeworkMarkdown = factory();
 })(typeof self !== 'undefined' ? self : this, function () {
   function escapeHtml(s) {
     return String(s == null ? '' : s)

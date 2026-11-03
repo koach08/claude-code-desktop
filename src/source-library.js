@@ -1,6 +1,6 @@
 // 情報ノート: 取り込んで分析したものを Markdown で1件1ファイルに置く棚。
 //
-// 置き場は普通のフォルダ(既定 ~/Documents/Ariya情報ノート)。アプリの中に閉じ込めないのは、
+// 置き場は普通のフォルダ(既定 ~/Documents/Bridgework情報ノート)。アプリの中に閉じ込めないのは、
 // 会話タブの Claude Code がそのまま読めるように(「情報ノートの○○を元に機能案を出して」)、
 // また Finder・Obsidian・Notion への持ち出しもできるようにするため。
 //
@@ -20,7 +20,7 @@ function ensureDir(dir) {
   fs.mkdirSync(path.join(dir, '.ariya'), { recursive: true });
   const readme = path.join(dir, 'README.md');
   if (!fs.existsSync(readme)) {
-    fs.writeFileSync(readme, '# Ariya 情報ノート\n\nAriya Bridge の「取り込む」で集めた動画・ページの分析です。1件1ファイル。元データ(字幕・本文)は raw/ にあります。\n会話タブで「情報ノートの○○を読んで」と頼むと、Claude がここを読みます。\n');
+    fs.writeFileSync(readme, '# Bridgework 情報ノート\n\nBridgework の「取り込む」で集めた動画・ページの分析です。1件1ファイル。元データ(字幕・本文)は raw/ にあります。\n会話タブで「情報ノートの○○を読んで」と頼むと、Claude がここを読みます。\n');
   }
 }
 

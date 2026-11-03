@@ -8,7 +8,7 @@ const { planWorktree, safeLabel, worktreeRoot } = require('../src/worktree');
 
 test('ラベルから枝名とディレクトリを決める', () => {
   const p = planWorktree('/repo', '表示を速くしたい', 1756500000000);
-  assert.strictEqual(p.branch, 'ariya/表示を速くしたい-1756500000000');
+  assert.strictEqual(p.branch, 'bridgework/表示を速くしたい-1756500000000');
   assert.ok(p.dir.startsWith(worktreeRoot()));
   assert.ok(p.addArgs.includes('-b') && p.addArgs.includes('HEAD'));
 });

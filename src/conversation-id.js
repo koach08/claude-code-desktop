@@ -55,7 +55,7 @@ function findConversationId(cwd, sinceMs, opts = {}) {
 }
 
 // Codex CLI の会話を探す。記録は ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl で、
-// 1行目が session_meta(payload.id / cwd / originator)。Ariya のタブから起動したものは
+// 1行目が session_meta(payload.id / cwd / originator)。Bridgework のタブから起動したものは
 // originator が "codex-tui"(Codex Desktop や codex_exec の記録は別物なので除く)。
 // ⚠️ ここが無いと再起動で `codex` を素で起動し直し、Codex のタブは毎回まっさらになっていた。
 function findCodexSessionId(cwd, sinceMs, opts = {}) {

@@ -1,4 +1,4 @@
-// 他のアプリで進めた会話を、Ariya のタブとして開くための一覧。
+// 他のアプリで進めた会話を、Bridgework のタブとして開くための一覧。
 //
 // 本人の望み: デスクトップアプリ(Claude / Codex)を別に開くとメモリを食うので、
 // 一つのアプリで全部を扱いたい。会話の記録は両方ともローカルにあるので、
@@ -48,7 +48,7 @@ function readHead(fs, file, bytes = HEAD_BYTES) {
   return buf.toString('utf8', 0, n);
 }
 
-// Claude 側。entrypoint が claude-desktop のもの(Ariya 自身の cli の会話は台帳で扱うので除く)
+// Claude 側。entrypoint が claude-desktop のもの(Bridgework 自身の cli の会話は台帳で扱うので除く)
 function listClaude(opts) {
   const fs = opts.fs || fsDefault;
   const home = opts.homedir || osDefault.homedir();

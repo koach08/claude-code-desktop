@@ -18,7 +18,7 @@ const os = require('os');
 // 作業ツリーは一時領域に置く。リポジトリの中に作ると、そのリポジトリを
 // 見に行くエージェントが自分の作業ツリーを読み始めて話がこじれる。
 function worktreeRoot() {
-  return path.join(os.tmpdir(), 'ariya-worktrees');
+  return path.join(os.tmpdir(), 'bridgework-worktrees');
 }
 
 // ラベルは枝名とディレクトリ名になる。git が受け付けない文字を落とす。
@@ -43,7 +43,7 @@ function planWorktree(repo, label, stamp = Date.now()) {
   if (!repo) throw new Error('repo は必須');
   const name = `${safeLabel(label, stamp)}-${stamp}`;
   const dir = path.join(worktreeRoot(), name);
-  const branch = `ariya/${name}`;
+  const branch = `bridgework/${name}`;
   return {
     repo,
     dir,

@@ -19,7 +19,7 @@
 (function (root, factory) {
   const api = factory();
   if (typeof module === 'object' && module.exports) module.exports = api;
-  else root.AriyaWorkerCmd = api;
+  else root.BridgeworkWorkerCmd = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
 
   // 読み取りだけで済む工程(下調べ・レビュー・影響追跡)で許す道具。

@@ -20,9 +20,10 @@ if (IS_DEV_BUILD) {
   app.setPath('userData', `${app.getPath('userData')}-dev`);
 }
 
-// ARIYA_DATA_DIR: 確認用に別の置き場で起動する(本番の台帳・Alfred の鍵を上書きしないため。2026-11-03)
-const ISOLATED_DATA = !!process.env.ARIYA_DATA_DIR;
-const SESSIONS_DIR = process.env.ARIYA_DATA_DIR || path.join(os.homedir(), '.claude-code-app');
+// BRIDGEWORK_DATA_DIR(旧 ARIYA_DATA_DIR): 確認用に別の置き場で起動する(本番の台帳・Alfred の鍵を上書きしないため。2026-11-03)
+const DATA_DIR_ENV = process.env.BRIDGEWORK_DATA_DIR || process.env.ARIYA_DATA_DIR;
+const ISOLATED_DATA = !!DATA_DIR_ENV;
+const SESSIONS_DIR = DATA_DIR_ENV || path.join(os.homedir(), '.claude-code-app');
 const BUFFERS_DIR = path.join(SESSIONS_DIR, 'buffers');
 const CRASH_FLAG = path.join(SESSIONS_DIR, '.running');
 const sessions = new Map();
@@ -70,7 +71,7 @@ const GROK_MODEL = process.env.GROK_MODEL || 'xai/grok-4.6';
 const CLAUDE_MODEL = 'opus';
 // 判定から渡してよいモデルの別名。ここに無い文字列は無視して既定に戻す
 // (画面から任意の文字列が --model に入るのを防ぐ)。版は書かない=別名は常に最新を指す。
-const CLAUDE_MODEL_ALLOW = new Set(['haiku', 'sonnet', 'opus', 'opus[1m]', 'fable']);
+const CLAUDE_MODEL_ALLOW = new Set(['auto', 'haiku', 'sonnet', 'opus', 'opus[1m]', 'fable']);
 if (!IS_WIN) {
   try {
     const shell = IS_MAC ? '/bin/zsh' : '/bin/bash';
@@ -123,7 +124,7 @@ function createWindow() {
     minWidth: 700,
     minHeight: 450,
     backgroundColor: '#ffffff',
-    title: IS_DEV_BUILD ? '[DEV] Ariya Bridge 開発エージェント' : 'Ariya Bridge 開発エージェント',
+    title: IS_DEV_BUILD ? '[DEV] Bridgework' : 'Bridgework',
     titleBarStyle: IS_MAC ? 'hiddenInset' : 'default',
     trafficLightPosition: IS_MAC ? { x: 12, y: 12 } : undefined,
     webPreferences: {
@@ -134,7 +135,7 @@ function createWindow() {
       // 本人の望みは「デスクトップアプリをいくつも開かない」(2026-09-11)
       webviewTag: true,
       // 声のライブは 50ms ごとに音量を見る。窓が後ろに回ると間引かれて区切りが崩れるので、間引かせない
-      // (家事をしながら話すとき、Ariya は前面に無い)
+      // (家事をしながら話すとき、Bridgework は前面に無い)
       backgroundThrottling: false,
     },
   });
@@ -469,7 +470,7 @@ function createChatSession(id, { cwd, name, conversationId, chat, deferred }) {
   const opts = {
     model: CLAUDE_MODEL_ALLOW.has(String((chat && chat.model) || '')) ? chat.model : 'sonnet',
     purpose: (chat && chat.purpose) || 'general',
-    character: (chat && chat.character) || 'ariya',
+    character: (chat && chat.character) || 'bell',
   };
   const send = (ch, payload) => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(ch, payload);
@@ -508,7 +509,8 @@ function createChatSession(id, { cwd, name, conversationId, chat, deferred }) {
       bin: IS_WIN ? 'claude.cmd' : 'claude',
       cwd: sessionData.cwd,
       env,
-      model: sessionData.chatOpts.model,
+      // おまかせは最初の発言で選んだものを使い続ける(まだなら sonnet)
+      model: sessionData.chatOpts.model === 'auto' ? (sessionData.autoModel || 'sonnet') : sessionData.chatOpts.model,
       resume: sessionData.conversationId || undefined,
       appendSystemPrompt: chatPresets.systemPromptFor({ ...sessionData.chatOpts, libraryDir: LIBRARY_DIR }, loadExtraCharacters()),
     }, {
@@ -545,6 +547,11 @@ function createChatSession(id, { cwd, name, conversationId, chat, deferred }) {
     const atts = (attachments || []).filter((x) => x && x.text);
     if (!t && atts.length) t = '添付した資料を読んで、要点と使えそうな点を教えてください。';
     if (!t && !(images && images.length)) return false;
+    if (sessionData.chatOpts.model === 'auto' && !sessionData.autoModel && !(agent && agent.alive)) {
+      const pick = chatPresets.pickModel({ purpose: sessionData.chatOpts.purpose, text: t, attachments: atts });
+      sessionData.autoModel = pick.model;
+      send(`chat-event-${id}`, { kind: 'auto-model', model: pick.model, why: pick.why });
+    }
     const a = start();
     // 最初の発言で名前を付ける(画面側と同じ規則。台帳・左メニュー・Alfred の /tabs に効かせる)
     if (sessionData.name === '新しい会話') sessionData.name = t.replace(/\s+/g, ' ').slice(0, 28);
@@ -558,6 +565,7 @@ function createChatSession(id, { cwd, name, conversationId, chat, deferred }) {
   sessionData.chat = {
     submit,
     interrupt: () => (agent ? agent.interrupt() : false),
+    mcpStatus: () => (agent && agent.mcpStatus ? agent.mcpStatus() : false),
     respondPermission: (requestId, allow, extra) => {
       const p = sessionData.pendingPermissions.get(requestId);
       sessionData.pendingPermissions.delete(requestId);
@@ -567,7 +575,7 @@ function createChatSession(id, { cwd, name, conversationId, chat, deferred }) {
     // モデル・用途・キャラを変える。動いていれば止め、次の発言で同じ会話のまま起こし直す
     configure: (next) => {
       const o = sessionData.chatOpts;
-      if (next.model && CLAUDE_MODEL_ALLOW.has(next.model)) o.model = next.model;
+      if (next.model && CLAUDE_MODEL_ALLOW.has(next.model)) { o.model = next.model; sessionData.autoModel = null; }
       if (next.purpose) o.purpose = next.purpose;
       if (next.character) o.character = next.character;
       if (next.cwd && fs.existsSync(next.cwd)) sessionData.cwd = next.cwd;
@@ -576,6 +584,13 @@ function createChatSession(id, { cwd, name, conversationId, chat, deferred }) {
       return { ...o, cwd: sessionData.cwd };
     },
     close: () => { if (agent) agent.close(); agent = null; },
+    // 使っていない会話の claude を止める(メモリのため)。会話は残り、次の発言で --resume して起こす
+    sleepIfIdle: (idleMs) => {
+      if (!agent || sessionData.busy || sessionData.pendingPermissions.size) return false;
+      if (Date.now() - sessionData.lastOutputAt < idleMs) return false;
+      const a = agent; agent = null; sessionData.sleeping = true; a.close();
+      return true;
+    },
   };
 
   // 端末タブ向けの呼び出し(send-input / control-server / 声の受け渡し)を受ける代役
@@ -602,6 +617,16 @@ function createChatSession(id, { cwd, name, conversationId, chat, deferred }) {
   return { id, name: sessionData.name, cwd, mode: 'chat', chat: opts, restored: !!conversationId, sleeping: true, conversationId: sessionData.conversationId };
 }
 
+// 15分黙っている会話タブの claude を眠らせる。1本 100〜300MB(2026-11-03 実測)
+const CHAT_IDLE_MS = 15 * 60 * 1000;
+setInterval(() => {
+  for (const s of sessions.values()) { if (s.mode === 'chat' && s.chat && s.chat.sleepIfIdle) s.chat.sleepIfIdle(CHAT_IDLE_MS); }
+}, 60 * 1000).unref();
+
+ipcMain.handle('chat-mcp-status', (_e, { sessionId }) => {
+  const s = sessions.get(sessionId);
+  return !!(s && s.chat && s.chat.mcpStatus && s.chat.mcpStatus());
+});
 ipcMain.handle('chat-send', async (_e, { sessionId, text, images, attachments }) => {
   const s = sessions.get(sessionId);
   if (!s || !s.chat) return { ok: false, reason: 'no-session' };
@@ -654,7 +679,17 @@ ipcMain.handle('chat-transcript', async (_e, { conversationId, cwd }) => {
 const sourceFetch = require('./src/source-fetch');
 const sourceAnalyze = require('./src/source-analyze');
 const library = require('./src/source-library');
-const LIBRARY_DIR = ISOLATED_DATA ? path.join(SESSIONS_DIR, 'notes') : path.join(os.homedir(), 'Documents', 'Ariya情報ノート');
+// 2026-11-04 Ariya Bridge → Bridgework に改名。旧名のフォルダしか無ければ、初回に新しい名前へ移す。
+// 移すのは /Applications の版だけ。開発版が移すと、まだ動いている旧版から中身が消えて見える
+function renamedDir(newName, oldName) {
+  const docs = path.join(os.homedir(), 'Documents');
+  const now = path.join(docs, newName);
+  const old = path.join(docs, oldName);
+  if (fs.existsSync(now) || !fs.existsSync(old)) return now;
+  if (IS_DEV_BUILD) return old;
+  try { fs.renameSync(old, now); return now; } catch (_) { return old; }
+}
+const LIBRARY_DIR = ISOLATED_DATA ? path.join(SESSIONS_DIR, 'notes') : renamedDir('Bridgework情報ノート', 'Ariya情報ノート');
 const libJobs = new Map();   // jobId → { cancelled }
 
 function ytdlpBin() {
@@ -675,14 +710,21 @@ function libSend(payload) {
 // video: 'gemini' = Gemini が動画そのものを見る / 'frames' = 場面の画像を Claude が見る / 'off' = 字幕だけ
 // 字幕が無い動画は、どれでも手元の whisper.cpp で書き起こす(Gemini は音声も聞くので不要)
 const videoLook = require('./src/video-look');
-const ARIYA_ENV = path.join(os.homedir(), '.config', 'ariya', '.env');
+// 書くのは新しい置き場だけ。旧 ~/.config/ariya/.env は読むだけ(改名前に保存した鍵を使い続けるため)
+const APP_ENV = path.join(os.homedir(), '.config', 'bridgework', '.env');
+const OLD_APP_ENV = path.join(os.homedir(), '.config', 'ariya', '.env');
 // Gemini の鍵: 環境変数か、このアプリ専用の .env だけ(画面には返さない。ほかの道具の鍵は使い回さない)
 function geminiKey() {
   const fromEnv = shellEnv.GEMINI_API_KEY || process.env.GEMINI_API_KEY;
   if (fromEnv) return String(fromEnv).trim();
   try {
-    const m = /^GEMINI_API_KEY\s*=\s*"?([^"\n]+?)"?\s*$/m.exec(fs.readFileSync(ARIYA_ENV, 'utf-8'));
-    return m ? m[1].trim() : '';
+    for (const f of [APP_ENV, OLD_APP_ENV]) {
+      let txt = '';
+      try { txt = fs.readFileSync(f, 'utf-8'); } catch (_) { continue; }
+      const m = /^GEMINI_API_KEY\s*=\s*"?([^"\n]+?)"?\s*$/m.exec(txt);
+      if (m) return m[1].trim();
+    }
+    return '';
   } catch (_) { return ''; }
 }
 function videoModeOf(v) { return ['gemini', 'frames', 'off'].includes(v) ? v : (geminiKey() ? 'gemini' : 'frames'); }
@@ -708,7 +750,7 @@ async function ingestOne(url, { lens, focus, model, video }, job, say = () => {}
     if (!key) { notes.push('Gemini の鍵が無いので、場面の画像を Claude が見ました'); mode = 'frames'; } else {
       say('Gemini が動画を見ています…(長い動画は数分)');
       try {
-        a = await sourceAnalyze.analyzeWithGemini(sourceFetch.sourceBody(src), { lens, focus, videoUrl: src.url, apiKey: key, model: process.env.ARIYA_GEMINI_MODEL, lowRes: (src.duration || 0) > 1200 });
+        a = await sourceAnalyze.analyzeWithGemini(sourceFetch.sourceBody(src), { lens, focus, videoUrl: src.url, apiKey: key, model: process.env.BRIDGEWORK_GEMINI_MODEL || process.env.ARIYA_GEMINI_MODEL, lowRes: (src.duration || 0) > 1200 });
       } catch (err) {
         say(`Gemini で読めませんでした(${err.message})。場面の画像で読みます`, 'warn');
         notes.push(`Gemini で読めなかったため場面の画像で分析(${err.message})`);
@@ -717,7 +759,7 @@ async function ingestOne(url, { lens, focus, model, video }, job, say = () => {}
     }
   }
   if (job && job.cancelled) throw new Error('止めました');
-  const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ariya-video-'));
+  const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bridgework-video-'));
   try {
     let look = { frames: [], transcript: '', notes: [] };
     // Gemini が読めたなら落とさない。それ以外は、映像(frames)か、字幕が無いときの書き起こし
@@ -831,17 +873,17 @@ ipcMain.handle('lib-read', (_e, { id }) => {
 // 何で動画を読めるか(鍵そのものは返さない)
 ipcMain.handle('lib-caps', () => {
   const t = videoLook.tools();
-  return { gemini: !!geminiKey(), ffmpeg: !!t.ffmpeg, whisper: !!(t.whisper && t.whisperModel), envPath: ARIYA_ENV };
+  return { gemini: !!geminiKey(), ffmpeg: !!t.ffmpeg, whisper: !!(t.whisper && t.whisperModel), envPath: APP_ENV };
 });
 // 本人が画面で貼った Gemini の鍵を、このアプリ専用の .env に置く(本人だけ読める 0600)
 ipcMain.handle('lib-set-gemini-key', (_e, { key }) => {
   const k = String(key || '').trim();
   if (!/^[A-Za-z0-9_\-]{20,200}$/.test(k)) return { ok: false, error: '鍵の形ではありません' };
-  fs.mkdirSync(path.dirname(ARIYA_ENV), { recursive: true, mode: 0o700 });
+  fs.mkdirSync(path.dirname(APP_ENV), { recursive: true, mode: 0o700 });
   let rest = '';
-  try { rest = fs.readFileSync(ARIYA_ENV, 'utf-8').split('\n').filter((l) => l && !/^GEMINI_API_KEY\s*=/.test(l)).join('\n'); } catch (_) {}
-  fs.writeFileSync(ARIYA_ENV, `${rest ? rest + '\n' : ''}GEMINI_API_KEY=${k}\n`, { mode: 0o600 });
-  fs.chmodSync(ARIYA_ENV, 0o600);
+  try { rest = fs.readFileSync(APP_ENV, 'utf-8').split('\n').filter((l) => l && !/^GEMINI_API_KEY\s*=/.test(l)).join('\n'); } catch (_) {}
+  fs.writeFileSync(APP_ENV, `${rest ? rest + '\n' : ''}GEMINI_API_KEY=${k}\n`, { mode: 0o600 });
+  fs.chmodSync(APP_ENV, 0o600);
   return { ok: true };
 });
 ipcMain.handle('lib-reveal', (_e, { id }) => {
@@ -893,6 +935,180 @@ ipcMain.handle('lib-ingest-text', async (_e, { title, url, text, lens, focus, mo
     } catch (err) { say({ stage: 'error', text: err.message || String(err) }); }
   })();
   return { ok: true, jobId };
+});
+
+// ── スライド (2026-11-03) ───────────────────────────────────────────
+// 情報ノート・メモ・テーマから、構成(JSON)を道具なしの claude に書かせ、見た目はアプリのテーマで描く。
+// 1組1フォルダ(既定 ~/Documents/Bridgeworkスライド/<日付>_<題>/): deck.json・slides.html・話す原稿.md・img/・slides.pdf
+const slideDeck = require('./src/slide-deck');
+const SLIDES_DIR = ISOLATED_DATA ? path.join(SESSIONS_DIR, 'slides') : renamedDir('Bridgeworkスライド', 'Ariyaスライド');
+const slideJobs = new Map();
+function slideSend(payload) {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('slide-progress', payload);
+}
+// 画面から来る id はフォルダ名としてだけ使う(棚の外を指させない)
+function slideDirOf(id) {
+  const s = library.safeId(id);
+  const d = s && path.join(SLIDES_DIR, s);
+  return d && fs.existsSync(path.join(d, 'deck.json')) ? d : null;
+}
+// 場面の画像のファイル名 "03_0105.jpg" → "01:05"
+function frameLabelOf(f) {
+  const m = /^\d+_(\d+)\.jpg$/.exec(f);
+  if (!m) return null;
+  const d = m[1];
+  return d.length > 4 ? `${d.slice(0, -4)}:${d.slice(-4, -2)}:${d.slice(-2)}` : `${d.slice(0, -2)}:${d.slice(-2)}`;
+}
+function slideImages(dir) {
+  const out = {};
+  const img = path.join(dir, 'img');
+  if (!fs.existsSync(img)) return out;
+  for (const f of fs.readdirSync(img).sort()) {
+    const label = frameLabelOf(f);
+    if (label) { try { out[label] = 'data:image/jpeg;base64,' + fs.readFileSync(path.join(img, f)).toString('base64'); } catch (_) {} }
+  }
+  return out;
+}
+function slideMeta(dir) { try { return JSON.parse(fs.readFileSync(path.join(dir, 'deck.json'), 'utf-8')); } catch (_) { return null; } }
+// 構成を書き出す(HTML と話す原稿も作り直す)。PDF は古くなるので消す
+function slideWrite(dir, meta) {
+  fs.writeFileSync(path.join(dir, 'deck.json'), JSON.stringify({ ...meta, updatedAt: new Date().toISOString() }, null, 2));
+  fs.writeFileSync(path.join(dir, 'slides.html'), slideDeck.renderDeck(meta.deck, { theme: meta.theme, images: slideImages(dir) }));
+  fs.writeFileSync(path.join(dir, '話す原稿.md'), slideDeck.deckToMarkdown(meta.deck));
+  try { fs.unlinkSync(path.join(dir, 'slides.pdf')); } catch (_) {}
+}
+function slideSource(dir) { try { return fs.readFileSync(path.join(dir, 'source.txt'), 'utf-8'); } catch (_) { return ''; } }
+
+ipcMain.handle('slide-options', () => ({
+  purposes: slideDeck.PURPOSES.map(({ id, label }) => ({ id, label })),
+  themes: slideDeck.THEMES.map(({ id, label, bg, accent }) => ({ id, label, bg, accent })),
+  dir: SLIDES_DIR,
+}));
+ipcMain.handle('slide-list', () => {
+  if (!fs.existsSync(SLIDES_DIR)) return [];
+  return fs.readdirSync(SLIDES_DIR).filter((d) => !d.startsWith('.')).map((id) => {
+    const m = slideMeta(path.join(SLIDES_DIR, id));
+    return m && { id, title: m.deck.title, count: m.deck.slides.length, theme: m.theme, purpose: m.purpose, updatedAt: m.updatedAt || m.createdAt, pdf: fs.existsSync(path.join(SLIDES_DIR, id, 'slides.pdf')) };
+  }).filter(Boolean).sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt))).slice(0, 200);
+});
+// 作る。素材は 情報ノート(noteId) と 貼った文(text) と テーマ(topic) のどれか・いくつか
+ipcMain.handle('slide-make', async (_e, { noteId, text, topic, purpose, count, audience, theme, model }) => {
+  const note = noteId ? library.readNote(LIBRARY_DIR, noteId) : null;
+  if (noteId && !note) return { ok: false, error: 'その情報ノートが見つかりません' };
+  if (!note && !String(text || '').trim() && !String(topic || '').trim()) return { ok: false, error: 'テーマか素材を入れてください' };
+  const jobId = `s_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+  const say = (p) => slideSend({ jobId, ...p });
+  (async () => {
+    try {
+      const parts = [];
+      if (note) {
+        const body = note.markdown.replace(/^---\n[\s\S]*?\n---\n/, '').replace(/\n## 場面\n[\s\S]*?(?=\n---\n|$)/, '\n');
+        parts.push(`[情報ノート]\n${body}`);
+        if (note.raw) parts.push(`[元データ(字幕・本文)]\n${note.raw.slice(0, 30000)}`);
+      }
+      if (String(text || '').trim()) parts.push(`[持ち主が貼った素材]\n${String(text).slice(0, 60000)}`);
+      const source = parts.join('\n\n');
+      const frames = note && note.framesDir ? fs.readdirSync(note.framesDir).filter((f) => frameLabelOf(f)).sort() : [];
+      say({ stage: 'start', text: '構成を考えています…(1〜2分)' });
+      const { deck, costUsd } = await slideDeck.makeDeck({ source, topic, purpose, count, audience, imageLabels: frames.map(frameLabelOf) }, claudeRunOpts(model));
+      fs.mkdirSync(SLIDES_DIR, { recursive: true });
+      let id = `${library.today()}_${library.slugify(deck.title, 50)}`;
+      for (let i = 2; fs.existsSync(path.join(SLIDES_DIR, id)); i++) id = `${library.today()}_${library.slugify(deck.title, 50)} (${i})`;
+      const dir = path.join(SLIDES_DIR, id);
+      fs.mkdirSync(path.join(dir, 'img'), { recursive: true });
+      for (const f of frames) { try { fs.copyFileSync(path.join(note.framesDir, f), path.join(dir, 'img', f)); } catch (_) {} }
+      if (source) fs.writeFileSync(path.join(dir, 'source.txt'), source);
+      const t = slideDeck.THEMES.some((x) => x.id === theme) ? theme : 'paper';
+      slideWrite(dir, { deck, theme: t, purpose, noteId: note ? note.id : '', topic: topic || '', audience: audience || '', createdAt: new Date().toISOString(), costUsd });
+      say({ stage: 'done', text: `できました(${deck.slides.length}枚${costUsd ? ` · 約$${costUsd.toFixed(3)}` : ''})`, id });
+    } catch (err) { say({ stage: 'error', text: err.message || String(err) }); }
+  })();
+  return { ok: true, jobId };
+});
+// 直す: 「3枚目をもっと短く」「事例を1枚足して」など。元の素材も一緒に渡す
+ipcMain.handle('slide-revise', async (_e, { id, instruction, model }) => {
+  const dir = slideDirOf(id);
+  if (!dir) return { ok: false, error: 'そのスライドが見つかりません' };
+  if (!String(instruction || '').trim()) return { ok: false, error: '直してほしいことを書いてください' };
+  if (slideJobs.has(id)) return { ok: false, error: 'いま直しています' };
+  const jobId = `s_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+  slideJobs.set(id, jobId);
+  const say = (p) => slideSend({ jobId, ...p });
+  (async () => {
+    try {
+      const meta = slideMeta(dir);
+      say({ stage: 'start', text: '直しています…' });
+      const labels = Object.keys(slideImages(dir));
+      const { deck, costUsd } = await slideDeck.reviseDeck({ deck: meta.deck, instruction, source: slideSource(dir), imageLabels: labels }, claudeRunOpts(model));
+      // 1つ前は残す(やり直し用)
+      fs.writeFileSync(path.join(dir, 'deck.prev.json'), JSON.stringify(meta, null, 2));
+      slideWrite(dir, { ...meta, deck, costUsd: (meta.costUsd || 0) + costUsd });
+      say({ stage: 'done', text: `直しました${costUsd ? `(約$${costUsd.toFixed(3)})` : ''}`, id });
+    } catch (err) { say({ stage: 'error', text: err.message || String(err) }); } finally { slideJobs.delete(id); }
+  })();
+  return { ok: true, jobId };
+});
+ipcMain.handle('slide-undo', (_e, { id }) => {
+  const dir = slideDirOf(id);
+  const prev = dir && path.join(dir, 'deck.prev.json');
+  if (!prev || !fs.existsSync(prev)) return { ok: false, error: '戻せる版がありません' };
+  const meta = JSON.parse(fs.readFileSync(prev, 'utf-8'));
+  fs.unlinkSync(prev);
+  slideWrite(dir, meta);
+  return { ok: true };
+});
+ipcMain.handle('slide-read', (_e, { id }) => {
+  const dir = slideDirOf(id);
+  if (!dir) return null;
+  const meta = slideMeta(dir);
+  return { id, ...meta, html: fs.readFileSync(path.join(dir, 'slides.html'), 'utf-8'), markdown: slideDeck.deckToMarkdown(meta.deck), canUndo: fs.existsSync(path.join(dir, 'deck.prev.json')), pdf: fs.existsSync(path.join(dir, 'slides.pdf')) };
+});
+ipcMain.handle('slide-theme', (_e, { id, theme }) => {
+  const dir = slideDirOf(id);
+  if (!dir || !slideDeck.THEMES.some((x) => x.id === theme)) return { ok: false };
+  slideWrite(dir, { ...slideMeta(dir), theme });
+  return { ok: true };
+});
+// 見えない窓で開いて PDF に。1枚 = 1ページ(1280×720)
+ipcMain.handle('slide-pdf', async (_e, { id }) => {
+  const dir = slideDirOf(id);
+  if (!dir) return { ok: false, error: 'そのスライドが見つかりません' };
+  const win = new BrowserWindow({ show: false, width: slideDeck.W, height: slideDeck.H, webPreferences: { javascript: false, sandbox: true, contextIsolation: true } });
+  try {
+    await win.loadFile(path.join(dir, 'slides.html'));
+    const pdf = await win.webContents.printToPDF({ printBackground: true, preferCSSPageSize: true, margins: { marginType: 'none' } });
+    const out = path.join(dir, 'slides.pdf');
+    fs.writeFileSync(out, pdf);
+    shell.showItemInFolder(out);
+    return { ok: true, path: out };
+  } catch (err) { return { ok: false, error: err.message }; } finally { win.destroy(); }
+});
+// 発表: 別の窓で全画面。矢印・スペースで1枚ずつ(スクロールが1枚ずつ止まる)。Esc で全画面を抜ける
+ipcMain.handle('slide-present', async (_e, { id }) => {
+  const dir = slideDirOf(id);
+  if (!dir) return { ok: false };
+  const win = new BrowserWindow({ width: slideDeck.W, height: slideDeck.H, backgroundColor: '#2a2a2e', title: slideMeta(dir).deck.title, autoHideMenuBar: true, webPreferences: { javascript: false, sandbox: true, contextIsolation: true } });
+  win.webContents.on('will-navigate', (e) => e.preventDefault());
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  const fit = () => { if (win.isDestroyed()) return; const [w, h] = win.getContentSize(); win.webContents.setZoomFactor(Math.max(0.2, Math.min(w / slideDeck.W, h / slideDeck.H))); };
+  win.on('resize', fit);
+  win.webContents.on('did-finish-load', fit);
+  win.webContents.on('before-input-event', (e, input) => { if (input.type === 'keyDown' && input.key === 'Escape' && win.isFullScreen()) { win.setFullScreen(false); e.preventDefault(); } });
+  await win.loadFile(path.join(dir, 'slides.html'));
+  win.setFullScreen(true);
+  return { ok: true };
+});
+ipcMain.handle('slide-reveal', (_e, { id }) => {
+  const dir = id ? slideDirOf(id) : null;
+  if (dir) shell.showItemInFolder(path.join(dir, fs.existsSync(path.join(dir, 'slides.pdf')) ? 'slides.pdf' : 'slides.html'));
+  else { fs.mkdirSync(SLIDES_DIR, { recursive: true }); shell.openPath(SLIDES_DIR); }
+  return { ok: true };
+});
+ipcMain.handle('slide-trash', async (_e, { id }) => {
+  const dir = slideDirOf(id);
+  if (!dir) return { ok: false };
+  await shell.trashItem(dir);
+  return { ok: true };
 });
 
 // 見張るチャンネルの新着。起動 2 分後と 6 時間ごと。1回で 1 チャンネル 3 本まで(勝手に使うお金に上限)
@@ -1702,7 +1918,7 @@ ipcMain.handle('voice-transcribe', async (_e, { audioBuffer, mimeType }) =>
   voiceNet().transcribe(Buffer.from(audioBuffer), mimeType));
 
 // ── 本物の Alfred に話しかける (2026-10-15) ──
-// 本人「Ariya と連携させて、家事をしながら話せるように」。Ariya の声のライブの会話を koach-os の声の頭に渡す。
+// 本人「Bridgework と連携させて、家事をしながら話せるように」。Bridgework の声のライブの会話を koach-os の声の頭に渡す。
 // 合言葉は Mac が作業を取りに行くときと同じもの (~/.config/koach-bridge/relay.json の backend と relay_token)。
 ipcMain.handle('alfred-voice', async (_e, { text, context }) => {
   let cfg;
@@ -2086,7 +2302,7 @@ ipcMain.handle('hub-chat', async (_e, { provider, model, messages, system, tempe
 
 // ── 自分で立てるプロジェクト (2026-09-24) ─────────────────────────────
 // 本人: 「ChatGPT や Claude のように、プロジェクトを自分で立ち上げてコンテクストを共有したい」
-// ChatGPT/Claude のプロジェクトの中身は「名前・指示・資料」。Ariya ではそれを 1 つのフォルダに置く:
+// ChatGPT/Claude のプロジェクトの中身は「名前・指示・資料」。Bridgework ではそれを 1 つのフォルダに置く:
 //   指示 = CLAUDE.md(Claude Code が読む)。Codex は AGENTS.md、Gemini は GEMINI.md を自分で読むので、
 //          同じ中身を指す別名(シンボリックリンク)を置く。Claude 限定のプロジェクトには置かない
 //          (置くと他社のエンジンにも指示の中身が渡る)。
@@ -2763,7 +2979,7 @@ ipcMain.handle('apply-update', async () => {
       // 変更が無いのに git stash を打つと何も積まれないまま pop が走り、
       // 無関係な古い stash を取り出してしまう。積んだときだけ戻す。
       const dirty = execSync('git status --porcelain', { cwd: sourceDir, encoding: 'utf-8', timeout: 10000 }).trim() !== '';
-      if (dirty) execSync('git stash push -m "ariya-auto-update"', { cwd: sourceDir, encoding: 'utf-8', timeout: 10000 });
+      if (dirty) execSync('git stash push -m "bridgework-auto-update"', { cwd: sourceDir, encoding: 'utf-8', timeout: 10000 });
       // origin/main 固定だと作業ブランチに main を流し込んでしまう。追跡先から早送りのみ。
       execSync('git pull --ff-only', { cwd: sourceDir, encoding: 'utf-8', timeout: 30000 });
       if (dirty) { try { execSync('git stash pop', { cwd: sourceDir, encoding: 'utf-8', timeout: 10000 }); } catch (_) {} }
@@ -2811,20 +3027,51 @@ ipcMain.handle('get-app-info', async () => {
   return { version: pkg.version, gitHash, electronVersion: process.versions.electron, nodeVersion: process.versions.node };
 });
 
-// ── Deep link (ariya://) ──
+// ── オフィス(Fleet View) (2026-11-03) ──
+// 本人: 「Fleet View を Bridgework に入れて、作業を俯瞰できるように。キャラを押すと相談、詳細でそのセッションが開く」。
+// Fleet View(python・依存なし)をそのまま動かし、Web タブで開く。相談・割り振りは Fleet View 側の口、
+// 「詳細」は ariya:// で戻ってきて、ここでタブを開く(上の will-navigate)。
+const OFFICE_PORT = Number(process.env.FLEET_PORT) || 7373;
+const OFFICE_ORIGIN = `http://127.0.0.1:${OFFICE_PORT}`;
+const OFFICE_DIR = process.env.BRIDGEWORK_FLEET_DIR || process.env.ARIYA_FLEET_DIR || path.join(os.homedir(), 'Desktop', 'アプリ開発プロジェクト', 'fleet-view');
+function officeUp(timeoutMs = 600) {
+  return new Promise((resolve) => {
+    const sock = require('net').connect(OFFICE_PORT, '127.0.0.1');
+    const done = (ok) => { sock.destroy(); resolve(ok); };
+    sock.once('connect', () => done(true));
+    sock.once('error', () => done(false));
+    sock.setTimeout(timeoutMs, () => done(false));
+  });
+}
+ipcMain.handle('office-open', async () => {
+  if (!(await officeUp())) {
+    if (!fs.existsSync(path.join(OFFICE_DIR, 'fleet.py'))) return { ok: false, error: `Fleet View が見つかりません(${OFFICE_DIR})` };
+    // アプリを閉じても動き続けてよい(ブラウザから見る使い方もあるため)。出力は捨てる
+    const py = ['/opt/homebrew/bin/python3', '/usr/local/bin/python3', '/usr/bin/python3'].find((x) => fs.existsSync(x)) || 'python3';
+    const child = spawn(py, ['fleet.py'], { cwd: OFFICE_DIR, env: { ...shellEnv, FLEET_PORT: String(OFFICE_PORT) }, detached: true, stdio: 'ignore' });
+    child.unref();
+    for (let i = 0; i < 30 && !(await officeUp()); i++) await new Promise((r) => setTimeout(r, 300));
+    if (!(await officeUp())) return { ok: false, error: 'Fleet View が起動しませんでした' };
+  }
+  return { ok: true, url: `${OFFICE_ORIGIN}/` };
+});
+
+// ── Deep link (bridgework://、旧 ariya:// も受ける) ──
 // 外部ツール (Fleet View など) から「このセッションのタブを開いて」と呼ばれる入口。
 //   ariya://resume?session=<Claude Code の sessionId>&cwd=<作業フォルダ>&name=<表示名>
 //   ariya://new?cwd=<作業フォルダ>&mode=<claude|codex|gemini|grok|shell>
 // macOS は起動済みインスタンスに open-url を届けるので single-instance lock は使わない
 // (入れると開発用の `npm start` が黙って起動しなくなる)。
-const DEEP_LINK_SCHEME = 'ariya';
+const DEEP_LINK_SCHEME = 'bridgework';
+// 改名前の Fleet View・ショートカットが叩く旧名。消すと既存のリンクが届かなくなる
+const DEEP_LINK_SCHEMES = ['bridgework', 'ariya'];
 const DEEP_LINK_MODES = ['claude', 'codex', 'gemini', 'grok', 'shell'];
 let pendingDeepLink = null;
 
 function parseDeepLink(url) {
   let u;
   try { u = new URL(url); } catch (_) { return null; }
-  if (u.protocol !== `${DEEP_LINK_SCHEME}:`) return null;
+  if (!DEEP_LINK_SCHEMES.includes(u.protocol.replace(/:$/, '').toLowerCase())) return null;
   // ariya://resume?… は hostname に、ariya:///resume?… は pathname に出る
   const action = (u.hostname || u.pathname.replace(/^\/+/, '').split('/')[0] || '').toLowerCase();
   const q = u.searchParams;
@@ -3045,6 +3292,15 @@ function setupWebSession() {
 app.on('web-contents-created', (_event, contents) => {
   if (contents.getType() !== 'webview') return;
   try { contents.setUserAgent(chromeLikeUA()); } catch (_) {}
+  // オフィス(Fleet View)の「このセッションを開く」は ariya:// を開く。Web タブの中では OS に回さずここで受ける
+  // (開発版は ariya:// を登録しないので、回すと届かない)。受けるのはオフィスの画面からだけ
+  contents.on('will-navigate', (e, url) => {
+    if (!/^(bridgework|ariya):/i.test(url)) return;
+    e.preventDefault();
+    let from = '';
+    try { from = new URL(contents.getURL()).origin; } catch (_) {}
+    if (from === OFFICE_ORIGIN) handleDeepLink(url);
+  });
   contents.setWindowOpenHandler(({ url }) => {
     if (!/^https?:\/\//i.test(url)) return { action: 'deny' };
     return {
@@ -3060,7 +3316,7 @@ app.on('web-contents-created', (_event, contents) => {
 app.whenReady().then(() => {
   setCrashFlag();
   // ⚠️ 開発版(npm start)で登録すると、ariya:// を開くアプリが開発版にすり替わる。ビルドした版だけ
-  if (app.isPackaged) { try { app.setAsDefaultProtocolClient(DEEP_LINK_SCHEME); } catch (_) {} }
+  if (app.isPackaged) { for (const s of DEEP_LINK_SCHEMES) { try { app.setAsDefaultProtocolClient(s); } catch (_) {} } }
   try { setupWebSession(); } catch (e) { console.error('web session:', e.message); }
   createWindow();
   createMenu();
