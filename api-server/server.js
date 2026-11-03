@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
+const { GEMINI_DEFAULT_MODEL, GEMINI_MODELS, buildGeminiRequest, geminiVisibleText } = require('./gemini-compat');
 
 const app = express();
 const PORT = process.env.PORT || 3900;
@@ -61,8 +62,8 @@ const PROVIDERS = {
     name: 'Gemini',
     baseUrl: 'https://generativelanguage.googleapis.com/v1beta/models',
     keyEnv: 'GEMINI_API_KEY',
-    defaultModel: 'gemini-2.5-flash',
-    models: ['gemini-2.5-pro', 'gemini-2.5-flash'],
+    defaultModel: GEMINI_DEFAULT_MODEL,
+    models: GEMINI_MODELS,
   },
   perplexity: {
     name: 'Perplexity',
@@ -323,25 +324,12 @@ async function streamClaude(res, apiKey, model, messages, system, temperature, m
 
 // ── Gemini API streaming ──
 async function streamGemini(res, apiKey, model, messages, system, temperature, maxTokens) {
-  const contents = messages.map(m => ({
-    role: m.role === 'assistant' ? 'model' : 'user',
-    parts: [{ text: m.content }],
-  }));
-
-  const body = { contents };
-  if (system) {
-    body.systemInstruction = { parts: [{ text: system }] };
-  }
-  if (temperature != null || maxTokens) {
-    body.generationConfig = {};
-    if (temperature != null) body.generationConfig.temperature = temperature;
-    if (maxTokens) body.generationConfig.maxOutputTokens = maxTokens;
-  }
-
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${apiKey}`;
+  const request = buildGeminiRequest(model, messages, system, temperature, maxTokens);
+  const body = request.body;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(request.model)}:streamGenerateContent?alt=sse`;
   const upstream = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
     body: JSON.stringify(body),
   });
 
@@ -369,7 +357,7 @@ async function streamGemini(res, apiKey, model, messages, system, temperature, m
 
       try {
         const parsed = JSON.parse(data);
-        const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
+        const text = geminiVisibleText(parsed);
         if (text) {
           res.write(`data: ${JSON.stringify({ content: text })}\n\n`);
         }
@@ -390,3 +378,4 @@ if (require.main === module) {
 }
 
 module.exports = app;
+
