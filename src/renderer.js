@@ -299,6 +299,7 @@ function setupListeners() {
   document.querySelectorAll('.mode-btn').forEach(b => {
     b.addEventListener('click', () => {
       if (b.dataset.mode === 'web') { openWebPicker(); return; }   // Web はエンジンではない
+      if (b.dataset.mode === 'office') { openOffice(); return; }   // オフィスも同じ。全体を見る画面
       switchSessionMode(b.dataset.mode);
     });
   });
@@ -967,6 +968,7 @@ function switchWebTab(wid) {
   webTabs.forEach((x, xid) => { const on = xid === wid; x.tabEl.classList.toggle('active', on); x.pane.classList.toggle('active', on); });
   try { w.tabEl.scrollIntoView({ inline: 'nearest', block: 'nearest' }); } catch (_) {}
   document.getElementById('status-cwd').textContent = w.url;
+  document.querySelectorAll('.mode-btn').forEach((b) => b.classList.toggle('active', b.dataset.mode === 'office' && w.url.startsWith('http://127.0.0.1:7373/')));
   setTimeout(() => { try { w.view.focus(); } catch (_) {} }, 50);
 }
 
@@ -1262,6 +1264,13 @@ async function webTabToNote(w) {
 async function openOffice() {
   const r = await window.api.officeOpen();
   if (!r || !r.ok) { setStatus('error', (r && r.error) || 'オフィスを開けませんでした'); return; }
+  // 席を見て回って URL が変わっていても、同じオフィスのタブへ戻る
+  for (const [wid, w] of webTabs) {
+    if (!w.url.startsWith(r.url)) continue;
+    switchWebTab(wid);
+    if (r.started) { try { w.view.reload(); } catch (_) {} }   // サーバーが落ちていた間に開けなかった分を読み直す
+    return;
+  }
   addWebTab({ url: r.url, title: '🏢 オフィス' });
 }
 
@@ -1269,6 +1278,7 @@ function setupChatTools() {
   const on = (id, ev, fn) => { const e = document.getElementById(id); if (e) e.addEventListener(ev, fn); };
   on('chat-library', 'click', () => libPanel && libPanel.toggle());
   on('chat-office', 'click', openOffice);
+  on('sb-office', 'click', openOffice);
   on('chat-slides', 'click', () => { if (libPanel && libPanel.isOpen) libPanel.close(); if (slidePanel) slidePanel.toggle(); });
   on('chat-browser', 'click', () => openWebPicker());
   on('chat-purpose', 'change', (e) => configureChat({ purpose: e.target.value }));

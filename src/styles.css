@@ -1804,3 +1804,6 @@ body[data-tabkind="chat"] #chat-attach.on { display: flex; }
 
 .cm-warn { color: #b07a12; } .cm-sum { font-weight: 400; font-size: 11px; color: var(--fg2); margin-top: 4px; }
 .cm-row.warn .cm-st { color: #b07a12; }
+#sb-office { display: flex; align-items: center; justify-content: space-between; margin: 0 10px 8px; padding: 8px 10px; border: 1px solid #e0e0e6; border-radius: 10px; background: #fff; color: var(--fg); font-size: 13px; cursor: pointer; }
+#sb-office span { color: var(--fg2); font-size: 11px; }
+#sb-office:hover { border-color: var(--accent); background: #eef1ff; }

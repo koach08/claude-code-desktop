@@ -1160,10 +1160,12 @@ ipcMain.handle('create-session', async (_event, { cwd, name, mode, restoreFromId
   const claudeModel = CLAUDE_MODEL_ALLOW.has(String(model || '')) ? String(model) : CLAUDE_MODEL;
   if (sessionMode === 'claude') {
     cmd = IS_WIN ? 'claude.cmd' : 'claude';
+    // 本人: 「再起動のたびに remote でつなぐのが面倒」。Claude タブは最初からつないでおく。
+    // ⚠️ 名前を任意で取るフラグなので、次に値(プロンプトなど)を置かない。先頭に置く
     if (conversationId) {
-      args = ['--model', claudeModel, '--resume', conversationId];
+      args = ['--remote-control', '--model', claudeModel, '--resume', conversationId];
     } else {
-      args = ['--model', claudeModel];
+      args = ['--remote-control', '--model', claudeModel];
     }
   } else if (sessionMode === 'codex') {
     cmd = IS_WIN ? 'codex.cmd' : 'codex';
@@ -3044,6 +3046,7 @@ function officeUp(timeoutMs = 600) {
   });
 }
 ipcMain.handle('office-open', async () => {
+  let started = false;
   if (!(await officeUp())) {
     if (!fs.existsSync(path.join(OFFICE_DIR, 'fleet.py'))) return { ok: false, error: `Fleet View が見つかりません(${OFFICE_DIR})` };
     // アプリを閉じても動き続けてよい(ブラウザから見る使い方もあるため)。出力は捨てる
@@ -3052,8 +3055,9 @@ ipcMain.handle('office-open', async () => {
     child.unref();
     for (let i = 0; i < 30 && !(await officeUp()); i++) await new Promise((r) => setTimeout(r, 300));
     if (!(await officeUp())) return { ok: false, error: 'Fleet View が起動しませんでした' };
+    started = true;
   }
-  return { ok: true, url: `${OFFICE_ORIGIN}/` };
+  return { ok: true, url: `${OFFICE_ORIGIN}/`, started };
 });
 
 // ── Deep link (bridgework://、旧 ariya:// も受ける) ──
