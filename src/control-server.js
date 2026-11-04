@@ -18,6 +18,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const promptDetect = require('./prompt-detect');
 
 const DIR = path.join(os.homedir(), '.claude-code-app');
 const TOKEN_FILE = path.join(DIR, 'control.json');
@@ -28,6 +29,16 @@ const MAX_INPUT = 4000;
 
 // 端末に流してよい文字。改行とタブ以外の制御文字は落とす。
 // Ctrl-C(0x03) や ESC(0x1b) を送れると、外から中断や画面操作ができてしまう。
+// 出力が quietMs 止まるまで待つ。何も出ないまま limitMs 経ったら諦めて進む
+async function waitForQuiet(s, { quietMs = 1500, limitMs = 30000, stepMs = 250 } = {}) {
+  const started = Date.now();
+  while (Date.now() - started < limitMs) {
+    if (s.lastOutputAt && s.lastOutputAt >= started && Date.now() - s.lastOutputAt >= quietMs) return true;
+    await new Promise((r) => setTimeout(r, stepMs));
+  }
+  return false;
+}
+
 function sanitize(s) {
   return String(s || '')
     .slice(0, MAX_INPUT)
@@ -148,6 +159,8 @@ function startControlServer(deps) {
           out.push({
             id, name: s.name || '', cwd: s.cwd || '', mode: s.mode || '',
             exited: !!s.exited,
+            conversation_id: s.conversationId || null,
+            sleeping: !!s.sleeping,
             idle_sec: s.lastOutputAt ? Math.round((Date.now() - s.lastOutputAt) / 1000) : null,
           });
         }
@@ -163,7 +176,10 @@ function startControlServer(deps) {
           // eslint-disable-next-line no-control-regex
           .replace(/\x1b\[[0-9;?]*[a-zA-Z]|\x1b\][^\x07]*\x07/g, '')
           .split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-        return send(res, 200, { tail: lines.slice(-n).join('\n') });
+        const s = sessions.get(parts[1]);
+        // 眠っているタブのバッファは前回の画面。そこに残る選択肢は、もう待っていない
+        const awaiting = !!s && !s.sleeping && promptDetect.isAwaitingUser(String(buf));
+        return send(res, 200, { tail: lines.slice(-n).join('\n'), awaiting });
       }
 
       // 入力を送る。⚠️ ここが一番危ない口
@@ -172,6 +188,12 @@ function startControlServer(deps) {
         if (!s || !s.pty) return send(res, 404, { error: 'そのタブはありません' });
         const text = sanitize(body.text);
         if (!text) return send(res, 400, { error: 'text が空です' });
+        // 眠っている端末タブは書いた瞬間に claude が起きるが、起動中の入力は取りこぼす。
+        // 起こして、画面が落ち着いてから書く(会話タブは代役が受けるので待たない)
+        if (s.sleeping && s.wake && s.mode !== 'chat') {
+          s.wake();
+          await waitForQuiet(s);
+        }
         // submit を明示したときだけ改行を足す。既定では入れるだけで実行しない
         s.pty.write(body.submit ? `${text}\r` : text);
         log(`input ${parts[1]} submit=${!!body.submit} len=${text.length}`);
