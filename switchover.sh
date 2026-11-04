@@ -42,7 +42,14 @@ if [ "${SWITCHOVER_DETACHED:-0}" != "1" ] && app_ancestor; then
   exit 4
 fi
 
+# --- 入れる版を選ぶ ---
 SRC="$HERE/dist/mac-arm64/Bridgework.app"   # このスクリプトと同じ場所の dist を見る
+# 署名は iCloud の外で行う(build/sign-with-hash.sh)。dist より新しく署名済みなら、そちらを入れる
+SIGNED="$HOME/Library/Caches/Bridgework-build"
+if [ -f "$SIGNED/.signed" ] && [ "$SIGNED/.signed" -nt "$SRC/Contents/Resources/app.asar" ]; then
+  SRC="$SIGNED/Bridgework.app"
+fi
+# --- ここまで ---
 DST="/Applications/Bridgework.app"
 # 2026-11-04 改名前の名前。残っていれば一緒に終了させ、ariya:// の登録を新しい方へ移す(バンドルは消さない)
 OLDNAME="/Applications/Ariya Bridge.app"
@@ -124,7 +131,7 @@ echo "3) URL スキーム (bridgework:// と旧 ariya://) を LaunchServices に
 "$LSREG" -f "$DST" 2>/dev/null || true
 # dist/ に残るビルド成果物も同じ ariya: を主張し、OS がそちら(非起動)へ解決してしまう。
 # /Applications を唯一のハンドラにするため登録解除する。
-for d in "$SRC" "$(dirname "$(dirname "$SRC")")/mac/Bridgework.app" "$(dirname "$SRC")/Ariya Bridge.app" "$OLDNAME"; do
+for d in "$SRC" "$HERE/dist/mac-arm64/Bridgework.app" "$HERE/dist/mac/Bridgework.app" "$HERE/dist/mac-arm64/Ariya Bridge.app" "$OLDNAME"; do
   [ -d "$d" ] && "$LSREG" -u "$d" 2>/dev/null || true
 done
 

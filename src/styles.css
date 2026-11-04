@@ -1765,7 +1765,6 @@ body[data-tabkind="chat"] #chat-attach.on { display: flex; }
 .cm-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cm-sts { color: var(--fg2); font-size: 11px; }
 .cm-pop-f { color: var(--fg2); font-size: 11px; padding: 8px 6px 2px; border-top: 1px solid var(--border); margin-top: 6px; }
-.pane.chat { position: relative; }
 
 /* 左メニューをカード型に (2026-11-03)
    本人: 「文字が並んでいるだけに見える。枠線なりで分かりやすく。Claude デスクトップ / ChatGPT のように」 */

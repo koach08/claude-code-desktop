@@ -31,6 +31,18 @@ ENT="$DIR/build/entitlements.mac.plist"
 security find-identity -v -p codesigning 2>/dev/null | grep -q "$IDENTITY" \
   || { echo "証明書 $IDENTITY がキーチェーンにありません"; exit 1; }
 
+# Desktop が iCloud 同期だと FinderInfo などの属性が付き、xattr -cr で消しても付き直して
+# codesign が "resource fork, Finder information, or similar detritus not allowed" で落ちる(2026-11-04)。
+# パスの指定がなければ iCloud の外へ属性なしで写し、そちらに署名する。switchover.sh はそちらを使う。
+STAGE_DIR=""
+if [ -z "${1:-}" ]; then
+  STAGE_DIR="$HOME/Library/Caches/Bridgework-build"
+  rm -rf "$STAGE_DIR"
+  mkdir -p "$STAGE_DIR"
+  ditto --norsrc --noextattr --noqtn "$APP" "$STAGE_DIR/Bridgework.app"
+  APP="$STAGE_DIR/Bridgework.app"
+fi
+
 sign() { codesign --force --timestamp --options runtime --entitlements "$ENT" --sign "$IDENTITY" "$@"; }
 
 echo "1) ネイティブモジュール / dylib を署名 (内側から)..."
@@ -51,4 +63,5 @@ sign "$APP"
 echo "5) 検証..."
 codesign --verify --deep --strict --verbose=2 "$APP"
 codesign -dvvv "$APP" 2>&1 | grep -E "^(Authority|TeamIdentifier|Signature|CodeDirectory v)" | sed 's/^/   /'
+if [ -n "$STAGE_DIR" ]; then touch "$STAGE_DIR/.signed"; fi
 echo "署名完了: $APP"
