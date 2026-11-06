@@ -297,6 +297,7 @@ const { saveLedger, loadLedger, dedupeConversationIds } = require('./src/ledger'
 const { inferProject, groupIntoTeams, cleanTail } = require('./src/board');
 const { listExternalConversations } = require('./src/external-conversations');
 const { titleSaysWaiting } = require('./src/prompt-detect');
+const tabSleep = require('./src/tab-sleep');
 
 // 生きているタブが使用中の ID を除外したうえで検索する。
 function findConversationId(cwd, sinceMs) {
@@ -1142,7 +1143,7 @@ if (!ISOLATED_DATA) {
   setInterval(() => { checkWatches().catch(() => {}); }, 6 * 60 * 60 * 1000);
 }
 
-ipcMain.handle('create-session', async (_event, { cwd, name, mode, restoreFromId, conversationId, model, deferred, chat }) => {
+ipcMain.handle('create-session', async (_event, { cwd, name, mode, restoreFromId, conversationId, model, deferred, chat, pdf }) => {
   const id = `s_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
   const sessionCwd = cwd || os.homedir();
   const sessionMode = mode || 'claude';
@@ -1161,12 +1162,8 @@ ipcMain.handle('create-session', async (_event, { cwd, name, mode, restoreFromId
   if (sessionMode === 'claude') {
     cmd = IS_WIN ? 'claude.cmd' : 'claude';
     // 本人: 「再起動のたびに remote でつなぐのが面倒」。Claude タブは最初からつないでおく。
-    // ⚠️ 名前を任意で取るフラグなので、次に値(プロンプトなど)を置かない。先頭に置く
-    if (conversationId) {
-      args = ['--remote-control', '--model', claudeModel, '--resume', conversationId];
-    } else {
-      args = ['--remote-control', '--model', claudeModel];
-    }
+    // 引数は起こすたびに作る(眠らせたあとは、その時点の会話 ID で再開するため)
+    args = null;
   } else if (sessionMode === 'codex') {
     cmd = IS_WIN ? 'codex.cmd' : 'codex';
     // 前の会話があれば戻す(無ければ素で起動)。Claude の --resume と同じ扱い
@@ -1232,6 +1229,7 @@ ipcMain.handle('create-session', async (_event, { cwd, name, mode, restoreFromId
     lastOutputAt: Date.now(),
     exited: false,
     sleeping: true,   // 下の wake() で起こす(眠らせるタブは起こさない)
+    pdf: pdf === true,   // PDF ビューアは1本 約300MB。必要なタブだけ入れる(タブの右クリックで切替)
   };
   sessions.set(id, sessionData);
 
@@ -1260,6 +1258,12 @@ ipcMain.handle('create-session', async (_event, { cwd, name, mode, restoreFromId
   });
 
   ptyProcess.onExit(({ exitCode, signal }) => {
+    ptyProcess.bwExited = true;
+    // こちらで眠らせた(または PDF の切替で止めた)プロセス。タブは終わっていない
+    if (sessionData.pty !== ptyProcess) {
+      if (sessionData.wakeOnExit && sessions.has(id)) { sessionData.wakeOnExit = false; sessionData.wake(); }
+      return;
+    }
     { const s = sessions.get(id); if (s) s.exited = true; }
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send(`session-exit-${id}`, { exitCode, signal });
@@ -1272,20 +1276,38 @@ ipcMain.handle('create-session', async (_event, { cwd, name, mode, restoreFromId
   sessionData.wake = () => {
     if (!sessionData.sleeping) return sessionData.pty;
     sessionData.sleeping = false;
-    const p = nodePty.spawn(cmd, args, spawnOpts);
+    const spawnArgs = sessionMode === 'claude'
+      ? tabSleep.claudeArgs({ model: claudeModel, conversationId: sessionData.conversationId, pdf: sessionData.pdf })
+      : args;
+    const p = nodePty.spawn(cmd, spawnArgs, spawnOpts);
     attach(p);
     sessionData.pty = p;
     if (pendingSize) { try { p.resize(pendingSize[0], pendingSize[1]); } catch (_) {} }
     return p;
   };
-  if (sleeping) {
-    // 眠っている間の代役。書き込み(本人の入力・操作窓からの入力)が来たらその場で起こす。
-    // 既存の s.pty.write / resize / kill の呼び出し側はそのままで動く
+  // 眠っている間の代役。書き込み(本人の入力・操作窓からの入力)が来たらその場で起こす。
+  // 既存の s.pty.write / resize / kill の呼び出し側はそのままで動く
+  const installSleepProxy = () => {
     sessionData.pty = {
       write: (d) => sessionData.wake().write(d),
       resize: (c, r) => { pendingSize = [c, r]; },
       kill: () => {},
     };
+    sessionData.sleeping = true;
+  };
+  // claude を止めて眠らせる。会話は残り、開くか入力が来たら --resume で続きから動く
+  sessionData.sleepNow = () => {
+    if (sessionData.sleeping || sessionData.exited) return false;
+    const p = sessionData.pty;
+    pendingSize = [p.cols, p.rows];
+    installSleepProxy();
+    try { p.kill(); } catch (_) {}
+    // 終了の合図に応じないときだけ強制終了する
+    setTimeout(() => { if (!p.bwExited) { try { process.kill(p.pid, 'SIGKILL'); } catch (_) {} } }, 5000).unref();
+    return true;
+  };
+  if (sleeping) {
+    installSleepProxy();
   } else {
     sessionData.wake();
   }
@@ -1394,9 +1416,59 @@ ipcMain.handle('send-input', async (_e, { sessionId, input }) => {
   }
 });
 
+// 画面で開いたタブ。自動で眠らせる対象から外す(switchTab がタブを開くたびに wake-session を呼ぶ)
+let activeSessionId = null;
 ipcMain.handle('wake-session', async (_e, { sessionId }) => {
+  activeSessionId = sessionId;
   const s = sessions.get(sessionId);
   if (s && s.wake) { try { s.wake(); } catch (_) {} }
+});
+
+// ── 使っていない Claude タブを眠らせる(2026-11-06 本人「メモリーを食わないようにしたい」) ──
+// 1本 約590MB。チャットタブの sleepIfIdle と同じ考え方で、会話は残す
+const CLAUDE_IDLE_MS = (!app.isPackaged && Number(process.env.BRIDGEWORK_CLAUDE_IDLE_MS)) || 30 * 60 * 1000;
+const SLEEP_SWEEP_MS = (!app.isPackaged && Number(process.env.BRIDGEWORK_SLEEP_SWEEP_MS)) || 60 * 1000;
+const SLEEP_NOTE = '\x1b[?1049l\x1b[?25h\x1b[0m\r\n\x1b[2m[しばらく使っていないので休止しました。開くか入力すると続きから再開します]\x1b[0m\r\n';
+function sweepIdleClaudeTabs() {
+  const now = Date.now();
+  const candidates = [];
+  for (const [id, s] of sessions) {
+    if (tabSleep.canSleep({ ...s, rawOutput: sessionBuffers.get(id) }, { now, idleMs: CLAUDE_IDLE_MS, activeId: activeSessionId, id })) candidates.push([id, s]);
+  }
+  if (!candidates.length) return;
+  // 裏で動いているコマンドがあるタブは止めない。ps が読めないときは何も眠らせない
+  require('child_process').execFile('ps', ['-axo', 'pid=,ppid=,command='], { maxBuffer: 16 * 1024 * 1024 }, (err, out) => {
+    if (err) return;
+    const table = tabSleep.parsePs(out);
+    for (const [id, s] of candidates) {
+      if (s.sleeping || !s.pty || !s.pty.pid) continue;
+      if (Date.now() - s.lastOutputAt < CLAUDE_IDLE_MS || id === activeSessionId) continue;   // ps を待つ間に動いた
+      if (tabSleep.hasWorkingChild(table, s.pty.pid)) continue;
+      if (s.sleepNow() && mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(`session-output-${id}`, SLEEP_NOTE);
+    }
+  });
+}
+setInterval(sweepIdleClaudeTabs, SLEEP_SWEEP_MS).unref();
+
+// タブごとの PDF ビューア。普段は切っておき、必要なタブだけ入れる
+ipcMain.handle('get-tab-pdf', (_e, { sessionId }) => {
+  const s = sessions.get(sessionId);
+  return s && s.mode === 'claude' ? { pdf: !!s.pdf } : null;
+});
+ipcMain.handle('set-tab-pdf', (_e, { sessionId, on }) => {
+  const s = sessions.get(sessionId);
+  if (!s || s.mode !== 'claude' || s.exited) return { ok: false, error: 'このタブでは切り替えられません' };
+  const pdf = on === true;
+  if (s.pdf === pdf) return { ok: true, pdf };
+  if (s.sleeping) { s.pdf = pdf; return { ok: true, pdf }; }   // 次に起きるときに反映される
+  // 起動し直すので、作業中や返事待ちのタブは止めない
+  if (Date.now() - (s.lastOutputAt || 0) < 5000 || tabSleep.isAwakeWaiting(sessionBuffers.get(sessionId) || '')) {
+    return { ok: false, error: '作業中か返事待ちのタブです。終わってから切り替えてください' };
+  }
+  s.pdf = pdf;
+  s.wakeOnExit = true;   // 古い claude が終わってから、同じ会話で起動し直す
+  s.sleepNow();
+  return { ok: true, pdf };
 });
 
 ipcMain.handle('resize-terminal', async (_e, { sessionId, cols, rows }) => {
@@ -2580,7 +2652,7 @@ function saveSessionsSync() {
     fs.mkdirSync(BUFFERS_DIR, { recursive: true });
     const data = [];
     for (const [id, s] of sessions) {
-      data.push({ id, name: s.name, cwd: s.cwd, mode: s.mode, conversationId: s.conversationId || null, ...(s.chatOpts ? { chat: s.chatOpts } : {}), createdAt: s.createdAt, savedAt: new Date().toISOString() });
+      data.push({ id, name: s.name, cwd: s.cwd, mode: s.mode, conversationId: s.conversationId || null, ...(s.chatOpts ? { chat: s.chatOpts } : {}), ...(s.pdf ? { pdf: true } : {}), createdAt: s.createdAt, savedAt: new Date().toISOString() });
     }
     saveLedger(SESSIONS_DIR, data);
     // 出力バッファは「前回保存から中身が変わったタブ」だけ書く。

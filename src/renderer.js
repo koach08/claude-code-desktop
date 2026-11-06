@@ -98,6 +98,7 @@ async function restoreTab(savedSession, deferred = false) {
       restoreFromId: savedSession.id,
       conversationId: savedSession.conversationId || null,
       chat: savedSession.chat || null,
+      pdf: savedSession.pdf === true,
       deferred,
     });
     if (session.mode === 'chat') { await addChatTab(session, { transcript: true }); return; }
@@ -4254,6 +4255,21 @@ async function openProjMenu(sid, x, y) {
     back.textContent = '自動の判定に戻す';
     back.addEventListener('click', () => pick(null));
     m.appendChild(back);
+  }
+  // PDF ビューアはタブごとに切り替える(1本 約300MB なので普段は切っておく)
+  let pdfState = null;
+  try { pdfState = await window.api.getTabPdf(sid); } catch (_) { /* 古い版の main なら出さない */ }
+  if (pdfState) {
+    const pdfBtn = document.createElement('button');
+    pdfBtn.className = 'pm-auto';
+    pdfBtn.textContent = pdfState.pdf ? 'PDFビューアを切る(このタブを再起動)' : 'PDFビューアを使う(このタブを再起動)';
+    pdfBtn.addEventListener('click', async () => {
+      closeProjMenu();
+      const r = await window.api.setTabPdf(sid, !pdfState.pdf);
+      if (r && r.ok) setStatus('ready', r.pdf ? 'このタブでPDFビューアを使えるようにしました' : 'このタブのPDFビューアを切りました');
+      else setStatus('ended', (r && r.error) || 'PDFビューアを切り替えられませんでした');
+    });
+    m.appendChild(pdfBtn);
   }
   document.body.appendChild(m);
   const r = m.getBoundingClientRect();

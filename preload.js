@@ -19,6 +19,8 @@ contextBridge.exposeInMainWorld('api', {
   switchMode: (sessionId, newMode) => ipcRenderer.invoke('switch-mode', { sessionId, newMode }),
   sendInput: (sessionId, input) => ipcRenderer.invoke('send-input', { sessionId, input }),
   wakeSession: (sessionId) => ipcRenderer.invoke('wake-session', { sessionId }),
+  getTabPdf: (sessionId) => ipcRenderer.invoke('get-tab-pdf', { sessionId }),
+  setTabPdf: (sessionId, on) => ipcRenderer.invoke('set-tab-pdf', { sessionId, on }),
   resizeTerminal: (sessionId, cols, rows) => ipcRenderer.invoke('resize-terminal', { sessionId, cols, rows }),
   closeSession: (sessionId) => ipcRenderer.invoke('close-session', { sessionId }),
   checkClaudeCli: () => ipcRenderer.invoke('check-claude-cli'),
