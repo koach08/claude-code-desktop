@@ -99,6 +99,7 @@ async function restoreTab(savedSession, deferred = false) {
       conversationId: savedSession.conversationId || null,
       chat: savedSession.chat || null,
       pdf: savedSession.pdf === true,
+      connectors: savedSession.connectors || [],
       deferred,
     });
     if (session.mode === 'chat') { await addChatTab(session, { transcript: true }); return; }
@@ -4270,6 +4271,21 @@ async function openProjMenu(sid, x, y) {
       else setStatus('ended', (r && r.error) || 'PDFビューアを切り替えられませんでした');
     });
     m.appendChild(pdfBtn);
+  }
+  // 連携は必要なときにつなぐ。つないだ状態はタブごとに覚える
+  let connectorStates = null;
+  try { connectorStates = await window.api.getTabConnectors(sid); } catch (_) { /* 古い版の main なら出さない */ }
+  for (const c of connectorStates || []) {
+    const btn = document.createElement('button');
+    btn.className = 'pm-auto';
+    btn.textContent = c.on ? `${c.label} を切る(このタブを再起動)` : `${c.label} をつなぐ(このタブを再起動)`;
+    btn.addEventListener('click', async () => {
+      closeProjMenu();
+      const r = await window.api.setTabConnector(sid, c.key, !c.on);
+      if (r && r.ok) setStatus('ready', c.on ? `このタブの ${c.label} を切りました` : `このタブで ${c.label} をつなぎました`);
+      else setStatus('ended', (r && r.error) || `${c.label} を切り替えられませんでした`);
+    });
+    m.appendChild(btn);
   }
   document.body.appendChild(m);
   const r = m.getBoundingClientRect();

@@ -1143,7 +1143,7 @@ if (!ISOLATED_DATA) {
   setInterval(() => { checkWatches().catch(() => {}); }, 6 * 60 * 60 * 1000);
 }
 
-ipcMain.handle('create-session', async (_event, { cwd, name, mode, restoreFromId, conversationId, model, deferred, chat, pdf }) => {
+ipcMain.handle('create-session', async (_event, { cwd, name, mode, restoreFromId, conversationId, model, deferred, chat, pdf, connectors }) => {
   const id = `s_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
   const sessionCwd = cwd || os.homedir();
   const sessionMode = mode || 'claude';
@@ -1230,6 +1230,7 @@ ipcMain.handle('create-session', async (_event, { cwd, name, mode, restoreFromId
     exited: false,
     sleeping: true,   // 下の wake() で起こす(眠らせるタブは起こさない)
     pdf: pdf === true,   // PDF ビューアは1本 約300MB。必要なタブだけ入れる(タブの右クリックで切替)
+    connectors: tabSleep.cleanConnectors(connectors),   // このタブでつないでいる連携(既定は無し)
   };
   sessions.set(id, sessionData);
 
@@ -1277,7 +1278,7 @@ ipcMain.handle('create-session', async (_event, { cwd, name, mode, restoreFromId
     if (!sessionData.sleeping) return sessionData.pty;
     sessionData.sleeping = false;
     const spawnArgs = sessionMode === 'claude'
-      ? tabSleep.claudeArgs({ model: claudeModel, conversationId: sessionData.conversationId, pdf: sessionData.pdf })
+      ? tabSleep.claudeArgs({ model: claudeModel, conversationId: sessionData.conversationId, pdf: sessionData.pdf, connectors: sessionData.connectors })
       : args;
     const p = nodePty.spawn(cmd, spawnArgs, spawnOpts);
     attach(p);
@@ -1455,20 +1456,40 @@ ipcMain.handle('get-tab-pdf', (_e, { sessionId }) => {
   const s = sessions.get(sessionId);
   return s && s.mode === 'claude' ? { pdf: !!s.pdf } : null;
 });
+// 設定を変えて、同じ会話で起動し直す。眠っているタブは次に起きるときに反映される
+function applyTabSetting(sessionId, s, apply) {
+  if (s.sleeping) { apply(); return { ok: true }; }
+  // 起動し直すので、作業中や返事待ちのタブは止めない
+  if (Date.now() - (s.lastOutputAt || 0) < 5000 || tabSleep.isAwakeWaiting(sessionBuffers.get(sessionId) || '')) {
+    return { ok: false, error: '作業中か返事待ちのタブです。終わってから切り替えてください' };
+  }
+  apply();
+  s.wakeOnExit = true;   // 古い claude が終わってから、同じ会話で起動し直す
+  s.sleepNow();
+  return { ok: true };
+}
 ipcMain.handle('set-tab-pdf', (_e, { sessionId, on }) => {
   const s = sessions.get(sessionId);
   if (!s || s.mode !== 'claude' || s.exited) return { ok: false, error: 'このタブでは切り替えられません' };
   const pdf = on === true;
   if (s.pdf === pdf) return { ok: true, pdf };
-  if (s.sleeping) { s.pdf = pdf; return { ok: true, pdf }; }   // 次に起きるときに反映される
-  // 起動し直すので、作業中や返事待ちのタブは止めない
-  if (Date.now() - (s.lastOutputAt || 0) < 5000 || tabSleep.isAwakeWaiting(sessionBuffers.get(sessionId) || '')) {
-    return { ok: false, error: '作業中か返事待ちのタブです。終わってから切り替えてください' };
-  }
-  s.pdf = pdf;
-  s.wakeOnExit = true;   // 古い claude が終わってから、同じ会話で起動し直す
-  s.sleepNow();
-  return { ok: true, pdf };
+  return { ...applyTabSetting(sessionId, s, () => { s.pdf = pdf; }), pdf };
+});
+
+// タブごとの連携。必要なときにつなぐ(既定は切っておく)
+ipcMain.handle('get-tab-connectors', (_e, { sessionId }) => {
+  const s = sessions.get(sessionId);
+  if (!s || s.mode !== 'claude') return null;
+  return Object.entries(tabSleep.CONNECTORS).map(([key, c]) => ({ key, label: c.label, on: s.connectors.includes(key) }));
+});
+ipcMain.handle('set-tab-connector', (_e, { sessionId, key, on }) => {
+  const s = sessions.get(sessionId);
+  if (!s || s.mode !== 'claude' || s.exited) return { ok: false, error: 'このタブでは切り替えられません' };
+  if (tabSleep.cleanConnectors([key]).length === 0) return { ok: false, error: '知らない連携です' };
+  const want = on === true;
+  if (s.connectors.includes(key) === want) return { ok: true };
+  const next = want ? [...s.connectors, key] : s.connectors.filter((k) => k !== key);
+  return applyTabSetting(sessionId, s, () => { s.connectors = tabSleep.cleanConnectors(next); });
 });
 
 ipcMain.handle('resize-terminal', async (_e, { sessionId, cols, rows }) => {
@@ -2657,7 +2678,7 @@ function saveSessionsSync() {
     fs.mkdirSync(BUFFERS_DIR, { recursive: true });
     const data = [];
     for (const [id, s] of sessions) {
-      data.push({ id, name: s.name, cwd: s.cwd, mode: s.mode, conversationId: s.conversationId || null, ...(s.chatOpts ? { chat: s.chatOpts } : {}), ...(s.pdf ? { pdf: true } : {}), createdAt: s.createdAt, savedAt: new Date().toISOString() });
+      data.push({ id, name: s.name, cwd: s.cwd, mode: s.mode, conversationId: s.conversationId || null, ...(s.chatOpts ? { chat: s.chatOpts } : {}), ...(s.pdf ? { pdf: true } : {}), ...(s.connectors && s.connectors.length ? { connectors: s.connectors } : {}), createdAt: s.createdAt, savedAt: new Date().toISOString() });
     }
     saveLedger(SESSIONS_DIR, data);
     // 出力バッファは「前回保存から中身が変わったタブ」だけ書く。

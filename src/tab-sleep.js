@@ -13,10 +13,57 @@ const { isAwakeWaiting } = (() => {
 // deniedMcpServers では止まらなかった(実測)ので、こちらを使う
 const PDF_PLUGIN = 'pdf-viewer@synced';
 
-function claudeArgs({ model, conversationId, pdf }) {
+// 必要なときにタブごとにつなぐ連携(2026-11-06 実測: 全841ツールのうち、この3つと Canva で661個)。
+// ツールの名前と説明だけで起動時に約1.5万〜2万トークン使うので、既定では切る
+const CONNECTORS = {
+  wordpress: { label: 'WordPress', servers: ['wordpress', 'wordpress-koach'] },
+  vercel: { label: 'Vercel', servers: ['claude.ai Vercel'], plugins: ['vercel@claude-plugins-official'] },
+  adobe: { label: 'Adobe', servers: ['claude.ai Adobe for creativity'] },
+};
+// 本人「canva は使っていないので切っていい」。Bridgework のタブでは常に切る
+const ALWAYS_DENIED = ['claude.ai Canva'];
+
+// 台帳や画面から来た値を、知っている連携だけに絞る
+function cleanConnectors(list) {
+  return Array.isArray(list) ? Object.keys(CONNECTORS).filter((k) => list.includes(k)) : [];
+}
+
+function connectorNote(connected) {
+  const on = cleanConnectors(connected);
+  const off = Object.keys(CONNECTORS).filter((k) => !on.includes(k));
+  const names = (keys) => keys.map((k) => CONNECTORS[k].label).join('、');
+  const parts = ['Bridgework からのお知らせ(今回の起動時点の状態です。以前の案内と食い違うときは、こちらが正しいです)。'];
+  if (on.length) parts.push(`つないである連携: ${names(on)}。`);
+  if (off.length) {
+    parts.push(`切っている連携: ${names(off)}(トークン節約のため)。`);
+    parts.push('切っている連携が必要な依頼では、別の手段で代用せず、本人に「左のタブ一覧でこのタブを右クリックし、『○○をつなぐ』を選んでください。同じ会話のまま再起動します」と伝えて待ってください。');
+  }
+  return parts.join('');
+}
+
+// 案内は SessionStart フックで届ける。--append-system-prompt は会話の最初に記録され、
+// 再開時に渡しても無視される(実測)。フックなら再開した会話にも、最新の状態が届く
+function noteHook(note) {
+  const payload = JSON.stringify({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: note } });
+  const quoted = `'${payload.replace(/'/g, `'\\''`)}'`;
+  return { SessionStart: [{ hooks: [{ type: 'command', command: `printf %s ${quoted}` }] }] };
+}
+
+function claudeSettings({ pdf, connectors, platform = process.platform }) {
+  const on = cleanConnectors(connectors);
+  const off = Object.keys(CONNECTORS).filter((k) => !on.includes(k));
+  const enabledPlugins = {};
+  if (!pdf) enabledPlugins[PDF_PLUGIN] = false;
+  for (const k of off) for (const p of CONNECTORS[k].plugins || []) enabledPlugins[p] = false;
+  const denied = [...off.flatMap((k) => CONNECTORS[k].servers), ...ALWAYS_DENIED];
+  const settings = { enabledPlugins, deniedMcpServers: denied.map((serverName) => ({ serverName })) };
+  if (platform !== 'win32') settings.hooks = noteHook(connectorNote(on));   // printf を使うため
+  return settings;
+}
+
+function claudeArgs({ model, conversationId, pdf, connectors }) {
   // ⚠️ --remote-control は名前を任意で取るフラグなので、次に値を置かない。先頭に置く
-  const args = ['--remote-control', '--model', model];
-  if (!pdf) args.push('--settings', JSON.stringify({ enabledPlugins: { [PDF_PLUGIN]: false } }));
+  const args = ['--remote-control', '--model', model, '--settings', JSON.stringify(claudeSettings({ pdf, connectors }))];
   if (conversationId) args.push('--resume', conversationId);
   return args;
 }
@@ -60,4 +107,4 @@ function hasWorkingChild(table, pid) {
   return false;
 }
 
-module.exports = { PDF_PLUGIN, claudeArgs, canSleep, parsePs, hasWorkingChild, isAwakeWaiting };
+module.exports = { PDF_PLUGIN, CONNECTORS, cleanConnectors, connectorNote, claudeSettings, claudeArgs, canSleep, parsePs, hasWorkingChild, isAwakeWaiting };

@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { claudeArgs, canSleep, parsePs, hasWorkingChild, PDF_PLUGIN } = require('../src/tab-sleep');
+const { claudeArgs, claudeSettings, connectorNote, cleanConnectors, canSleep, parsePs, hasWorkingChild, PDF_PLUGIN } = require('../src/tab-sleep');
 
 const NOW = 10_000_000;
 const IDLE = 30 * 60 * 1000;
@@ -16,9 +16,63 @@ test('PDF を切ったタブは plugin を無効にして起動し、--remote-co
   assert.strictEqual(a[a.indexOf('--resume') + 1], 'c1');
 });
 
-test('PDF を入れたタブは --settings を付けない', () => {
-  const a = claudeArgs({ model: 'opus', conversationId: null, pdf: true });
-  assert.deepStrictEqual(a, ['--remote-control', '--model', 'opus']);
+test('PDF を入れたタブは plugin を無効にしない', () => {
+  const s = claudeSettings({ pdf: true, connectors: [] });
+  assert.strictEqual(PDF_PLUGIN in s.enabledPlugins, false);
+});
+
+const deniedOf = (s) => s.deniedMcpServers.map((d) => d.serverName);
+
+test('既定では WordPress・Vercel・Adobe・Canva を切る', () => {
+  const s = claudeSettings({ pdf: false, connectors: [] });
+  assert.deepStrictEqual(deniedOf(s).sort(), ['claude.ai Adobe for creativity', 'claude.ai Canva', 'claude.ai Vercel', 'wordpress', 'wordpress-koach'].sort());
+  assert.strictEqual(s.enabledPlugins['vercel@claude-plugins-official'], false);
+});
+
+test('つないだ連携だけ外れ、ほかは切ったまま', () => {
+  const s = claudeSettings({ pdf: false, connectors: ['wordpress'] });
+  assert.strictEqual(deniedOf(s).includes('wordpress'), false);
+  assert.strictEqual(deniedOf(s).includes('wordpress-koach'), false);
+  assert.strictEqual(deniedOf(s).includes('claude.ai Vercel'), true);
+});
+
+test('Vercel をつなぐとプラグインも戻る', () => {
+  const s = claudeSettings({ pdf: false, connectors: ['vercel'] });
+  assert.strictEqual('vercel@claude-plugins-official' in s.enabledPlugins, false);
+  assert.strictEqual(deniedOf(s).includes('claude.ai Vercel'), false);
+});
+
+test('全部つないでも Canva は切ったまま', () => {
+  const s = claudeSettings({ pdf: false, connectors: ['wordpress', 'vercel', 'adobe'] });
+  assert.deepStrictEqual(deniedOf(s), ['claude.ai Canva']);
+});
+
+test('知らない連携名は捨てる', () => {
+  assert.deepStrictEqual(cleanConnectors(['wordpress', 'canva', '__proto__', 1]), ['wordpress']);
+  assert.deepStrictEqual(cleanConnectors('wordpress'), []);
+  assert.deepStrictEqual(cleanConnectors(null), []);
+});
+
+test('案内は今の状態を伝え、つないだ連携を切っているとは言わない', () => {
+  const note = connectorNote(['wordpress']);
+  assert.match(note, /つないである連携: WordPress。/);
+  assert.match(note, /切っている連携: Vercel、Adobe/);
+  assert.match(note, /右クリック/);
+  const all = connectorNote(['wordpress', 'vercel', 'adobe']);
+  assert.doesNotMatch(all, /切っている連携:/);
+});
+
+test('案内のフックは、シェルを通しても JSON のまま出る', () => {
+  const { execFileSync } = require('child_process');
+  const s = claudeSettings({ pdf: false, connectors: [], platform: 'darwin' });
+  const out = execFileSync('/bin/sh', ['-c', s.hooks.SessionStart[0].hooks[0].command]).toString();
+  const parsed = JSON.parse(out);
+  assert.strictEqual(parsed.hookSpecificOutput.hookEventName, 'SessionStart');
+  assert.strictEqual(parsed.hookSpecificOutput.additionalContext, connectorNote([]));
+});
+
+test('Windows では printf のフックを付けない', () => {
+  assert.strictEqual('hooks' in claudeSettings({ pdf: false, connectors: [], platform: 'win32' }), false);
 });
 
 test('しばらく出力のない Claude タブは眠らせてよい', () => {
