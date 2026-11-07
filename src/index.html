@@ -215,12 +215,29 @@
                 <button class="chat-engine-btn" data-provider="groq">Groq</button>
                 <button class="chat-engine-btn" data-provider="venice">Venice</button>
                 <button class="chat-engine-btn" data-provider="gemini">Gemini</button>
+                <button class="chat-engine-btn" data-provider="local" title="この Mac の中で動く AI(Ollama)。外部に送りません">この Mac</button>
               </div>
               <select id="chat-model-select"></select>
               <div id="chat-engine-spacer"></div>
               <button id="chat-clear-btn" title="会話クリア">New</button>
               <button id="chat-config-btn" title="API設定">&#9881;</button>
             </div>
+            <div id="chat-share-row">
+              <button type="button" class="chat-share-btn" id="chat-share-file" title="選んだファイルの中身だけを、この会話で AI に渡します">📎 ファイル</button>
+              <button type="button" class="chat-share-btn" id="chat-share-url" title="貼った URL の本文を読んで、この会話で AI に渡します">🔗 Web ページ</button>
+              <button type="button" class="chat-share-btn" id="chat-share-memo" title="自分の状況のメモを書いて、この会話で AI に渡します">📝 自分の状況</button>
+              <button type="button" class="chat-share-btn" id="chat-companion-toggle" title="自分のブラウザで見ているページについて、隣で相談します。AI はページを開きません">🧭 同行モード</button>
+              <div id="chat-share-chips"></div>
+            </div>
+            <div id="chat-companion-row" class="hidden">
+              <button type="button" class="chat-share-btn" id="chat-companion-page">📋 ページの文字</button>
+              <button type="button" class="chat-share-btn" id="chat-companion-shot" title="範囲を選んで1枚撮ります。送る前に確認できます。この Mac の AI にだけ渡せます">📷 スクリーンショット</button>
+            </div>
+            <div id="chat-share-url-row" class="hidden">
+              <input type="text" id="chat-share-url-input" placeholder="https://… を貼ってください">
+              <button type="button" class="chat-share-btn" id="chat-share-url-go">読む</button>
+            </div>
+            <div id="chat-share-note"></div>
             <div id="chat-compose">
               <textarea id="chat-input" placeholder="何でも聞いてください..." rows="1"></textarea>
               <button id="chat-mic-btn" class="mic-btn" title="音声入力">&#127908;</button>
@@ -228,6 +245,55 @@
             </div>
             <div id="chat-status"></div>
           </div>
+        </div>
+      </div>
+
+      <!-- 同行モード: ページの文字 -->
+      <div id="chat-page-dialog" class="dialog hidden">
+        <div class="dialog-content" style="max-width:560px;">
+          <div class="dialog-header">
+            <h2>ページの文字を共有</h2>
+            <button id="chat-page-close" class="dialog-close-btn">&times;</button>
+          </div>
+          <p style="font-size:13px;color:var(--fg2);margin:4px 0 8px;">相談したい部分だけ貼ってください。メール・電話・カード番号は自動で伏せますが、名前や住所は伏せられません。違法な内容らしいものは貼らず、ページを閉じてください。</p>
+          <textarea id="chat-page-input" rows="10" style="width:100%;box-sizing:border-box;background:var(--bg1);color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:8px;font-size:13px;line-height:1.6;resize:vertical;"></textarea>
+          <div style="display:flex;gap:8px;margin-top:12px;">
+            <button class="setup-btn primary" id="chat-page-share">伏せて共有する</button>
+          </div>
+          <div id="chat-page-status" style="margin-top:8px;font-size:12px;color:var(--red);"></div>
+        </div>
+      </div>
+
+      <!-- 同行モード: スクリーンショットの確認 -->
+      <div id="chat-shot-dialog" class="dialog hidden">
+        <div class="dialog-content" style="max-width:640px;">
+          <div class="dialog-header">
+            <h2>この画像を渡しますか？</h2>
+            <button id="chat-shot-close" class="dialog-close-btn">&times;</button>
+          </div>
+          <p style="font-size:13px;color:var(--fg2);margin:4px 0 8px;">渡す先はこの Mac の AI だけです。人物の画像や何か分からない画像が写っていたら、渡さずにやめてください。画像は保存しません。</p>
+          <img id="chat-shot-preview" alt="撮った画像" style="display:block;max-width:100%;max-height:50vh;margin:0 auto;border:1px solid var(--border);border-radius:6px;">
+          <div style="display:flex;gap:8px;margin-top:12px;">
+            <button class="setup-btn primary" id="chat-shot-use">この Mac の AI に渡す</button>
+            <button class="setup-btn" id="chat-shot-cancel">やめる</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 相談タブ: 自分の状況メモ -->
+      <div id="chat-memo-dialog" class="dialog hidden">
+        <div class="dialog-content" style="max-width:520px;">
+          <div class="dialog-header">
+            <h2>自分の状況</h2>
+            <button id="chat-memo-close" class="dialog-close-btn">&times;</button>
+          </div>
+          <p style="font-size:13px;color:var(--fg2);margin:4px 0 8px;">仕事、今抱えていること、相談で踏まえてほしいことなど。この Mac に保存され、「共有する」を押した会話でだけ AI に渡ります。パスワードや鍵は書かないでください。</p>
+          <textarea id="chat-memo-input" rows="8" maxlength="4000" style="width:100%;box-sizing:border-box;background:var(--bg1);color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:8px;font-size:14px;line-height:1.6;resize:vertical;"></textarea>
+          <div style="display:flex;gap:8px;margin-top:12px;">
+            <button class="setup-btn primary" id="chat-memo-share">保存してこの会話で共有する</button>
+            <button class="setup-btn" id="chat-memo-save">保存だけ</button>
+          </div>
+          <div id="chat-memo-status" style="margin-top:8px;font-size:12px;color:var(--red);"></div>
         </div>
       </div>
 
@@ -717,6 +783,7 @@
   <script src="voice-chat.js"></script>
   <!-- 会話タブ(吹き出し表示)。renderer より先に読む -->
   <script src="chat-markdown.js"></script>
+  <script src="consult-share.js"></script>
   <script src="library-panel.js"></script>
   <script src="slide-panel.js"></script>
   <script src="chat-presets.js"></script>

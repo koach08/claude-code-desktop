@@ -102,6 +102,12 @@ contextBridge.exposeInMainWorld('api', {
   hubProviders: () => ipcRenderer.invoke('hub-providers'),
   hubLoadConfig: () => ipcRenderer.invoke('hub-load-config'),
   hubSaveConfig: (cfg) => ipcRenderer.invoke('hub-save-config', cfg),
+  consultPickFiles: () => ipcRenderer.invoke('consult-pick-files'),
+  consultReadUrl: (url) => ipcRenderer.invoke('consult-read-url', { url }),
+  consultMemoLoad: () => ipcRenderer.invoke('consult-memo-load'),
+  consultMemoSave: (text) => ipcRenderer.invoke('consult-memo-save', { text }),
+  consultScreenshot: () => ipcRenderer.invoke('consult-screenshot'),
+  localAiStatus: () => ipcRenderer.invoke('local-ai-status'),
   onHubChunk: (cb) => {
     const h = (_e, d) => cb(d);
     ipcRenderer.on('hub-chat-chunk', h);

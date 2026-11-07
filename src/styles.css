@@ -914,7 +914,13 @@ body[data-ui="chat"] #mode-toggle { display: none; }
 .chat-msg.user .msg-content { color: var(--fg); }
 
 /* Separator between messages */
-.chat-msg.assistant { background: rgba(36,40,59,.5); border-radius: 0; }
+.chat-msg.assistant { background: var(--bg2); border-radius: 10px; }
+/* 返事は Markdown の段落で組むので、行の折り返しは .md に任せる */
+.chat-msg.assistant .msg-content { white-space: normal; }
+.chat-msg.assistant .md code { background: #eaeaee; border: 1px solid var(--border); }
+.chat-msg.assistant .code-block code { background: none; border: none; }
+.chat-msg.assistant .code-block pre { background: none; border: none; margin: 0; }
+.chat-msg.user .msg-extra { color: var(--fg2); }
 
 /* Error */
 .chat-msg.error {
@@ -1025,6 +1031,27 @@ body[data-ui="chat"] #mode-toggle { display: none; }
 #chat-clear-btn:hover, #chat-config-btn:hover {
   color: var(--fg); background: var(--bg2);
 }
+
+/* 相談タブの共有 */
+#chat-share-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-bottom: 6px; }
+#chat-share-chips { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
+.chat-share-btn {
+  background: transparent; border: 1px solid var(--border); color: var(--fg2);
+  border-radius: 14px; padding: 3px 10px; font-size: 12px; cursor: pointer;
+}
+.chat-share-btn:hover { color: var(--fg); background: var(--bg2); }
+.chat-share-btn:disabled { opacity: .5; cursor: default; }
+.chat-share-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+#chat-companion-row { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
+.chat-msg.assistant[data-engine="local"] .msg-avatar { background: #475569; color: #fff; }
+#chat-share-url-row { display: flex; gap: 6px; margin-bottom: 6px; }
+#chat-share-url-input {
+  flex: 1; min-width: 0; background: var(--bg1); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 8px; padding: 5px 10px; font-size: 13px;
+}
+#chat-share-note { font-size: 11px; color: var(--fg2); margin-bottom: 6px; }
+#chat-share-note:empty { display: none; }
+#chat-share-note.error { color: var(--red); }
 
 /* Compose box */
 #chat-compose {

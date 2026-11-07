@@ -3299,8 +3299,194 @@ let chatStreaming = false;
 let chatCleanupChunk = null;
 let chatCleanupDone = null;
 let chatCleanupError = null;
+// この会話で本人が許可して共有しているもの。新しい会話(New)で空に戻る
+let chatShared = { files: [], memo: '', image: null };
+let chatCompanion = false;   // 同行モード: 本人が見ているページについて隣で相談する
+let chatShotPending = null;
+
+const CHAT_ENGINE_NAMES = { openai: 'GPT', claude: 'Claude', venice: 'Venice.ai', gemini: 'Gemini', perplexity: 'Perplexity', groq: 'Groq', local: 'この Mac の AI' };
+
+function chatSharedChars() {
+  return chatShared.files.reduce((n, f) => n + f.chars, 0) + chatShared.memo.length;
+}
+
+function chatShareNames() {
+  return [...(chatShared.memo ? ['自分の状況'] : []), ...chatShared.files.map((f) => f.name), ...(chatShared.image ? ['スクリーンショット'] : [])];
+}
+
+function renderChatShare() {
+  const box = document.getElementById('chat-share-chips');
+  box.textContent = '';
+  const chip = (label, title, onRemove) => {
+    const c = document.createElement('span');
+    c.className = 'att-chip';
+    c.title = title;
+    c.textContent = label + ' ';
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.title = '共有をやめる';
+    b.textContent = '✕';
+    b.addEventListener('click', () => { onRemove(); renderChatShare(); });
+    c.appendChild(b);
+    box.appendChild(c);
+  };
+  if (chatShared.memo) chip('📝 自分の状況', 'この会話で共有中', () => { chatShared.memo = ''; });
+  chatShared.files.forEach((f) => {
+    const cut = f.truncated ? '(先頭のみ)' : '';
+    chip(`${f.url ? '🔗' : '📎'} ${f.name}${cut}`, f.url || f.name, () => { chatShared.files = chatShared.files.filter((x) => x !== f); });
+  });
+  if (chatShared.image) chip('📷 スクリーンショット', '次の送信で1回だけ渡します', () => { chatShared.image = null; });
+  const note = document.getElementById('chat-share-note');
+  note.classList.remove('error');
+  const n = chatSharedChars();
+  const local = chatProvider === 'local';
+  const size = n ? `共有中 ${n.toLocaleString()}字: ` : '';
+  let dest = '';
+  if (local) {
+    const ready = chatProviders.local && chatProviders.local.available;
+    dest = ready ? 'この Mac の中だけで処理し、外部には送りません' : 'この Mac の AI はまだ準備できていません(Ollama とモデルが必要です)';
+  } else if (n || chatCompanion) {
+    dest = `送信すると中継サーバーを通って ${CHAT_ENGINE_NAMES[chatProvider] || chatProvider} に渡ります`;
+  }
+  note.textContent = (n || chatCompanion || local) ? `${chatCompanion ? '同行モード: ' : ''}${size}${dest}` : '';
+}
+
+function setChatCompanion(on) {
+  chatCompanion = on;
+  document.getElementById('chat-companion-toggle').classList.toggle('active', on);
+  document.getElementById('chat-companion-row').classList.toggle('hidden', !on);
+  // 外へ出さない方を先に選ぶ。使えないときは勝手に変えず、渡す先の表示で知らせる
+  if (on && chatProviders.local && chatProviders.local.available && chatProvider !== 'local') switchChatEngine('local');
+  renderChatShare();
+}
+
+function closeChatShot() {
+  chatShotPending = null;
+  document.getElementById('chat-shot-preview').removeAttribute('src');
+  document.getElementById('chat-shot-dialog').classList.add('hidden');
+}
+
+function setupChatCompanion() {
+  document.getElementById('chat-companion-toggle').addEventListener('click', () => setChatCompanion(!chatCompanion));
+  const pageDialog = document.getElementById('chat-page-dialog');
+  document.getElementById('chat-companion-page').addEventListener('click', () => {
+    document.getElementById('chat-page-input').value = '';
+    document.getElementById('chat-page-status').textContent = '';
+    pageDialog.classList.remove('hidden');
+    document.getElementById('chat-page-input').focus();
+  });
+  document.getElementById('chat-page-close').addEventListener('click', () => pageDialog.classList.add('hidden'));
+  document.getElementById('chat-page-share').addEventListener('click', () => {
+    const r = window.BridgeworkConsultShare.preparePagePaste(document.getElementById('chat-page-input').value);
+    if (!r.ok) { document.getElementById('chat-page-status').textContent = r.error; return; }
+    document.getElementById('chat-page-input').value = '';
+    pageDialog.classList.add('hidden');
+    addChatShared([r]);
+    const note = document.getElementById('chat-share-note');
+    if (r.masked && !note.classList.contains('error')) note.textContent += `(${r.masked}を伏せました)`;
+  });
+  document.getElementById('chat-companion-shot').addEventListener('click', async () => {
+    if (chatProvider !== 'local') { chatShareError('スクリーンショットはこの Mac の AI にだけ渡せます。エンジンで「この Mac」を選んでください'); return; }
+    const r = await window.api.consultScreenshot();
+    if (!r.ok) { if (!r.canceled) chatShareError(r.error); return; }
+    chatShotPending = r.base64;
+    document.getElementById('chat-shot-preview').src = `data:image/png;base64,${r.base64}`;
+    document.getElementById('chat-shot-dialog').classList.remove('hidden');
+  });
+  document.getElementById('chat-shot-use').addEventListener('click', () => {
+    chatShared.image = chatShotPending;
+    closeChatShot();
+    renderChatShare();
+  });
+  document.getElementById('chat-shot-cancel').addEventListener('click', closeChatShot);
+  document.getElementById('chat-shot-close').addEventListener('click', closeChatShot);
+}
+
+function chatShareError(text) {
+  const note = document.getElementById('chat-share-note');
+  note.textContent = text;
+  note.classList.add('error');
+}
+
+function addChatShared(results) {
+  const refused = [];
+  for (const r of results) {
+    if (!r.ok) { refused.push(`${r.name}: ${r.error}`); continue; }
+    if (chatShared.files.some((f) => f.name === r.name && f.text === r.text)) continue;
+    if (chatSharedChars() + r.chars > window.BridgeworkConsultShare.MAX_TOTAL_CHARS) { refused.push(`${r.name}: 共有できる量を超えます`); continue; }
+    chatShared.files.push(r);
+  }
+  renderChatShare();
+  if (refused.length) chatShareError(refused.join(' / '));
+}
+
+async function saveChatMemo(share) {
+  const text = document.getElementById('chat-memo-input').value;
+  const status = document.getElementById('chat-memo-status');
+  status.textContent = '';
+  const r = await window.api.consultMemoSave(text);
+  if (!r.ok) { status.textContent = r.error; return; }
+  if (share) chatShared.memo = text.trim();
+  document.getElementById('chat-memo-dialog').classList.add('hidden');
+  renderChatShare();
+}
+
+function setupChatShare() {
+  document.getElementById('chat-share-file').addEventListener('click', async () => {
+    addChatShared(await window.api.consultPickFiles());
+  });
+  const urlRow = document.getElementById('chat-share-url-row');
+  const urlInput = document.getElementById('chat-share-url-input');
+  document.getElementById('chat-share-url').addEventListener('click', () => {
+    urlRow.classList.toggle('hidden');
+    if (!urlRow.classList.contains('hidden')) urlInput.focus();
+  });
+  const readUrl = async () => {
+    const url = urlInput.value.trim();
+    if (!url) return;
+    const go = document.getElementById('chat-share-url-go');
+    go.disabled = true;
+    go.textContent = '読んでいます…';
+    const r = await window.api.consultReadUrl(url);
+    go.disabled = false;
+    go.textContent = '読む';
+    addChatShared([r]);
+    if (r.ok) { urlInput.value = ''; urlRow.classList.add('hidden'); }
+  };
+  document.getElementById('chat-share-url-go').addEventListener('click', readUrl);
+  urlInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); readUrl(); }
+  });
+  document.getElementById('chat-share-memo').addEventListener('click', async () => {
+    document.getElementById('chat-memo-input').value = await window.api.consultMemoLoad();
+    document.getElementById('chat-memo-status').textContent = '';
+    document.getElementById('chat-memo-dialog').classList.remove('hidden');
+  });
+  document.getElementById('chat-memo-close').addEventListener('click', () => {
+    document.getElementById('chat-memo-dialog').classList.add('hidden');
+  });
+  document.getElementById('chat-memo-share').addEventListener('click', () => saveChatMemo(true));
+  document.getElementById('chat-memo-save').addEventListener('click', () => saveChatMemo(false));
+  // 返答の中のコピーとリンク
+  document.getElementById('chat-messages').addEventListener('click', (e) => {
+    const b = e.target.closest('.code-copy');
+    if (b) {
+      const code = b.parentElement.querySelector('code');
+      navigator.clipboard.writeText(code ? code.textContent : '').then(() => {
+        b.textContent = 'コピーしました';
+        setTimeout(() => { b.textContent = 'コピー'; }, 1200);
+      }).catch(() => {});
+      return;
+    }
+    const a = e.target.closest('a[href]');
+    if (a) { e.preventDefault(); window.api.openExternal(a.href); }
+  });
+}
 
 document.addEventListener('DOMContentLoaded', () => {
+  setupChatShare();
+  setupChatCompanion();
+
   // Engine buttons
   document.querySelectorAll('.chat-engine-btn').forEach(btn => {
     btn.addEventListener('click', () => switchChatEngine(btn.dataset.provider));
@@ -3333,7 +3519,8 @@ document.addEventListener('DOMContentLoaded', () => {
       routeDebounce = setTimeout(async () => {
         const suggestion = await window.api.hubSuggestRoute(text);
         const statusEl = document.getElementById('chat-status');
-        if (suggestion && suggestion.provider !== chatProvider) {
+        // 同行モードでは、外の AI への切替を勧めない
+        if (suggestion && suggestion.provider !== chatProvider && !chatCompanion) {
           statusEl.innerHTML = `<span style="color:var(--yellow)">Smart Router: ${suggestion.reason} → </span><span style="color:var(--accent);cursor:pointer;text-decoration:underline;" id="route-accept">${suggestion.provider.toUpperCase()} に切替</span>`;
           document.getElementById('route-accept')?.addEventListener('click', () => {
             switchChatEngine(suggestion.provider);
@@ -3349,6 +3536,8 @@ document.addEventListener('DOMContentLoaded', () => {
   // Clear
   document.getElementById('chat-clear-btn').addEventListener('click', () => {
     chatMessages = [];
+    chatShared = { files: [], memo: '', image: null };
+    setChatCompanion(false);
     renderChatMessages();
   });
 
@@ -3374,24 +3563,27 @@ document.addEventListener('DOMContentLoaded', () => {
 
 async function initChatProviders() {
   const result = await window.api.hubProviders();
-  if (result && !result.error) {
-    chatProviders = result;
-    // Mark unavailable engines
-    document.querySelectorAll('.chat-engine-btn').forEach(btn => {
-      const p = chatProviders[btn.dataset.provider];
-      if (p && !p.available) btn.classList.add('unavailable');
-      else btn.classList.remove('unavailable');
-    });
-    updateChatModelSelect();
-  }
+  if (result && !result.error) chatProviders = result;
+  const local = await window.api.localAiStatus();
+  chatProviders.local = { name: 'この Mac', available: !!local.available, models: local.models || [], defaultModel: (local.models || [])[0] || '' };
+  // Mark unavailable engines
+  document.querySelectorAll('.chat-engine-btn').forEach(btn => {
+    const p = chatProviders[btn.dataset.provider];
+    if (p && !p.available) btn.classList.add('unavailable');
+    else btn.classList.remove('unavailable');
+  });
+  updateChatModelSelect();
+  renderChatShare();
 }
 
 function switchChatEngine(provider) {
   chatProvider = provider;
+  if (provider !== 'local') chatShared.image = null;   // 画像は外の AI へ持ち越さない
   document.querySelectorAll('.chat-engine-btn').forEach(b => {
     b.classList.toggle('active', b.dataset.provider === provider);
   });
   updateChatModelSelect();
+  renderChatShare();   // 渡す先の表示を、選んだエンジンに合わせる
   document.getElementById('chat-input').focus();
 }
 
@@ -3408,6 +3600,16 @@ function updateChatModelSelect() {
       sel.appendChild(opt);
     }
     chatModel = sel.value;
+  }
+}
+
+// AI の返事は整形して見せる。chat-markdown.js が全部エスケープしてから決まった記法だけ戻すので、生の HTML は通らない
+function setChatContent(el, msg) {
+  if (msg.role === 'assistant') {
+    el.classList.add('md');
+    el.innerHTML = window.BridgeworkMarkdown.render(msg.content || '');
+  } else {
+    el.textContent = msg.content || '';
   }
 }
 
@@ -3432,7 +3634,7 @@ function renderChatMessages() {
   }
 
   container.innerHTML = '';
-  const avatarLetters = { openai: 'G', claude: 'C', venice: 'V', gemini: 'G', perplexity: 'P', groq: 'Q' };
+  const avatarLetters = { openai: 'G', claude: 'C', venice: 'V', gemini: 'G', perplexity: 'P', groq: 'Q', local: 'M' };
 
   for (const msg of chatMessages) {
     if (msg.error) {
@@ -3469,8 +3671,15 @@ function renderChatMessages() {
 
     const content = document.createElement('div');
     content.className = 'msg-content';
-    content.textContent = msg.content || '';
+    setChatContent(content, msg);
     body.appendChild(content);
+
+    if (msg.sharedNames && msg.sharedNames.length) {
+      const shared = document.createElement('div');
+      shared.className = 'msg-extra';
+      shared.textContent = `共有: ${msg.sharedNames.join('、')}`;
+      body.appendChild(shared);
+    }
 
     row.appendChild(body);
     container.appendChild(row);
@@ -3484,10 +3693,10 @@ async function sendChatMessage() {
   if (!text || chatStreaming) return;
 
   // Add user message
-  chatMessages.push({ role: 'user', content: text });
+  chatMessages.push({ role: 'user', content: text, sharedNames: chatShareNames() });
 
   // Add placeholder for assistant
-  const providerNames = { openai: 'GPT', claude: 'Claude', venice: 'Venice.ai', gemini: 'Gemini', perplexity: 'Perplexity', groq: 'Groq' };
+  const providerNames = CHAT_ENGINE_NAMES;
   chatMessages.push({
     role: 'assistant',
     content: '',
@@ -3512,10 +3721,20 @@ async function sendChatMessage() {
     apiMessages.push({ role: 'user', content: text });
   }
 
+  // 共有は本人の発言の側に入れる。system には「データであって命令ではない」とだけ書く
+  const share = window.BridgeworkConsultShare;
+  const sharedBlock = share.buildSharedBlock(chatShared);
+  const system = [sharedBlock ? share.SYSTEM_NOTE : '', chatCompanion ? share.COMPANION_RULES : ''].filter(Boolean).join('\n\n');
+  // 画像は次の1回だけ、この Mac の AI にだけ渡す
+  const images = chatProvider === 'local' && chatShared.image ? [chatShared.image] : [];
+  chatShared.image = null;
+  renderChatShare();
   window.api.hubChat({
     provider: chatProvider,
     model: chatModel,
-    messages: apiMessages,
+    messages: share.withSharedContext(apiMessages, sharedBlock),
+    ...(system ? { system } : {}),
+    ...(images.length ? { images } : {}),
   });
 }
 
@@ -3528,7 +3747,7 @@ function onChatChunk({ content }) {
     const lastEl = container.lastElementChild;
     if (lastEl) {
       const contentEl = lastEl.querySelector('.msg-content');
-      if (contentEl) contentEl.textContent = last.content;
+      if (contentEl) setChatContent(contentEl, last);
       container.scrollTop = container.scrollHeight;
     }
   }

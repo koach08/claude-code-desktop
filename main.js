@@ -2321,7 +2321,84 @@ function releaseProfileLines() {
 
 ipcMain.handle('open-path', async (_e, { p }) => { try { shell.openPath(p); } catch (_) {} });
 
-ipcMain.handle('hub-chat', async (_e, { provider, model, messages, system, temperature }) => {
+// ── 相談タブの共有 ──
+// ファイルは本人がここのダイアログで選んだものだけ読む。画面側からパスは受け取らない
+const consultShare = require('./src/consult-share');
+const CONSULT_MEMO_FILE = path.join(SESSIONS_DIR, 'consult-memo.txt');
+ipcMain.handle('consult-pick-files', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: '相談で共有するファイルを選ぶ',
+    properties: ['openFile', 'multiSelections'],
+  });
+  if (result.canceled) return [];
+  return result.filePaths.map((p) => consultShare.readSharedFile(p, { homeDir: os.homedir() }));
+});
+ipcMain.handle('consult-read-url', async (_e, { url }) => {
+  const reason = consultShare.urlBlockReason(url);
+  const name = String(url || '').slice(0, 120);
+  if (reason) return { ok: false, name, error: reason };
+  try {
+    const src = await sourceFetch.fetchSource(url, { ...fetchOpts(), fetchImpl: consultShare.guardedFetch() });
+    return { ...consultShare.prepareWebText(String(src.title || src.url || name).slice(0, 120), sourceFetch.sourceBody(src)), url: src.url };
+  } catch (e) {
+    return { ok: false, name, error: e.message };
+  }
+});
+ipcMain.handle('consult-memo-load', async () => {
+  try { return fs.readFileSync(CONSULT_MEMO_FILE, 'utf-8').slice(0, consultShare.MAX_MEMO_CHARS); } catch (_) { return ''; }
+});
+ipcMain.handle('consult-memo-save', async (_e, { text }) => {
+  const memo = String(text || '').slice(0, consultShare.MAX_MEMO_CHARS);
+  if (consultShare.hasSecret(memo)) return { ok: false, error: '鍵らしい文字列が含まれているので保存しません' };
+  fs.mkdirSync(SESSIONS_DIR, { recursive: true });
+  fs.writeFileSync(CONSULT_MEMO_FILE, memo, { mode: 0o600 });
+  return { ok: true };
+});
+
+// スクリーンショットは本人が範囲を選んだときだけ撮る。読んだらすぐ消し、保存しない
+ipcMain.handle('consult-screenshot', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bridgework-shot-'));
+  const file = path.join(dir, 'shot.png');
+  const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+  try {
+    if (win) win.minimize();   // 見ているページが隠れないように、撮る間だけ下げる
+    await new Promise((resolve) => {
+      require('child_process').execFile('/usr/sbin/screencapture', ['-i', '-x', '-t', 'png', file], () => resolve());
+    });
+    if (!fs.existsSync(file)) return { ok: false, canceled: true };
+    const st = fs.statSync(file);
+    if (st.size > 15 * 1024 * 1024) return { ok: false, error: '画像が大きすぎます。範囲を狭めてください' };
+    return { ok: true, base64: fs.readFileSync(file).toString('base64') };
+  } catch (_) {
+    return { ok: false, error: 'スクリーンショットを撮れませんでした' };
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+    if (win && !win.isDestroyed()) { win.restore(); win.focus(); }
+  }
+});
+
+// この Mac の中の AI(Ollama)。送り先は 127.0.0.1 に固定
+const localAI = require('./src/local-ai');
+ipcMain.handle('local-ai-status', () => localAI.localModels());
+
+ipcMain.handle('hub-chat', async (_e, { provider, model, messages, system, temperature, images }) => {
+  const sendToChat = (channel, data) => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, data);
+  };
+  if (provider === 'local') {
+    try {
+      await localAI.localChat({ model, messages, system, images, onChunk: (content) => sendToChat('hub-chat-chunk', { content }) });
+      sendToChat('hub-chat-done', {});
+    } catch (e) {
+      sendToChat('hub-chat-error', { error: e.message });
+    }
+    return;
+  }
+  // 画像は外へ出さない。中継サーバーも文字しか運べない
+  if (images && images.length) {
+    sendToChat('hub-chat-error', { error: '画像はこの Mac の AI にだけ渡せます' });
+    return;
+  }
   const cfg = (() => {
     try {
       if (fs.existsSync(HUB_CONFIG_FILE)) {
