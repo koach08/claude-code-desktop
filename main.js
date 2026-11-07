@@ -1702,6 +1702,7 @@ ipcMain.handle('scan-project', async (_e, { cwd }) => {
 // ══════════════════════════════════════
 // ── AI Hub Chat API ──
 // ══════════════════════════════════════
+const { resolveHubSecret } = require('./src/hub-secret');
 const HUB_CONFIG_FILE = path.join(SESSIONS_DIR, 'hub-config.json');
 const DEFAULT_HUB_CONFIG = {
   apiUrl: 'http://localhost:3900',
@@ -1739,7 +1740,8 @@ ipcMain.handle('hub-providers', async () => {
   })();
   try {
     const headers = {};
-    if (cfg.apiSecret) headers['Authorization'] = `Bearer ${cfg.apiSecret}`;
+    const hubSecret = resolveHubSecret(cfg.apiSecret);
+    if (hubSecret) headers['Authorization'] = `Bearer ${hubSecret}`;
     const res = await fetch(`${cfg.apiUrl}/providers`, { headers });
     if (!res.ok) throw new Error(`${res.status}`);
     return await res.json();
@@ -1763,7 +1765,8 @@ ipcMain.handle('hub-transcribe', async (_e, { audioBuffer, mimeType }) => {
     formData.append('audio', new Blob([Buffer.from(audioBuffer)], { type: mimeType || 'audio/webm' }), 'audio.webm');
 
     const headers = {};
-    if (cfg.apiSecret) headers['Authorization'] = `Bearer ${cfg.apiSecret}`;
+    const hubSecret = resolveHubSecret(cfg.apiSecret);
+    if (hubSecret) headers['Authorization'] = `Bearer ${hubSecret}`;
 
     const res = await fetch(`${cfg.apiUrl}/transcribe`, {
       method: 'POST',
@@ -1883,7 +1886,8 @@ ipcMain.handle('hub-converse', async (_e, { messages, context, provider, model }
     return { ...DEFAULT_HUB_CONFIG };
   })();
   const headers = { 'Content-Type': 'application/json' };
-  if (cfg.apiSecret) headers.Authorization = `Bearer ${cfg.apiSecret}`;
+  const hubSecret = resolveHubSecret(cfg.apiSecret);
+  if (hubSecret) headers.Authorization = `Bearer ${hubSecret}`;
   try {
     const res = await fetch(`${cfg.apiUrl}/converse`, {
       method: 'POST',
@@ -1936,7 +1940,7 @@ function voiceNet() {
     getKey: readSecretKey,
     getYomi: loadYomi,
     hubUrl: cfg.apiUrl,
-    hubSecret: cfg.apiSecret,
+    hubSecret: resolveHubSecret(cfg.apiSecret),
   });
 }
 
@@ -2307,7 +2311,8 @@ ipcMain.handle('hub-chat', async (_e, { provider, model, messages, system, tempe
   })();
 
   const headers = { 'Content-Type': 'application/json' };
-  if (cfg.apiSecret) headers['Authorization'] = `Bearer ${cfg.apiSecret}`;
+  const hubSecret = resolveHubSecret(cfg.apiSecret);
+  if (hubSecret) headers['Authorization'] = `Bearer ${hubSecret}`;
 
   try {
     const res = await fetch(`${cfg.apiUrl}/chat`, {
