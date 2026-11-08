@@ -14,7 +14,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { execSync } = require('child_process');
+const { execFileSync } = require('child_process');
 
 const ROOT = path.join(__dirname, '..');
 const { runProcess } = require(path.join(ROOT, 'src/worker-run'));
@@ -35,7 +35,8 @@ function readSecretKey(name) {
 // 「入っているか」だけ見る。実際に叩けるかは走らせてみないと分からないので、
 // ここで時間をかけて健診はしない(認証切れや課金停止は結果で分かる)。
 function installed(bin) {
-  try { execSync(`command -v ${bin}`, { stdio: 'ignore' }); return true; } catch { return false; }
+  // シェルには名前を引数として渡す(文字列に埋め込まない)
+  try { execFileSync('/bin/sh', ['-c', 'command -v "$1"', 'sh', bin], { stdio: 'ignore' }); return true; } catch { return false; }
 }
 
 const BIN_OF = { claude: 'claude', codex: 'codex', gemini: 'gemini', grok: 'opencode' };
@@ -113,18 +114,19 @@ process.on('SIGINT', () => {
 
   // 書き込む回は、本作業を隔離した作業ツリーの中でやらせる。
   // 元のブランチには何も起きない。人間が差分を見て、当てるかどうかを決める。
-  const git = (args, at) => execSync(`git ${args}`, { cwd: at, encoding: 'utf-8', maxBuffer: 32 * 1024 * 1024 });
+  // git には引数を配列で渡す。シェルを通さないので、パスや名前に何が入っても命令にならない
+  const git = (args, at) => execFileSync('git', args, { cwd: at, encoding: 'utf-8', maxBuffer: 32 * 1024 * 1024 });
   let wt = null;
   if (opt.write) {
     try {
       wt = planWorktree(cwd, opt.task, Date.now());
       fs.mkdirSync(worktreeRoot(), { recursive: true });
-      git(wt.addArgs.join(' '), cwd);
+      git(wt.addArgs, cwd);
       console.log(`隔離: ${wt.dir}\n枝  : ${wt.branch}`);
       // 作業ツリーは HEAD から作られるので、元の未コミット変更は持ち込まれない。
       // 黙っていると、下調べが読んだ行番号と本作業が触るコードがずれる。
       let dirty = '';
-      try { dirty = git('status --porcelain', cwd).trim(); } catch (_) {}
+      try { dirty = git(['status', '--porcelain'], cwd).trim(); } catch (_) {}
       if (dirty) {
         console.log(`※ 元のツリーに未コミットの変更が ${dirty.split('\n').length} 件あります。`);
         console.log('  隔離は HEAD から作るので、それらは入りません。できた patch も HEAD 基準です。');
@@ -149,8 +151,8 @@ process.on('SIGINT', () => {
     if (step.stage === 'review' && wt) {
       let d = '';
       try {
-        git(wt.stageArgs.join(' '), wt.dir);      // 新規ファイルも見えるように
-        d = git(wt.diffArgs.join(' '), wt.dir);
+        git(wt.stageArgs, wt.dir);      // 新規ファイルも見えるように
+        d = git(wt.diffArgs, wt.dir);
       } catch (_) {}
       extra.diff = d.slice(0, 60000);
       extra.expectedWrite = true;
@@ -186,8 +188,8 @@ process.on('SIGINT', () => {
   if (wt) {
     let patch = '';
     try {
-      git(wt.stageArgs.join(' '), wt.dir);        // 新規ファイルを取りこぼさない
-      patch = git(wt.diffArgs.join(' '), wt.dir);
+      git(wt.stageArgs, wt.dir);        // 新規ファイルを取りこぼさない
+      patch = git(wt.diffArgs, wt.dir);
     } catch (_) {}
     if (patch.trim()) {
       const dir = path.join(os.homedir(), '.claude-code-app', 'patches');
@@ -200,6 +202,6 @@ process.on('SIGINT', () => {
     } else {
       console.log('\n作業ツリーに差分はありませんでした(何も書き換えていません)。');
     }
-    try { git(wt.removeArgs.join(' '), cwd); git(wt.deleteBranchArgs.join(' '), cwd); } catch (_) {}
+    try { git(wt.removeArgs, cwd); git(wt.deleteBranchArgs, cwd); } catch (_) {}
   }
 })();
