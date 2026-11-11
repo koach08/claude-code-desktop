@@ -3333,7 +3333,7 @@ function renderChatShare() {
   if (chatShared.memo) chip('📝 自分の状況', 'この会話で共有中', () => { chatShared.memo = ''; });
   chatShared.files.forEach((f) => {
     const cut = f.truncated ? '(先頭のみ)' : '';
-    chip(`${f.url ? '🔗' : '📎'} ${f.name}${cut}`, f.url || f.name, () => { chatShared.files = chatShared.files.filter((x) => x !== f); });
+    chip(`${f.video ? '🎬' : f.url ? '🔗' : '📎'} ${f.name}${cut}`, f.url || f.name, () => { chatShared.files = chatShared.files.filter((x) => x !== f); });
   });
   if (chatShared.image) chip('📷 スクリーンショット', '次の送信で1回だけ渡します', () => { chatShared.image = null; });
   const note = document.getElementById('chat-share-note');
@@ -3431,7 +3431,55 @@ async function saveChatMemo(share) {
   renderChatShare();
 }
 
+// 🎬 動画を読む。読み終わるまで数分かかるので、その間はボタンを止めて進み具合を出す
+let chatVideoBusy = false;
+function setupChatVideo() {
+  const dialog = document.getElementById('chat-video-dialog');
+  const status = document.getElementById('chat-video-status');
+  const urlInput = document.getElementById('chat-video-url');
+  const focusInput = document.getElementById('chat-video-focus');
+  const buttons = [document.getElementById('chat-video-read'), document.getElementById('chat-video-record')];
+  const setStatus = (text, isError) => { status.textContent = text; status.style.color = isError ? 'var(--red)' : 'var(--fg2)'; };
+  window.api.onConsultVideoProgress((d) => { if (chatVideoBusy) setStatus(d.text, false); });
+  document.getElementById('chat-share-video').addEventListener('click', () => {
+    if (!chatVideoBusy) setStatus('', false);
+    dialog.classList.remove('hidden');
+    urlInput.focus();
+  });
+  document.getElementById('chat-video-close').addEventListener('click', () => dialog.classList.add('hidden'));
+  const run = async (job) => {
+    if (chatVideoBusy) return;
+    chatVideoBusy = true;
+    buttons.forEach((b) => { b.disabled = true; });
+    let r;
+    try { r = await job(); } catch (e) { r = { ok: false, name: '動画', error: e.message }; }
+    chatVideoBusy = false;
+    buttons.forEach((b) => { b.disabled = false; });
+    if (r.canceled) { setStatus('録画をやめました', false); return; }
+    if (!r.ok) { setStatus(r.error, true); return; }
+    setStatus('', false);
+    urlInput.value = '';
+    focusInput.value = '';
+    dialog.classList.add('hidden');
+    addChatShared([r]);
+  };
+  const readLink = () => {
+    const url = urlInput.value.trim();
+    if (!url) { setStatus('動画の URL を貼ってください', true); return; }
+    run(() => window.api.consultVideoRead(url, focusInput.value));
+  };
+  buttons[0].addEventListener('click', readLink);
+  urlInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); readLink(); }
+  });
+  buttons[1].addEventListener('click', () => {
+    setStatus('範囲かウィンドウを選んでください。止めるときはメニューバーの停止ボタン', false);
+    run(() => window.api.consultVideoRecord(focusInput.value));
+  });
+}
+
 function setupChatShare() {
+  setupChatVideo();
   document.getElementById('chat-share-file').addEventListener('click', async () => {
     addChatShared(await window.api.consultPickFiles());
   });

@@ -225,6 +225,7 @@
             <div id="chat-share-row">
               <button type="button" class="chat-share-btn" id="chat-share-file" title="選んだファイルの中身だけを、この会話で AI に渡します">📎 ファイル</button>
               <button type="button" class="chat-share-btn" id="chat-share-url" title="貼った URL の本文を読んで、この会話で AI に渡します">🔗 Web ページ</button>
+              <button type="button" class="chat-share-btn" id="chat-share-video" title="動画のセリフと画面に映るものを書き出して、この会話で AI に渡します">🎬 動画</button>
               <button type="button" class="chat-share-btn" id="chat-share-memo" title="自分の状況のメモを書いて、この会話で AI に渡します">📝 自分の状況</button>
               <button type="button" class="chat-share-btn" id="chat-companion-toggle" title="自分のブラウザで見ているページについて、隣で相談します。AI はページを開きません">🧭 同行モード</button>
               <div id="chat-share-chips"></div>
@@ -261,6 +262,27 @@
             <button class="setup-btn primary" id="chat-page-share">伏せて共有する</button>
           </div>
           <div id="chat-page-status" style="margin-top:8px;font-size:12px;color:var(--red);"></div>
+        </div>
+      </div>
+
+      <!-- 相談タブ: 動画を読む -->
+      <div id="chat-video-dialog" class="dialog hidden">
+        <div class="dialog-content" style="max-width:560px;">
+          <div class="dialog-header">
+            <h2>🎬 動画を読む</h2>
+            <button id="chat-video-close" class="dialog-close-btn">&times;</button>
+          </div>
+          <p style="font-size:13px;color:var(--fg2);margin:4px 0 8px;">セリフ(時刻つき)と、画面に映る文字・図・数字を書き出して相談に添えます。動画の中身は中継サーバーを通って Google (Gemini) に届きます。落とした動画や録った動画は、読み終えたらすぐ消します。</p>
+          <label style="font-size:12px;color:var(--fg2);">動画の URL(YouTube はそのまま読みます。ほかのサイトは一時的に落として読みます)</label>
+          <input type="text" id="chat-video-url" placeholder="https://…" style="width:100%;box-sizing:border-box;margin:4px 0 10px;background:var(--bg1);color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:8px;font-size:13px;">
+          <label style="font-size:12px;color:var(--fg2);">知りたいこと(なくても読めます)</label>
+          <textarea id="chat-video-focus" rows="3" placeholder="例: 価格の決め方の部分だけ詳しく / 画面に出る数字を全部" style="width:100%;box-sizing:border-box;margin-top:4px;background:var(--bg1);color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:8px;font-size:13px;line-height:1.6;resize:vertical;"></textarea>
+          <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
+            <button class="setup-btn primary" id="chat-video-read">リンクから読む</button>
+            <button class="setup-btn" id="chat-video-record" title="再生中の動画の範囲を選んで、必要な場面だけ録ります">再生して録る</button>
+          </div>
+          <p style="font-size:12px;color:var(--fg2);margin:10px 0 0;">「再生して録る」: 範囲かウィンドウを選ぶと録画が始まります。必要な場面が終わったら、メニューバーの停止ボタンで止めてください(最長 15 分)。動画のウィンドウだけを選ぶと、ほかのものが映りません。コピー防止のある動画は真っ黒に録れるので読めません。</p>
+          <div id="chat-video-status" style="margin-top:8px;font-size:12px;color:var(--fg2);"></div>
         </div>
       </div>
 

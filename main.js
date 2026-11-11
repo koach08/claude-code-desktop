@@ -2377,6 +2377,88 @@ ipcMain.handle('consult-screenshot', async () => {
   }
 });
 
+// ── 相談タブの 🎬: 動画を読む ──
+// 中身の書き出しは中継サーバーの先の Gemini。ここは「どう渡すか」だけ(src/video-read.js)
+const videoRead = require('./src/video-read');
+function ffmpegBin() {
+  for (const p of ['/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg']) if (fs.existsSync(p)) return p;
+  return null;
+}
+function hubConn() {
+  let cfg = { ...DEFAULT_HUB_CONFIG };
+  try { if (fs.existsSync(HUB_CONFIG_FILE)) cfg = { ...cfg, ...JSON.parse(fs.readFileSync(HUB_CONFIG_FILE, 'utf-8')) }; } catch (_) {}
+  const headers = {};
+  const hubSecret = resolveHubSecret(cfg.apiSecret);
+  if (hubSecret) headers.Authorization = `Bearer ${hubSecret}`;
+  return { url: String(cfg.apiUrl || '').replace(/\/+$/, ''), headers };
+}
+// 長い動画は返事まで数分かかる。Node の fetch は 5 分で切れるので、Chromium 側の通信を使う
+const hubFetch = (url, opts) => require('electron').net.fetch(url, opts);
+function videoProgress(text) {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('consult-video-progress', { text });
+}
+function videoResult(name, text, url) {
+  const r = consultShare.prepareWebText(name, text);
+  return r.ok ? { ...r, video: true, ...(url ? { url } : {}) } : r;
+}
+function clipTime() { const d = new Date(); return `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`; }
+
+ipcMain.handle('consult-video-read', async (_e, { url, focus }) => {
+  const name = `動画: ${String(url || '').replace(/^https?:\/\//, '').slice(0, 60)}`;
+  const reason = consultShare.urlBlockReason(url);
+  if (reason) return { ok: false, name, error: reason };
+  const hub = hubConn();
+  const yt = videoRead.youtubeUrl(url);
+  if (yt) {
+    try {
+      videoProgress('YouTube の動画を Gemini が見ています(長い動画は数分かかります)…');
+      return videoResult(name, await videoRead.readYoutube({ hub, url: yt, focus, fetchImpl: hubFetch }), yt);
+    } catch (e) {
+      return { ok: false, name, error: e.message };
+    }
+  }
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bridgework-video-'));
+  try {
+    videoProgress('動画を一時的に落としています…');
+    let file;
+    try {
+      file = await videoRead.download(url, dir, { ytdlp: ytdlpBin(), env: { ...shellEnv } });
+    } catch (e) {
+      return { ok: false, name, error: `${e.message}。再生しながら録る方法なら読めることがあります`, canRecord: true };
+    }
+    videoProgress('送れる大きさに縮めています…');
+    const small = await videoRead.shrink(file, dir, { ffmpeg: ffmpegBin() });
+    videoProgress('Gemini が動画を見ています(数分かかることがあります)…');
+    return videoResult(name, await videoRead.readFile({ hub, file: small, focus, fetchImpl: hubFetch }), url);
+  } catch (e) {
+    return { ok: false, name, error: e.message };
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// 本人が再生している動画を、必要な場面だけ録る。録画は読み終えたらすぐ消す
+ipcMain.handle('consult-video-record', async (_e, { focus }) => {
+  const name = `録った動画 (${clipTime()})`;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bridgework-rec-'));
+  const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+  try {
+    if (win) win.minimize();
+    const file = await videoRead.record(dir, {});
+    if (win && !win.isDestroyed()) { win.restore(); win.focus(); }
+    if (!file) return { ok: false, name, canceled: true };
+    videoProgress('送れる大きさに縮めています…');
+    const small = await videoRead.shrink(file, dir, { ffmpeg: ffmpegBin() });
+    videoProgress('Gemini が録った動画を見ています…');
+    return videoResult(name, await videoRead.readFile({ hub: hubConn(), file: small, focus, fetchImpl: hubFetch }));
+  } catch (e) {
+    return { ok: false, name, error: e.message };
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+    if (win && !win.isDestroyed() && win.isMinimized()) { win.restore(); win.focus(); }
+  }
+});
+
 // この Mac の中の AI(Ollama)。送り先は 127.0.0.1 に固定
 const localAI = require('./src/local-ai');
 ipcMain.handle('local-ai-status', () => localAI.localModels());

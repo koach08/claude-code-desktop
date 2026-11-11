@@ -107,6 +107,13 @@ contextBridge.exposeInMainWorld('api', {
   consultMemoLoad: () => ipcRenderer.invoke('consult-memo-load'),
   consultMemoSave: (text) => ipcRenderer.invoke('consult-memo-save', { text }),
   consultScreenshot: () => ipcRenderer.invoke('consult-screenshot'),
+  consultVideoRead: (url, focus) => ipcRenderer.invoke('consult-video-read', { url, focus }),
+  consultVideoRecord: (focus) => ipcRenderer.invoke('consult-video-record', { focus }),
+  onConsultVideoProgress: (cb) => {
+    const h = (_e, d) => cb(d);
+    ipcRenderer.on('consult-video-progress', h);
+    return () => ipcRenderer.removeListener('consult-video-progress', h);
+  },
   localAiStatus: () => ipcRenderer.invoke('local-ai-status'),
   onHubChunk: (cb) => {
     const h = (_e, d) => cb(d);
